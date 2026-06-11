@@ -1,5 +1,6 @@
 import unittest
 from unittest import mock
+from pathlib import Path
 
 import build_exe
 
@@ -20,6 +21,12 @@ class BuildExeCommandTests(unittest.TestCase):
         self.assertIn("--noconfirm", command)
         self.assertIn("--add-data=icons:icons", command)
         self.assertNotIn("--add-data=icons;icons", command)
+
+    def test_github_actions_forces_utf8_python_output(self):
+        workflow = Path(".github/workflows/build-windows-exe.yml").read_text(encoding="utf-8")
+
+        self.assertIn("PYTHONUTF8: \"1\"", workflow)
+        self.assertIn("PYTHONIOENCODING: utf-8", workflow)
 
 
 if __name__ == "__main__":
