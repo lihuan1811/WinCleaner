@@ -12,6 +12,7 @@ class BuildExeCommandTests(unittest.TestCase):
 
         self.assertIn("--noconfirm", command)
         self.assertIn("--add-data=icons;icons", command)
+        self.assertIn("--add-data=rules;rules", command)
         self.assertNotIn("--add-data=icons:icons", command)
 
     def test_non_windows_command_uses_platform_add_data_separator(self):
@@ -20,6 +21,7 @@ class BuildExeCommandTests(unittest.TestCase):
 
         self.assertIn("--noconfirm", command)
         self.assertIn("--add-data=icons:icons", command)
+        self.assertIn("--add-data=rules:rules", command)
         self.assertNotIn("--add-data=icons;icons", command)
 
     def test_github_actions_forces_utf8_python_output(self):

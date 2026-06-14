@@ -21,6 +21,7 @@ def build_pyinstaller_command():
         '--windowed',
         '--icon=icons/cleaner.ico',
         f'--add-data=icons{add_data_separator}icons',
+        f'--add-data=rules{add_data_separator}rules',
         '--noconfirm',
         '--clean',
         'main.py',
