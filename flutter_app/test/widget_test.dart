@@ -17,7 +17,7 @@ void main() {
     await tester.pumpWidget(const WinCleanerApp());
 
     await tester.tap(find.text('软件卸载'));
-    await tester.pumpAndSettle();
+    await tester.pump();
 
     expect(find.text('软件卸载中心'), findsOneWidget);
     expect(find.text('BCU 后端未配置'), findsOneWidget);
