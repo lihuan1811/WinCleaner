@@ -36,6 +36,7 @@ ENV/
 # IDE文件
 .idea/
 .vscode/
+*.iml
 *.swp
 *.swo
 
