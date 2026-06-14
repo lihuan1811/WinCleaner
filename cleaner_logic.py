@@ -13,6 +13,7 @@ import glob
 import logging
 import datetime
 import concurrent.futures
+from dismpp_rules import DismRuleScanner
 
 # 配置日志
 logging.basicConfig(
@@ -34,10 +35,10 @@ class CleanerLogic:
 
         # 安全路径列表 - 这些路径不会被扫描或清理
         self.safe_paths = [
-            os.path.join('C:', os.sep, 'Windows', 'System32'),
-            os.path.join('C:', os.sep, 'Windows', 'SysWOW64'),
-            os.path.join('C:', os.sep, 'Program Files'),
-            os.path.join('C:', os.sep, 'Program Files (x86)'),
+            'C:\\Windows\\System32',
+            'C:\\Windows\\SysWOW64',
+            'C:\\Program Files',
+            'C:\\Program Files (x86)',
         ]
 
         # 默认备份目录
@@ -324,6 +325,7 @@ class CleanerLogic:
             'downloads': [],     # 下载文件夹(安全版)
             'installer_cache': [], # 安装程序缓存(安全版)
             'delivery_opt': [],  # Windows传递优化缓存
+            'dismpp_rules': [],  # Dism++清理规则
 
             # 大文件扫描
             'large_files': []    # 大文件
@@ -363,6 +365,7 @@ class CleanerLogic:
             self._scan_downloads_immediate,
             self._scan_installer_cache_safe,
             self._scan_delivery_optimization, # Ensure this is the correct one
+            self._scan_dismpp_rules,
             self._scan_large_files
         ]
 
@@ -1641,6 +1644,19 @@ class CleanerLogic:
             except (PermissionError, FileNotFoundError) as e:
                 logger.warning(f"无法访问Windows Installer目录 {windows_installer}: {e}")
 
+    def _scan_dismpp_rules(self, results):
+        """扫描Dism++ Data.xml中支持的文件/目录清理规则"""
+        try:
+            scanner = DismRuleScanner()
+            for item in scanner.scan():
+                path = item.get('path')
+                if path and self._is_safe_path(path):
+                    results['dismpp_rules'].append(item)
+                elif path:
+                    logger.info(f"跳过Dism++规则中的不安全路径: {path}")
+        except Exception as e:
+            logger.warning(f"扫描Dism++规则失败: {e}")
+
     def _scan_large_files(self, results):
         """扫描C盘中的大文件"""
         # 大文件的最小大小（100MB）
@@ -1945,22 +1961,30 @@ class CleanerLogic:
 
     def _is_safe_path(self, path):
         """检查路径是否安全（不在系统关键目录中）"""
+        normalized_path = self._normalize_windows_path(path)
+
         # 检查路径是否在安全路径列表中
         for safe_path in self.safe_paths:
-            if path.startswith(safe_path):
+            normalized_safe_path = self._normalize_windows_path(safe_path)
+            if normalized_path == normalized_safe_path or normalized_path.startswith(normalized_safe_path + '\\'):
                 # 如果是系统目录的子目录，需要特别小心
                 return False
 
         # 检查是否是系统目录
         system_dirs = [
-            os.path.join('C:', os.sep, 'Windows'),
-            os.path.join('C:', os.sep, 'Program Files'),
-            os.path.join('C:', os.sep, 'Program Files (x86)'),
-            os.path.join('C:', os.sep, 'ProgramData')
+            'C:\\Windows',
+            'C:\\Program Files',
+            'C:\\Program Files (x86)',
+            'C:\\ProgramData'
         ]
 
         for sys_dir in system_dirs:
-            if path == sys_dir:
+            if normalized_path == self._normalize_windows_path(sys_dir):
                 return False
 
         return True
+
+    @staticmethod
+    def _normalize_windows_path(path):
+        """Normalize a path for Windows-style safety comparisons."""
+        return str(path).replace('/', '\\').rstrip('\\').lower()

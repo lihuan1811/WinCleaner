@@ -77,6 +77,13 @@ Unlike other cleaning tools, this tool places special emphasis on safety, employ
 - **Safe Path Check**: Prevent deletion of important system files
 - **User Confirmation**: User confirmation required before important operations
 
+### Dism++ Rule Support
+
+- Bundles the Dism++ `Data.xml` cleanup rule file
+- Parses only file and directory cleanup rules
+- Does not run registry, command, system component optimization, or other high-risk rules
+- Rule source: [Chuyu-Team/Dism-Multi-language](https://github.com/Chuyu-Team/Dism-Multi-language), license in `rules/dismpp/LICENSE`
+
 ### 🗃️ Backup Management
 
 - **Custom Backup Location**: Choose to store backup files in a non-C drive location

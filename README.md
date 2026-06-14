@@ -82,6 +82,13 @@ C盘清理工具是一个专为Windows系统设计的开源清理软件，无需
 - 安全检查，防止删除重要系统文件
 - 智能识别可安全删除的文件
 
+### Dism++规则支持
+
+- 内置 Dism++ `Data.xml` 清理规则文件
+- 仅解析文件和目录类清理规则
+- 不执行注册表、命令、系统组件优化等高风险规则
+- 规则来源：[Chuyu-Team/Dism-Multi-language](https://github.com/Chuyu-Team/Dism-Multi-language)，许可证见 `rules/dismpp/LICENSE`
+
 ## 💻 系统要求
 
 - Windows 7/8/10/11

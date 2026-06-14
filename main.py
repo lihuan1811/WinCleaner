@@ -277,6 +277,7 @@ class CleanerApp(tk.Tk):
             'downloads': "下载文件夹(立即清理)",
             'installer_cache': "安装程序缓存(30天前)",
             'delivery_opt': "Windows传递优化缓存(立即清理)",
+            'dismpp_rules': "Dism++规则",
 
             # 大文件扫描
             'large_files': "大文件 (>100MB)"
@@ -368,6 +369,7 @@ class CleanerApp(tk.Tk):
             'downloads': "下载文件夹(立即清理)",
             'installer_cache': "安装程序缓存(30天前)",
             'delivery_opt': "Windows传递优化缓存(立即清理)",
+            'dismpp_rules': "Dism++规则",
 
             # 大文件扫描
             'large_files': "大文件"

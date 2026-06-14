@@ -181,7 +181,8 @@ class CleanerMainWindow(QMainWindow):
             'logs': "系统日志",
             'updates': "Windows更新缓存",
             'thumbnails': "缩略图缓存",
-            'downloads': "下载文件夹"
+            'downloads': "下载文件夹",
+            'dismpp_rules': "Dism++规则"
         }
         
         for category, items in results.items():
