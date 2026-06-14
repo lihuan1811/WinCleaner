@@ -2,10 +2,16 @@ import 'package:flutter/material.dart';
 
 import '../screens/dashboard_screen.dart';
 import '../screens/uninstaller_screen.dart';
+import '../services/installed_apps_service.dart';
 import '../theme/app_theme.dart';
 
 class AppShell extends StatefulWidget {
-  const AppShell({super.key});
+  const AppShell({
+    super.key,
+    this.installedAppsService = const InstalledAppsService(),
+  });
+
+  final InstalledAppsService installedAppsService;
 
   @override
   State<AppShell> createState() => _AppShellState();
@@ -24,7 +30,7 @@ class _AppShellState extends State<AppShell> {
   @override
   Widget build(BuildContext context) {
     final content = switch (_selectedIndex) {
-      2 => const UninstallerScreen(),
+      2 => UninstallerScreen(installedAppsService: widget.installedAppsService),
       _ => const DashboardScreen(),
     };
 

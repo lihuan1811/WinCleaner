@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'services/installed_apps_service.dart';
 import 'theme/app_theme.dart';
 import 'widgets/app_shell.dart';
 
@@ -8,7 +9,12 @@ void main() {
 }
 
 class WinCleanerApp extends StatelessWidget {
-  const WinCleanerApp({super.key});
+  const WinCleanerApp({
+    super.key,
+    this.installedAppsService = const InstalledAppsService(),
+  });
+
+  final InstalledAppsService installedAppsService;
 
   @override
   Widget build(BuildContext context) {
@@ -16,7 +22,7 @@ class WinCleanerApp extends StatelessWidget {
       title: 'WinCleaner',
       debugShowCheckedModeBanner: false,
       theme: WinCleanerTheme.light(),
-      home: const AppShell(),
+      home: AppShell(installedAppsService: installedAppsService),
     );
   }
 }

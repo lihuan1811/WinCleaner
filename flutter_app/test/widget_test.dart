@@ -1,5 +1,16 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:wincleaner_desktop/main.dart';
+import 'package:wincleaner_desktop/models/installed_app.dart';
+import 'package:wincleaner_desktop/services/installed_apps_service.dart';
+
+class _FakeInstalledAppsService extends InstalledAppsService {
+  const _FakeInstalledAppsService();
+
+  @override
+  Future<List<InstalledApp>> loadInstalledApps() async {
+    return sampleInstalledApps;
+  }
+}
 
 void main() {
   testWidgets('app shell shows primary navigation items', (tester) async {
@@ -14,7 +25,9 @@ void main() {
   testWidgets('software uninstall navigation opens uninstall center', (
     tester,
   ) async {
-    await tester.pumpWidget(const WinCleanerApp());
+    await tester.pumpWidget(
+      const WinCleanerApp(installedAppsService: _FakeInstalledAppsService()),
+    );
 
     await tester.tap(find.text('软件卸载'));
     await tester.pump();
