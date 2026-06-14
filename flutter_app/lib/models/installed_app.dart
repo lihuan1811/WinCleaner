@@ -7,6 +7,7 @@ class InstalledApp {
     required this.installDate,
     required this.source,
     required this.uninstallCommand,
+    this.registryKey = '',
     this.isSelected = false,
   });
 
@@ -17,6 +18,7 @@ class InstalledApp {
   final String installDate;
   final String source;
   final String uninstallCommand;
+  final String registryKey;
   final bool isSelected;
 
   InstalledApp copyWith({bool? isSelected}) {
@@ -28,6 +30,7 @@ class InstalledApp {
       installDate: installDate,
       source: source,
       uninstallCommand: uninstallCommand,
+      registryKey: registryKey,
       isSelected: isSelected ?? this.isSelected,
     );
   }

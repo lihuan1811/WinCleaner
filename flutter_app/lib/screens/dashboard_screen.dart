@@ -118,20 +118,23 @@ class _StorageCard extends StatelessWidget {
                     style: TextStyle(color: AppColors.muted),
                   ),
                   const SizedBox(height: 34),
-                  const Row(
+                  const Wrap(
+                    spacing: 30,
+                    runSpacing: 16,
+                    crossAxisAlignment: WrapCrossAlignment.center,
                     children: [
                       _Metric(label: '已用空间', value: '384.2 GB'),
-                      SizedBox(width: 30),
                       SizedBox(
                         height: 52,
                         child: VerticalDivider(color: AppColors.border),
                       ),
-                      SizedBox(width: 30),
                       _Metric(label: '剩余空间', value: '127.8 GB', dark: true),
                     ],
                   ),
                   const SizedBox(height: 28),
-                  Row(
+                  Wrap(
+                    spacing: 18,
+                    runSpacing: 12,
                     children: [
                       FilledButton.icon(
                         style: FilledButton.styleFrom(

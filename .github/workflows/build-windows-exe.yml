@@ -12,8 +12,8 @@ env:
   PYTHONIOENCODING: utf-8
 
 jobs:
-  build:
-    name: Build executable
+  build-python:
+    name: Build Python executable
     runs-on: windows-latest
 
     steps:
@@ -41,4 +41,43 @@ jobs:
           path: |
             dist/C盘清理工具.exe
             C盘清理工具.zip
+          if-no-files-found: error
+
+  build-flutter:
+    name: Build Flutter Windows UI
+    runs-on: windows-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+
+      - name: Enable Windows desktop
+        run: flutter config --enable-windows-desktop
+
+      - name: Install Flutter dependencies
+        working-directory: flutter_app
+        run: flutter pub get
+
+      - name: Analyze Flutter project
+        working-directory: flutter_app
+        run: flutter analyze
+
+      - name: Run Flutter tests
+        working-directory: flutter_app
+        run: flutter test
+
+      - name: Build Flutter Windows release
+        working-directory: flutter_app
+        run: flutter build windows --release
+
+      - name: Upload Flutter Windows app
+        uses: actions/upload-artifact@v4
+        with:
+          name: WinCleaner-Flutter-Windows
+          path: flutter_app/build/windows/x64/runner/Release/**
           if-no-files-found: error

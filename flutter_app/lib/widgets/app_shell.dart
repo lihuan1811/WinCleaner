@@ -29,21 +29,36 @@ class _AppShellState extends State<AppShell> {
     };
 
     return Scaffold(
-      body: Row(
-        children: [
-          _Sidebar(
-            selectedIndex: _selectedIndex,
-            onSelect: (index) => setState(() => _selectedIndex = index),
-          ),
-          Expanded(
-            child: Column(
-              children: [
-                _TopBar(title: _selectedIndex == 2 ? '软件卸载中心' : '系统清理大师'),
-                Expanded(child: content),
-              ],
+      body: LayoutBuilder(
+        builder: (context, constraints) {
+          final shellWidth =
+              constraints.maxWidth < 1500 ? 1500.0 : constraints.maxWidth;
+          return SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: SizedBox(
+              width: shellWidth,
+              height: constraints.maxHeight,
+              child: Row(
+                children: [
+                  _Sidebar(
+                    selectedIndex: _selectedIndex,
+                    onSelect: (index) => setState(() => _selectedIndex = index),
+                  ),
+                  Expanded(
+                    child: Column(
+                      children: [
+                        _TopBar(
+                          title: _selectedIndex == 2 ? '软件卸载中心' : '系统清理大师',
+                        ),
+                        Expanded(child: content),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
             ),
-          ),
-        ],
+          );
+        },
       ),
     );
   }
@@ -110,23 +125,29 @@ class _Brand extends StatelessWidget {
           child: const Icon(Icons.cleaning_services, color: Colors.white),
         ),
         const SizedBox(width: 14),
-        const Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'WinCleaner',
-              style: TextStyle(
-                fontSize: 22,
-                fontWeight: FontWeight.w900,
-                color: AppColors.primaryDark,
+        const Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'WinCleaner',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 22,
+                  fontWeight: FontWeight.w900,
+                  color: AppColors.primaryDark,
+                ),
               ),
-            ),
-            SizedBox(height: 3),
-            Text(
-              '系统清理与卸载管家',
-              style: TextStyle(fontSize: 12, color: AppColors.muted),
-            ),
-          ],
+              SizedBox(height: 3),
+              Text(
+                '系统清理与卸载管家',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(fontSize: 12, color: AppColors.muted),
+              ),
+            ],
+          ),
         ),
       ],
     );

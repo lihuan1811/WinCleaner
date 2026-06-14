@@ -2,12 +2,21 @@ import 'package:flutter/material.dart';
 
 import '../models/installed_app.dart';
 import '../services/bcu_service.dart';
+import '../services/installed_apps_service.dart';
+import '../services/uninstall_service.dart';
 import '../theme/app_theme.dart';
 
 class UninstallerScreen extends StatefulWidget {
-  const UninstallerScreen({super.key, this.bcuService});
+  const UninstallerScreen({
+    super.key,
+    this.bcuService,
+    this.installedAppsService = const InstalledAppsService(),
+    this.uninstallService,
+  });
 
   final BcuService? bcuService;
+  final InstalledAppsService installedAppsService;
+  final UninstallService? uninstallService;
 
   @override
   State<UninstallerScreen> createState() => _UninstallerScreenState();
@@ -15,19 +24,25 @@ class UninstallerScreen extends StatefulWidget {
 
 class _UninstallerScreenState extends State<UninstallerScreen> {
   late final BcuService _bcuService;
+  late final UninstallService _uninstallService;
   late List<InstalledApp> _apps;
   String _query = '';
+  bool _isLoading = true;
+  String? _loadError;
 
   @override
   void initState() {
     super.initState();
     _bcuService = widget.bcuService ?? BcuService();
-    _apps = sampleInstalledApps;
+    _uninstallService = widget.uninstallService ?? UninstallService();
+    _apps = const [];
+    _loadInstalledApps();
   }
 
   @override
   Widget build(BuildContext context) {
-    final selectedCount = _apps.where((app) => app.isSelected).length;
+    final selectedApps = _apps.where((app) => app.isSelected).toList();
+    final selectedCount = selectedApps.length;
     final status = _bcuService.locate();
     final filteredApps = _apps.where((app) {
       final query = _query.trim().toLowerCase();
@@ -48,8 +63,8 @@ class _UninstallerScreenState extends State<UninstallerScreen> {
               Expanded(
                 child: _SummaryCard(
                   title: '已安装软件',
-                  value: '${_apps.length}',
-                  subtitle: '来自注册表与 BCU 后端',
+                  value: _isLoading ? '...' : '${_apps.length}',
+                  subtitle: '来自 Windows 卸载注册表',
                 ),
               ),
               const SizedBox(width: 24),
@@ -134,9 +149,16 @@ class _UninstallerScreenState extends State<UninstallerScreen> {
                         ),
                       ),
                       const Spacer(),
+                      TextButton.icon(
+                        onPressed: _isLoading ? null : _loadInstalledApps,
+                        icon: const Icon(Icons.refresh),
+                        label: const Text('刷新'),
+                      ),
+                      const SizedBox(width: 12),
                       OutlinedButton.icon(
-                        onPressed:
-                            selectedCount == 0 ? null : _confirmUninstall,
+                        onPressed: selectedCount == 0
+                            ? null
+                            : () => _confirmUninstall(selectedApps),
                         icon: const Icon(Icons.delete_outline),
                         label: const Text('卸载选中项'),
                       ),
@@ -149,20 +171,34 @@ class _UninstallerScreenState extends State<UninstallerScreen> {
                     ],
                   ),
                   const SizedBox(height: 18),
-                  _AppTable(
-                    apps: filteredApps,
-                    onChanged: (app, selected) {
-                      setState(() {
-                        _apps = [
-                          for (final current in _apps)
-                            if (current.name == app.name)
-                              current.copyWith(isSelected: selected)
-                            else
-                              current,
-                        ];
-                      });
-                    },
-                  ),
+                  if (_isLoading)
+                    const Padding(
+                      padding: EdgeInsets.symmetric(vertical: 54),
+                      child: Center(child: CircularProgressIndicator()),
+                    )
+                  else if (_loadError != null)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 42),
+                      child: Text(_loadError!,
+                          style: const TextStyle(color: Colors.red)),
+                    )
+                  else
+                    _AppTable(
+                      apps: filteredApps,
+                      onChanged: (app, selected) {
+                        setState(() {
+                          _apps = [
+                            for (final current in _apps)
+                              if (current.name == app.name &&
+                                  current.uninstallCommand ==
+                                      app.uninstallCommand)
+                                current.copyWith(isSelected: selected)
+                              else
+                                current,
+                          ];
+                        });
+                      },
+                    ),
                 ],
               ),
             ),
@@ -189,26 +225,83 @@ class _UninstallerScreenState extends State<UninstallerScreen> {
     }
   }
 
-  Future<void> _confirmUninstall() async {
-    await showDialog<void>(
+  Future<void> _loadInstalledApps() async {
+    setState(() {
+      _isLoading = true;
+      _loadError = null;
+    });
+
+    try {
+      final apps = await widget.installedAppsService.loadInstalledApps();
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _apps = apps;
+        _isLoading = false;
+      });
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _apps = sampleInstalledApps;
+        _isLoading = false;
+        _loadError = '读取软件列表失败，已显示示例数据：$error';
+      });
+    }
+  }
+
+  Future<void> _confirmUninstall(List<InstalledApp> selectedApps) async {
+    final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) {
         return AlertDialog(
           title: const Text('确认卸载'),
-          content: const Text('第一阶段不会执行静默批量卸载。请打开 BCUninstaller 完成卸载操作。'),
+          content: Text(
+            '将启动 ${selectedApps.length} 个软件的官方卸载程序。'
+            '不会静默卸载，也不会自动清理残留。继续前请保存工作。',
+          ),
           actions: [
             TextButton(
-              onPressed: () => Navigator.of(context).pop(),
+              onPressed: () => Navigator.of(context).pop(false),
               child: const Text('取消'),
             ),
             FilledButton(
-              onPressed: () => Navigator.of(context).pop(),
-              child: const Text('知道了'),
+              onPressed: () => Navigator.of(context).pop(true),
+              child: const Text('启动卸载'),
             ),
           ],
         );
       },
     );
+
+    if (confirmed != true) {
+      return;
+    }
+
+    var launched = 0;
+    for (final app in selectedApps) {
+      if (app.uninstallCommand.trim().isEmpty) {
+        continue;
+      }
+      try {
+        await _uninstallService.launch(app.uninstallCommand);
+        launched++;
+      } catch (error) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('${app.name} 启动卸载失败：$error')),
+          );
+        }
+      }
+    }
+
+    if (mounted && launched > 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('已启动 $launched 个卸载程序')),
+      );
+    }
   }
 }
 
