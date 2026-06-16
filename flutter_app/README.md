@@ -17,6 +17,25 @@ program's official uninstall command after confirmation. It does not run silent
 batch uninstall commands automatically, and it does not remove leftovers after
 the vendor uninstaller finishes.
 
+## Toolbox features
+
+The advanced toolbox entries are functional:
+
+- Ad cleanup writes and restores a WinCleaner-managed block in the Windows
+  `hosts` file, with a backup before every change.
+- Duplicate files scans a selected directory, groups files by size, verifies
+  duplicates with SHA-256, and can delete duplicate copies while keeping one
+  file from each group.
+- Large files scans a selected directory and lists the largest files above the
+  configured threshold.
+- Disk defragment/optimization calls Windows `defrag.exe`; analysis uses
+  `/A /U /V`, and optimization uses `/O /U /V` so Windows chooses the correct
+  optimization for HDD or SSD.
+
+Hosts editing and disk optimization require Windows permissions appropriate for
+the operation. On non-Windows systems those operations report unsupported
+instead of pretending to succeed.
+
 GitHub Actions builds both artifacts on Windows:
 
 - `WinCleaner-exe`: the original Python cleaner executable.
