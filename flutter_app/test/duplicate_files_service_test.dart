@@ -8,11 +8,12 @@ void main() {
     final tempDir = await Directory.systemTemp.createTemp('dupes-test-');
     addTearDown(() => tempDir.delete(recursive: true));
 
-    final first = File('${tempDir.path}/first.txt')
+    final first = File('${tempDir.path}${Platform.pathSeparator}first.txt')
       ..writeAsStringSync('same-content');
-    final second = File('${tempDir.path}/second.txt')
+    final second = File('${tempDir.path}${Platform.pathSeparator}second.txt')
       ..writeAsStringSync('same-content');
-    File('${tempDir.path}/unique.txt').writeAsStringSync('different');
+    File('${tempDir.path}${Platform.pathSeparator}unique.txt')
+        .writeAsStringSync('different');
 
     final service = DuplicateFilesService();
     final result = await service.scanDirectory(tempDir.path, minBytes: 1);
