@@ -8,8 +8,10 @@ void main() {
     final tempDir = await Directory.systemTemp.createTemp('dupes-test-');
     addTearDown(() => tempDir.delete(recursive: true));
 
-    File('${tempDir.path}/first.txt').writeAsStringSync('same-content');
-    File('${tempDir.path}/second.txt').writeAsStringSync('same-content');
+    final first = File('${tempDir.path}/first.txt')
+      ..writeAsStringSync('same-content');
+    final second = File('${tempDir.path}/second.txt')
+      ..writeAsStringSync('same-content');
     File('${tempDir.path}/unique.txt').writeAsStringSync('different');
 
     final service = DuplicateFilesService();
@@ -19,8 +21,8 @@ void main() {
     expect(
         result.groups.single.files.map((file) => file.path),
         containsAll([
-          '${tempDir.path}/first.txt',
-          '${tempDir.path}/second.txt',
+          first.path,
+          second.path,
         ]));
     expect(result.duplicateBytes, 'same-content'.length);
   });
