@@ -40,15 +40,16 @@ jobs:
       - name: Package Python executable
         shell: pwsh
         run: |
-          Copy-Item "dist/C盘清理工具.exe" "dist/WinCleaner-Python.exe" -Force
-          Compress-Archive -Path "dist/WinCleaner-Python.exe" -DestinationPath "WinCleaner-Python.zip" -Force
+          Copy-Item "dist/C盘清理工具.exe" "WinCleaner-Python.exe" -Force
+          Copy-Item "WinCleaner-Python.exe" "dist/WinCleaner-Python.exe" -Force
+          Compress-Archive -Path "WinCleaner-Python.exe" -DestinationPath "WinCleaner-Python.zip" -Force
 
       - name: Upload executable
         uses: actions/upload-artifact@v4
         with:
           name: WinCleaner-Python
           path: |
-            dist/WinCleaner-Python.exe
+            WinCleaner-Python.exe
             WinCleaner-Python.zip
           if-no-files-found: error
 
@@ -202,6 +203,10 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           path: release-assets
+
+      - name: List release assets
+        shell: pwsh
+        run: Get-ChildItem release-assets -Recurse -File | Select-Object FullName, Length | Format-Table -AutoSize
 
       - name: Publish GitHub release
         shell: pwsh
