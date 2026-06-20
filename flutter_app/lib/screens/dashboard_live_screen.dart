@@ -110,90 +110,89 @@ class _DashboardLiveScreenState extends State<DashboardLiveScreen> {
         ? '尚未扫描'
         : '本次可清理 ${_formatBytes(_scanResult!.totalBytes)}';
 
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(32),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final isNarrow = constraints.maxWidth < 1100;
+        final storageCard = _StorageCard(
+          used: used,
+          free: free,
+          percent: percent,
+          scanBytes: scanBytes,
+          message: _loading
+              ? '正在读取驱动器 C: 的实时状态'
+              : _message ?? status?.healthMessage ?? '等待读取驱动器 C:',
+          scanning: _scanning,
+          onScan: _scanSystem,
+          onReport: _openReport,
+        );
+        final healthCard = _HealthCard(
+          health: status?.healthLabel ?? '读取中',
+          lastScan: _scanResult == null
+              ? '上次检查: 尚未扫描'
+              : '上次检查: ${_formatClock(_scanResult!.completedAt)}',
+          diskPercent: percent,
+          cleanableBytes: _scanResult?.totalBytes ?? 0,
+        );
+
+        return SingleChildScrollView(
+          padding: const EdgeInsets.all(32),
+          child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Expanded(
-                flex: 2,
-                child: _StorageCard(
-                  used: used,
-                  free: free,
-                  percent: percent,
-                  scanBytes: scanBytes,
-                  message: _loading
-                      ? '正在读取驱动器 C: 的实时状态'
-                      : _message ?? status?.healthMessage ?? '等待读取驱动器 C:',
-                  scanning: _scanning,
-                  onScan: _scanSystem,
-                  onReport: _openReport,
+              if (isNarrow)
+                Column(
+                  children: [
+                    storageCard,
+                    const SizedBox(height: 24),
+                    healthCard,
+                  ],
+                )
+              else
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(flex: 2, child: storageCard),
+                    const SizedBox(width: 32),
+                    Expanded(child: healthCard),
+                  ],
                 ),
-              ),
-              const SizedBox(width: 32),
-              Expanded(
-                child: _HealthCard(
-                  health: status?.healthLabel ?? '读取中',
-                  lastScan: _scanResult == null
-                      ? '上次检查: 尚未扫描'
-                      : '上次检查: ${_formatClock(_scanResult!.completedAt)}',
-                  diskPercent: percent,
-                  cleanableBytes: _scanResult?.totalBytes ?? 0,
+              const SizedBox(height: 34),
+              Text('高级工具箱', style: Theme.of(context).textTheme.titleLarge),
+              const SizedBox(height: 4),
+              const Text('深层优化您的电脑性能',
+                  style: TextStyle(color: AppColors.muted)),
+              const SizedBox(height: 24),
+              const _ToolSummaryGrid(),
+              const SizedBox(height: 32),
+              if (isNarrow)
+                Column(
+                  children: [
+                    _TrendCard(values: _trend),
+                    const SizedBox(height: 24),
+                    _ActivityCard(
+                      message: _message ?? '等待首次扫描',
+                      result: _scanResult,
+                    ),
+                  ],
+                )
+              else
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(flex: 2, child: _TrendCard(values: _trend)),
+                    const SizedBox(width: 32),
+                    Expanded(
+                      child: _ActivityCard(
+                        message: _message ?? '等待首次扫描',
+                        result: _scanResult,
+                      ),
+                    ),
+                  ],
                 ),
-              ),
             ],
           ),
-          const SizedBox(height: 34),
-          Text('高级工具箱', style: Theme.of(context).textTheme.titleLarge),
-          const SizedBox(height: 4),
-          const Text('深层优化您的电脑性能', style: TextStyle(color: AppColors.muted)),
-          const SizedBox(height: 24),
-          const Row(
-            children: [
-              Expanded(
-                  child: _ToolSummary(
-                      icon: Icons.block_outlined,
-                      title: '广告清理',
-                      subtitle: 'hosts 广告屏蔽已集成')),
-              SizedBox(width: 24),
-              Expanded(
-                  child: _ToolSummary(
-                      icon: Icons.copy_outlined,
-                      title: '重复文件',
-                      subtitle: 'SHA-256 重复识别已集成')),
-              SizedBox(width: 24),
-              Expanded(
-                  child: _ToolSummary(
-                      icon: Icons.sd_storage_outlined,
-                      title: '超大文件',
-                      subtitle: '目录大文件扫描已集成')),
-              SizedBox(width: 24),
-              Expanded(
-                  child: _ToolSummary(
-                      icon: Icons.grid_view_outlined,
-                      title: '碎片整理',
-                      subtitle: 'Windows defrag 已集成')),
-            ],
-          ),
-          const SizedBox(height: 32),
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Expanded(flex: 2, child: _TrendCard(values: _trend)),
-              const SizedBox(width: 32),
-              Expanded(
-                child: _ActivityCard(
-                  message: _message ?? '等待首次扫描',
-                  result: _scanResult,
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
+        );
+      },
     );
   }
 }
@@ -332,17 +331,23 @@ class _HealthCard extends StatelessWidget {
                       color: AppColors.primary, size: 40),
                 ),
                 const SizedBox(width: 22),
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(health,
-                        style: const TextStyle(
-                            fontSize: 24,
-                            fontWeight: FontWeight.w900,
-                            color: AppColors.primaryDark)),
-                    Text(lastScan,
-                        style: const TextStyle(color: AppColors.muted)),
-                  ],
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(health,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                              fontSize: 24,
+                              fontWeight: FontWeight.w900,
+                              color: AppColors.primaryDark)),
+                      Text(lastScan,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(color: AppColors.muted)),
+                    ],
+                  ),
                 ),
               ],
             ),
@@ -470,9 +475,9 @@ class _ToolSummary extends StatelessWidget {
   Widget build(BuildContext context) {
     return Card(
       child: SizedBox(
-        height: 170,
+        height: 182,
         child: Padding(
-          padding: const EdgeInsets.all(28),
+          padding: const EdgeInsets.all(22),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -485,14 +490,66 @@ class _ToolSummary extends StatelessWidget {
                 child: Icon(icon, color: AppColors.text),
               ),
               const Spacer(),
-              Text(title, style: Theme.of(context).textTheme.titleMedium),
+              Text(title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(context).textTheme.titleMedium),
               const SizedBox(height: 6),
               Text(subtitle,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
                   style: const TextStyle(color: AppColors.muted, fontSize: 13)),
             ],
           ),
         ),
       ),
+    );
+  }
+}
+
+class _ToolSummaryGrid extends StatelessWidget {
+  const _ToolSummaryGrid();
+
+  static const _tools = [
+    _ToolSummary(
+        icon: Icons.block_outlined,
+        title: '广告清理',
+        subtitle: 'hosts 广告屏蔽已集成'),
+    _ToolSummary(
+        icon: Icons.copy_outlined,
+        title: '重复文件',
+        subtitle: 'SHA-256 重复识别已集成'),
+    _ToolSummary(
+        icon: Icons.sd_storage_outlined,
+        title: '超大文件',
+        subtitle: '目录大文件扫描已集成'),
+    _ToolSummary(
+        icon: Icons.grid_view_outlined,
+        title: '碎片整理',
+        subtitle: 'Windows defrag 已集成'),
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        const gap = 24.0;
+        final columns = constraints.maxWidth < 720
+            ? 1
+            : constraints.maxWidth < 1050
+                ? 2
+                : 4;
+        final tileWidth =
+            (constraints.maxWidth - gap * (columns - 1)) / columns;
+
+        return Wrap(
+          spacing: gap,
+          runSpacing: gap,
+          children: [
+            for (final tool in _tools) SizedBox(width: tileWidth, child: tool),
+          ],
+        );
+      },
     );
   }
 }
