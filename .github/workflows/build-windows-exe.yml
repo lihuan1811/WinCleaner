@@ -124,42 +124,42 @@ jobs:
           $releasePath = (Resolve-Path "build/windows/x64/runner/Release").Path
           $outputPath = (Resolve-Path "..").Path
           $appVersion = "1.0.$($env:GITHUB_RUN_NUMBER)"
-          $installerScript = @"
-#define MyAppName "WinCleaner"
-#define MyAppVersion "$appVersion"
-#define MyAppPublisher "WinCleaner"
-#define MyAppExeName "WinCleaner.exe"
-
-[Setup]
-AppId={{7F704A12-405A-40D7-A4AC-6C0545A823E2}
-AppName={#MyAppName}
-AppVersion={#MyAppVersion}
-AppPublisher={#MyAppPublisher}
-DefaultDirName={autopf}\WinCleaner
-DefaultGroupName={#MyAppName}
-DisableProgramGroupPage=yes
-OutputDir=$outputPath
-OutputBaseFilename=WinCleaner-Setup
-Compression=lzma2
-SolidCompression=yes
-WizardStyle=modern
-ArchitecturesAllowed=x64
-ArchitecturesInstallIn64BitMode=x64
-PrivilegesRequired=admin
-
-[Tasks]
-Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription: "Additional icons:"; Flags: unchecked
-
-[Files]
-Source: "$releasePath\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
-
-[Icons]
-Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
-Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
-
-[Run]
-Filename: "{app}\{#MyAppExeName}"; Description: "Launch {#MyAppName}"; Flags: nowait postinstall skipifsilent
-"@
+          $installerScript = @(
+            '#define MyAppName "WinCleaner"'
+            "#define MyAppVersion ""$appVersion"""
+            '#define MyAppPublisher "WinCleaner"'
+            '#define MyAppExeName "WinCleaner.exe"'
+            ''
+            '[Setup]'
+            'AppId={{7F704A12-405A-40D7-A4AC-6C0545A823E2}'
+            'AppName={#MyAppName}'
+            'AppVersion={#MyAppVersion}'
+            'AppPublisher={#MyAppPublisher}'
+            'DefaultDirName={autopf}\WinCleaner'
+            'DefaultGroupName={#MyAppName}'
+            'DisableProgramGroupPage=yes'
+            "OutputDir=$outputPath"
+            'OutputBaseFilename=WinCleaner-Setup'
+            'Compression=lzma2'
+            'SolidCompression=yes'
+            'WizardStyle=modern'
+            'ArchitecturesAllowed=x64'
+            'ArchitecturesInstallIn64BitMode=x64'
+            'PrivilegesRequired=admin'
+            ''
+            '[Tasks]'
+            'Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription: "Additional icons:"; Flags: unchecked'
+            ''
+            '[Files]'
+            'Source: "' + $releasePath + '\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs'
+            ''
+            '[Icons]'
+            'Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"'
+            'Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon'
+            ''
+            '[Run]'
+            'Filename: "{app}\{#MyAppExeName}"; Description: "Launch {#MyAppName}"; Flags: nowait postinstall skipifsilent'
+          )
           Set-Content -Path "WinCleaner.iss" -Value $installerScript -Encoding UTF8
           & $iscc "WinCleaner.iss"
 
