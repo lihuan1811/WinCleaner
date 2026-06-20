@@ -1,10 +1,13 @@
-import 'package:flutter/material.dart';
 import 'dart:io';
+
+import 'package:flutter/material.dart';
 
 import '../services/ad_block_service.dart';
 import '../services/disk_optimization_service.dart';
+import '../services/drive_status_service.dart';
 import '../services/duplicate_files_service.dart';
 import '../services/large_files_service.dart';
+import '../services/system_cleanup_scan_service.dart';
 import '../theme/app_theme.dart';
 
 class DashboardScreen extends StatefulWidget {
@@ -14,12 +17,16 @@ class DashboardScreen extends StatefulWidget {
     this.duplicateFilesService,
     this.largeFilesService,
     this.diskOptimizationService,
+    this.driveStatusService,
+    this.cleanupScanService,
   });
 
   final AdBlockService? adBlockService;
   final DuplicateFilesService? duplicateFilesService;
   final LargeFilesService? largeFilesService;
   final DiskOptimizationService? diskOptimizationService;
+  final DriveStatusService? driveStatusService;
+  final SystemCleanupScanService? cleanupScanService;
 
   @override
   State<DashboardScreen> createState() => _DashboardScreenState();
@@ -30,6 +37,22 @@ class _DashboardScreenState extends State<DashboardScreen> {
   late final DuplicateFilesService _duplicateFilesService;
   late final LargeFilesService _largeFilesService;
   late final DiskOptimizationService _diskOptimizationService;
+  late final DriveStatusService _driveStatusService;
+  late final SystemCleanupScanService _cleanupScanService;
+  DriveStatus? _driveStatus;
+  CleanupScanResult? _scanResult;
+  bool _loadingDriveStatus = true;
+  bool _scanningSystem = false;
+  String? _dashboardMessage;
+  final List<int> _scanTrendBytes = [];
+  final List<_ActivityLogEntry> _activities = [
+    const _ActivityLogEntry(
+      icon: Icons.info_outline,
+      color: Color(0xFFDDEBFF),
+      title: '等待首次扫描',
+      subtitle: '点击一键开始扫描',
+    ),
+  ];
 
   @override
   void initState() {
@@ -40,6 +63,113 @@ class _DashboardScreenState extends State<DashboardScreen> {
     _largeFilesService = widget.largeFilesService ?? LargeFilesService();
     _diskOptimizationService =
         widget.diskOptimizationService ?? DiskOptimizationService();
+    _driveStatusService = widget.driveStatusService ?? DriveStatusService();
+    _cleanupScanService =
+        widget.cleanupScanService ?? SystemCleanupScanService();
+    _loadDriveStatus();
+  }
+
+  Future<void> _loadDriveStatus() async {
+    setState(() {
+      _loadingDriveStatus = true;
+      _dashboardMessage = null;
+    });
+    try {
+      final status = await _driveStatusService.loadDrive('C');
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _driveStatus = status;
+        _loadingDriveStatus = false;
+        _activities
+          ..removeWhere((entry) => entry.title == '等待首次扫描')
+          ..insert(
+            0,
+            _ActivityLogEntry(
+              icon: Icons.storage_outlined,
+              color: const Color(0xFFDDEBFF),
+              title: status.isSupported ? '磁盘状态已刷新' : '磁盘状态不可用',
+              subtitle: status.healthMessage,
+            ),
+          );
+      });
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _loadingDriveStatus = false;
+        _dashboardMessage = '读取磁盘状态失败：$error';
+        _activities.insert(
+          0,
+          _ActivityLogEntry(
+            icon: Icons.warning_amber,
+            color: const Color(0xFFFFF1C7),
+            title: '磁盘状态读取失败',
+            subtitle: error.toString(),
+          ),
+        );
+      });
+    }
+  }
+
+  Future<void> _startSystemScan() async {
+    setState(() {
+      _scanningSystem = true;
+      _dashboardMessage = '正在扫描系统可清理项目...';
+    });
+    try {
+      final result = await _cleanupScanService.scan();
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _scanResult = result;
+        _scanningSystem = false;
+        _dashboardMessage = '发现 ${result.itemCount} 个可清理项目';
+        _scanTrendBytes
+          ..add(result.totalBytes)
+          ..removeRange(
+              0, _scanTrendBytes.length > 7 ? _scanTrendBytes.length - 7 : 0);
+        _activities
+          ..removeWhere((entry) => entry.title == '等待首次扫描')
+          ..insert(
+            0,
+            _ActivityLogEntry(
+              icon: Icons.done_all,
+              color: const Color(0xFFD8FBE4),
+              title: '扫描完成 ${_formatBytes(result.totalBytes)}',
+              subtitle:
+                  '${result.itemCount} 个项目 · ${_formatClock(result.completedAt)}',
+            ),
+          );
+      });
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _scanningSystem = false;
+        _dashboardMessage = '扫描失败：$error';
+        _activities.insert(
+          0,
+          _ActivityLogEntry(
+            icon: Icons.warning_amber,
+            color: const Color(0xFFFFF1C7),
+            title: '扫描失败',
+            subtitle: error.toString(),
+          ),
+        );
+      });
+    }
+  }
+
+  Future<void> _openScanReport() {
+    return showDialog<void>(
+      context: context,
+      builder: (context) => _ScanReportDialog(result: _scanResult),
+    );
   }
 
   String get _defaultScanPath {
@@ -85,6 +215,30 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
+  Future<void> _openAllTools() {
+    return showDialog<void>(
+      context: context,
+      builder: (context) => _AllToolsDialog(
+        onOpenAdBlock: () {
+          Navigator.of(context).pop();
+          _openAdBlockTool();
+        },
+        onOpenDuplicateFiles: () {
+          Navigator.of(context).pop();
+          _openDuplicateTool();
+        },
+        onOpenLargeFiles: () {
+          Navigator.of(context).pop();
+          _openLargeFilesTool();
+        },
+        onOpenDiskOptimization: () {
+          Navigator.of(context).pop();
+          _openDiskOptimizationTool();
+        },
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return SingleChildScrollView(
@@ -95,9 +249,25 @@ class _DashboardScreenState extends State<DashboardScreen> {
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Expanded(flex: 2, child: _StorageCard()),
+              Expanded(
+                flex: 2,
+                child: _StorageCard(
+                  status: _driveStatus,
+                  scanResult: _scanResult,
+                  loading: _loadingDriveStatus,
+                  scanning: _scanningSystem,
+                  message: _dashboardMessage,
+                  onScan: _startSystemScan,
+                  onReport: _openScanReport,
+                ),
+              ),
               const SizedBox(width: 32),
-              Expanded(child: _HealthCard()),
+              Expanded(
+                child: _HealthCard(
+                  status: _driveStatus,
+                  scanResult: _scanResult,
+                ),
+              ),
             ],
           ),
           const SizedBox(height: 34),
@@ -116,7 +286,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
               ),
               const Spacer(),
               TextButton.icon(
-                onPressed: () {},
+                onPressed: _openAllTools,
                 label: const Text('查看全部工具'),
                 icon: const Icon(Icons.chevron_right),
                 iconAlignment: IconAlignment.end,
@@ -167,9 +337,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Expanded(flex: 2, child: _TrendCard()),
+              Expanded(
+                flex: 2,
+                child: _TrendCard(valuesBytes: _scanTrendBytes),
+              ),
               const SizedBox(width: 32),
-              Expanded(child: _ActivityCard()),
+              Expanded(
+                child: _ActivityCard(entries: _activities.take(4).toList()),
+              ),
             ],
           ),
         ],
@@ -179,10 +354,38 @@ class _DashboardScreenState extends State<DashboardScreen> {
 }
 
 class _StorageCard extends StatelessWidget {
-  const _StorageCard();
+  const _StorageCard({
+    required this.status,
+    required this.scanResult,
+    required this.loading,
+    required this.scanning,
+    required this.message,
+    required this.onScan,
+    required this.onReport,
+  });
+
+  final DriveStatus? status;
+  final CleanupScanResult? scanResult;
+  final bool loading;
+  final bool scanning;
+  final String? message;
+  final VoidCallback onScan;
+  final VoidCallback onReport;
 
   @override
   Widget build(BuildContext context) {
+    final currentStatus = status;
+    final used = currentStatus == null || !currentStatus.isSupported
+        ? '--'
+        : _formatBytes(currentStatus.usedBytes);
+    final free = currentStatus == null || !currentStatus.isSupported
+        ? '--'
+        : _formatBytes(currentStatus.freeBytes);
+    final percent = currentStatus == null ? 0.0 : currentStatus.usagePercent;
+    final scannedBytes = scanResult == null
+        ? '尚未扫描'
+        : '本次可清理 ${_formatBytes(scanResult!.totalBytes)}';
+
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(32),
@@ -197,24 +400,42 @@ class _StorageCard extends StatelessWidget {
                     style: Theme.of(context).textTheme.headlineMedium,
                   ),
                   const SizedBox(height: 10),
-                  const Text(
-                    '正在实时分析驱动器 C: 的健康状况',
-                    style: TextStyle(color: AppColors.muted),
+                  Text(
+                    loading
+                        ? '正在读取驱动器 C: 的实时状态'
+                        : currentStatus?.healthMessage ?? '等待读取驱动器 C:',
+                    style: const TextStyle(color: AppColors.muted),
                   ),
                   const SizedBox(height: 34),
-                  const Wrap(
+                  Wrap(
                     spacing: 30,
                     runSpacing: 16,
                     crossAxisAlignment: WrapCrossAlignment.center,
                     children: [
-                      _Metric(label: '已用空间', value: '384.2 GB'),
-                      SizedBox(
+                      _Metric(label: '已用空间', value: used),
+                      const SizedBox(
                         height: 52,
                         child: VerticalDivider(color: AppColors.border),
                       ),
-                      _Metric(label: '剩余空间', value: '127.8 GB', dark: true),
+                      _Metric(label: '剩余空间', value: free, dark: true),
+                      const SizedBox(
+                        height: 52,
+                        child: VerticalDivider(color: AppColors.border),
+                      ),
+                      _Metric(label: '扫描结果', value: scannedBytes, dark: true),
                     ],
                   ),
+                  if (message != null) ...[
+                    const SizedBox(height: 18),
+                    Text(
+                      message!,
+                      style: const TextStyle(color: AppColors.muted),
+                    ),
+                  ],
+                  if (scanning) ...[
+                    const SizedBox(height: 16),
+                    const LinearProgressIndicator(minHeight: 4),
+                  ],
                   const SizedBox(height: 28),
                   Wrap(
                     spacing: 18,
@@ -228,7 +449,7 @@ class _StorageCard extends StatelessWidget {
                             borderRadius: BorderRadius.circular(10),
                           ),
                         ),
-                        onPressed: () {},
+                        onPressed: scanning ? null : onScan,
                         icon: const Icon(Icons.search),
                         label: const Text(
                           '一键开始扫描',
@@ -243,7 +464,7 @@ class _StorageCard extends StatelessWidget {
                             borderRadius: BorderRadius.circular(10),
                           ),
                         ),
-                        onPressed: () {},
+                        onPressed: onReport,
                         child: const Text(
                           '详细报告',
                           style: TextStyle(fontWeight: FontWeight.w800),
@@ -255,10 +476,10 @@ class _StorageCard extends StatelessWidget {
               ),
             ),
             const SizedBox(width: 30),
-            const SizedBox(
+            SizedBox(
               width: 230,
               height: 230,
-              child: _PercentRing(percent: .75),
+              child: _PercentRing(percent: percent),
             ),
           ],
         ),
@@ -301,6 +522,7 @@ class _PercentRing extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final normalized = (percent / 100).clamp(0.0, 1.0).toDouble();
     return Stack(
       alignment: Alignment.center,
       children: [
@@ -308,25 +530,25 @@ class _PercentRing extends StatelessWidget {
           width: 210,
           height: 210,
           child: CircularProgressIndicator(
-            value: percent,
+            value: normalized,
             strokeWidth: 22,
             backgroundColor: const Color(0xFFE5EBF4),
             color: AppColors.primary,
             strokeCap: StrokeCap.butt,
           ),
         ),
-        const Column(
+        Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             Text(
-              '75%',
-              style: TextStyle(
+              '${percent.round()}%',
+              style: const TextStyle(
                 fontSize: 52,
                 fontWeight: FontWeight.w900,
                 color: AppColors.primaryDark,
               ),
             ),
-            Text(
+            const Text(
               '占用率',
               style: TextStyle(
                 color: AppColors.muted,
@@ -341,8 +563,24 @@ class _PercentRing extends StatelessWidget {
 }
 
 class _HealthCard extends StatelessWidget {
+  const _HealthCard({required this.status, required this.scanResult});
+
+  final DriveStatus? status;
+  final CleanupScanResult? scanResult;
+
   @override
   Widget build(BuildContext context) {
+    final currentStatus = status;
+    final healthLabel = currentStatus?.healthLabel ?? '读取中';
+    final lastScan = scanResult == null
+        ? '上次检查: 尚未扫描'
+        : '上次检查: ${_formatClock(scanResult!.completedAt)}';
+    final diskPercent =
+        currentStatus == null ? 0.0 : currentStatus.usagePercent;
+    final cleanableBytes = scanResult?.totalBytes ?? 0;
+    final cleanablePercent =
+        (cleanableBytes / (10 * 1024 * 1024 * 1024)).clamp(0.0, 1.0).toDouble();
+
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(32),
@@ -351,9 +589,9 @@ class _HealthCard extends StatelessWidget {
           children: [
             Text('系统健康状态', style: Theme.of(context).textTheme.titleLarge),
             const SizedBox(height: 28),
-            const Row(
+            Row(
               children: [
-                CircleAvatar(
+                const CircleAvatar(
                   radius: 42,
                   backgroundColor: Color(0xFFE6ECF5),
                   child: Icon(
@@ -362,33 +600,37 @@ class _HealthCard extends StatelessWidget {
                     size: 40,
                   ),
                 ),
-                SizedBox(width: 22),
+                const SizedBox(width: 22),
                 Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      '良好',
-                      style: TextStyle(
+                      healthLabel,
+                      style: const TextStyle(
                         fontSize: 24,
                         fontWeight: FontWeight.w900,
                         color: AppColors.primaryDark,
                       ),
                     ),
                     Text(
-                      '上次检查: 2小时前',
-                      style: TextStyle(color: AppColors.muted),
+                      lastScan,
+                      style: const TextStyle(color: AppColors.muted),
                     ),
                   ],
                 ),
               ],
             ),
             const SizedBox(height: 36),
-            const _HealthLine(label: '启动项', value: '12 个高能耗', percent: .45),
+            _HealthLine(
+              label: '系统盘占用',
+              value: '${diskPercent.round()}%',
+              percent: (diskPercent / 100).clamp(0.0, 1.0).toDouble(),
+            ),
             const SizedBox(height: 26),
-            const _HealthLine(
-              label: '内存占用',
-              value: '3.2 GB / 16 GB',
-              percent: .2,
+            _HealthLine(
+              label: '可清理空间',
+              value: cleanableBytes == 0 ? '待扫描' : _formatBytes(cleanableBytes),
+              percent: cleanablePercent,
             ),
           ],
         ),
@@ -477,6 +719,91 @@ class _ToolCard extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+class _AllToolsDialog extends StatelessWidget {
+  const _AllToolsDialog({
+    required this.onOpenAdBlock,
+    required this.onOpenDuplicateFiles,
+    required this.onOpenLargeFiles,
+    required this.onOpenDiskOptimization,
+  });
+
+  final VoidCallback onOpenAdBlock;
+  final VoidCallback onOpenDuplicateFiles;
+  final VoidCallback onOpenLargeFiles;
+  final VoidCallback onOpenDiskOptimization;
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('全部工具'),
+      content: SizedBox(
+        width: 520,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _ToolListTile(
+              icon: Icons.block_outlined,
+              title: '广告清理',
+              subtitle: '写入 hosts 屏蔽广告域名',
+              onTap: onOpenAdBlock,
+            ),
+            _ToolListTile(
+              icon: Icons.copy_outlined,
+              title: '重复文件',
+              subtitle: '按 SHA-256 识别重复文件',
+              onTap: onOpenDuplicateFiles,
+            ),
+            _ToolListTile(
+              icon: Icons.sd_storage_outlined,
+              title: '超大文件',
+              subtitle: '扫描目录中的大体积文件',
+              onTap: onOpenLargeFiles,
+            ),
+            _ToolListTile(
+              icon: Icons.grid_view_outlined,
+              title: '碎片整理',
+              subtitle: '调用 Windows 磁盘优化',
+              onTap: onOpenDiskOptimization,
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('关闭'),
+        ),
+      ],
+    );
+  }
+}
+
+class _ToolListTile extends StatelessWidget {
+  const _ToolListTile({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return ListTile(
+      contentPadding: EdgeInsets.zero,
+      leading: Icon(icon, color: AppColors.primary),
+      title: Text(title, style: const TextStyle(fontWeight: FontWeight.w800)),
+      subtitle: Text(subtitle),
+      trailing: const Icon(Icons.chevron_right),
+      onTap: onTap,
     );
   }
 }
@@ -944,6 +1271,81 @@ class _DiskOptimizationDialogState extends State<_DiskOptimizationDialog> {
   }
 }
 
+class _ScanReportDialog extends StatelessWidget {
+  const _ScanReportDialog({required this.result});
+
+  final CleanupScanResult? result;
+
+  @override
+  Widget build(BuildContext context) {
+    final scanResult = result;
+    return _ToolDialogFrame(
+      title: '扫描详细报告',
+      icon: Icons.receipt_long_outlined,
+      child: scanResult == null
+          ? const Text('尚未执行扫描', style: TextStyle(color: AppColors.muted))
+          : Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _StatusLine(
+                  label: '完成时间',
+                  value: _formatClock(scanResult.completedAt),
+                ),
+                const SizedBox(height: 10),
+                _StatusLine(label: '项目数量', value: '${scanResult.itemCount}'),
+                const SizedBox(height: 10),
+                _StatusLine(
+                  label: '可清理',
+                  value: _formatBytes(scanResult.totalBytes),
+                ),
+                const SizedBox(height: 18),
+                SizedBox(
+                  height: 360,
+                  child: ListView.separated(
+                    itemCount: scanResult.categories.length,
+                    separatorBuilder: (_, __) =>
+                        const Divider(color: AppColors.border),
+                    itemBuilder: (context, index) {
+                      final category = scanResult.categories[index];
+                      return ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        title: Text(
+                          category.name,
+                          style: const TextStyle(fontWeight: FontWeight.w800),
+                        ),
+                        subtitle: Text(
+                          '${category.description}\n'
+                          '扫描路径 ${category.scannedPathCount} 个'
+                          '${category.errors.isEmpty ? '' : ' · 错误 ${category.errors.length} 个'}',
+                        ),
+                        trailing: Column(
+                          crossAxisAlignment: CrossAxisAlignment.end,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              _formatBytes(category.totalBytes),
+                              style:
+                                  const TextStyle(fontWeight: FontWeight.w900),
+                            ),
+                            Text(
+                              '${category.itemCount} 项',
+                              style: const TextStyle(
+                                color: AppColors.muted,
+                                fontSize: 12,
+                              ),
+                            ),
+                          ],
+                        ),
+                      );
+                    },
+                  ),
+                ),
+              ],
+            ),
+    );
+  }
+}
+
 class _ToolDialogFrame extends StatelessWidget {
   const _ToolDialogFrame({
     required this.title,
@@ -1115,13 +1517,21 @@ String _formatBytes(int bytes) {
   return '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(2)} GB';
 }
 
+String _formatClock(DateTime value) {
+  String twoDigits(int number) => number.toString().padLeft(2, '0');
+  return '${twoDigits(value.hour)}:${twoDigits(value.minute)}';
+}
+
 class _TrendCard extends StatelessWidget {
-  const _TrendCard();
+  const _TrendCard({required this.valuesBytes});
+
+  final List<int> valuesBytes;
 
   @override
   Widget build(BuildContext context) {
-    final values = [12, 20, 11, 28, 17, 23, 32];
-    final labels = ['周一', '周二', '周三', '周四', '周五', '周六', '今天'];
+    final values = valuesBytes.isEmpty ? const <int>[0] : valuesBytes;
+    final maxValue =
+        values.fold<int>(1, (max, value) => value > max ? value : max);
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(28),
@@ -1132,51 +1542,74 @@ class _TrendCard extends StatelessWidget {
             const SizedBox(height: 34),
             SizedBox(
               height: 230,
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  for (var i = 0; i < values.length; i++)
-                    Expanded(
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 5),
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.end,
-                          children: [
-                            Expanded(
-                              child: Align(
-                                alignment: Alignment.bottomCenter,
-                                child: FractionallySizedBox(
-                                  heightFactor: values[i] / 36,
-                                  child: Container(
-                                    decoration: BoxDecoration(
-                                      color: i == values.length - 1
-                                          ? AppColors.primaryDark
-                                          : const Color(0xFFD8E4FF),
-                                      borderRadius: const BorderRadius.vertical(
-                                        top: Radius.circular(3),
+              child: valuesBytes.isEmpty
+                  ? const Center(
+                      child: Text(
+                        '暂无扫描记录',
+                        style: TextStyle(color: AppColors.muted),
+                      ),
+                    )
+                  : Row(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        for (var i = 0; i < values.length; i++)
+                          Expanded(
+                            child: Padding(
+                              padding:
+                                  const EdgeInsets.symmetric(horizontal: 5),
+                              child: Column(
+                                mainAxisAlignment: MainAxisAlignment.end,
+                                children: [
+                                  Text(
+                                    _formatBytes(values[i]),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                      color: AppColors.muted,
+                                      fontSize: 11,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 8),
+                                  Expanded(
+                                    child: Align(
+                                      alignment: Alignment.bottomCenter,
+                                      child: FractionallySizedBox(
+                                        heightFactor: (values[i] / maxValue)
+                                            .clamp(.05, 1)
+                                            .toDouble(),
+                                        child: Container(
+                                          decoration: BoxDecoration(
+                                            color: i == values.length - 1
+                                                ? AppColors.primaryDark
+                                                : const Color(0xFFD8E4FF),
+                                            borderRadius:
+                                                const BorderRadius.vertical(
+                                              top: Radius.circular(3),
+                                            ),
+                                          ),
+                                        ),
                                       ),
                                     ),
                                   ),
-                                ),
+                                  const SizedBox(height: 14),
+                                  Text(
+                                    i == values.length - 1
+                                        ? '本次'
+                                        : '第${i + 1}次',
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      fontWeight: i == values.length - 1
+                                          ? FontWeight.w800
+                                          : FontWeight.w500,
+                                      color: AppColors.muted,
+                                    ),
+                                  ),
+                                ],
                               ),
                             ),
-                            const SizedBox(height: 14),
-                            Text(
-                              labels[i],
-                              style: TextStyle(
-                                fontSize: 12,
-                                fontWeight: i == values.length - 1
-                                    ? FontWeight.w800
-                                    : FontWeight.w500,
-                                color: AppColors.muted,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
+                          ),
+                      ],
                     ),
-                ],
-              ),
             ),
           ],
         ),
@@ -1186,6 +1619,10 @@ class _TrendCard extends StatelessWidget {
 }
 
 class _ActivityCard extends StatelessWidget {
+  const _ActivityCard({required this.entries});
+
+  final List<_ActivityLogEntry> entries;
+
   @override
   Widget build(BuildContext context) {
     return Card(
@@ -1196,29 +1633,32 @@ class _ActivityCard extends StatelessWidget {
           children: [
             Text('实时活动日志', style: Theme.of(context).textTheme.titleMedium),
             const SizedBox(height: 26),
-            const _Activity(
-              icon: Icons.done_all,
-              color: Color(0xFFD8FBE4),
-              title: '成功清理 12.4 GB',
-              subtitle: '35 分钟前 · 临时文件',
-            ),
-            const _Activity(
-              icon: Icons.sync,
-              color: Color(0xFFDDEBFF),
-              title: '数据库更新完成',
-              subtitle: '2 小时前 · 版本 v4.5.2',
-            ),
-            const _Activity(
-              icon: Icons.warning_amber,
-              color: Color(0xFFFFF1C7),
-              title: '发现 5 个安全威胁',
-              subtitle: '昨天 18:42 · 深度扫描',
-            ),
+            for (final entry in entries)
+              _Activity(
+                icon: entry.icon,
+                color: entry.color,
+                title: entry.title,
+                subtitle: entry.subtitle,
+              ),
           ],
         ),
       ),
     );
   }
+}
+
+class _ActivityLogEntry {
+  const _ActivityLogEntry({
+    required this.icon,
+    required this.color,
+    required this.title,
+    required this.subtitle,
+  });
+
+  final IconData icon;
+  final Color color;
+  final String title;
+  final String subtitle;
 }
 
 class _Activity extends StatelessWidget {
@@ -1246,22 +1686,28 @@ class _Activity extends StatelessWidget {
             child: Icon(icon, color: AppColors.primary, size: 22),
           ),
           const SizedBox(width: 18),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                title,
-                style: const TextStyle(
-                  fontWeight: FontWeight.w800,
-                  color: AppColors.text,
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w800,
+                    color: AppColors.text,
+                  ),
                 ),
-              ),
-              const SizedBox(height: 3),
-              Text(
-                subtitle,
-                style: const TextStyle(color: AppColors.muted, fontSize: 12),
-              ),
-            ],
+                const SizedBox(height: 3),
+                Text(
+                  subtitle,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(color: AppColors.muted, fontSize: 12),
+                ),
+              ],
+            ),
           ),
         ],
       ),

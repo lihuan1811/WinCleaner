@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:wincleaner_desktop/screens/dashboard_live_screen.dart';
+import 'package:wincleaner_desktop/screens/dashboard_screen.dart';
 import 'package:wincleaner_desktop/services/drive_status_service.dart';
 import 'package:wincleaner_desktop/services/system_cleanup_scan_service.dart';
 import 'package:wincleaner_desktop/theme/app_theme.dart';
@@ -56,7 +56,7 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         theme: WinCleanerTheme.light(),
-        home: DashboardLiveScreen(
+        home: DashboardScreen(
           driveStatusService: _FakeDriveStatusService(),
           cleanupScanService: _FakeCleanupScanService(),
         ),
