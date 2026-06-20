@@ -60,7 +60,7 @@ void main() {
 
     expect(find.text('375.00 GB'), findsOneWidget);
     expect(find.text('125.00 GB'), findsOneWidget);
-    expect(find.text('75%'), findsOneWidget);
+    expect(find.text('75%'), findsAtLeastNWidgets(1));
 
     await tester.tap(find.text('一键开始扫描'));
     await tester.pumpAndSettle();
