@@ -47,6 +47,12 @@ void main() {
   testWidgets('dashboard loads real status and scan report actions', (
     tester,
   ) async {
+    tester.view
+      ..physicalSize = const Size(1500, 1000)
+      ..devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
     await tester.pumpWidget(
       MaterialApp(
         theme: WinCleanerTheme.light(),
