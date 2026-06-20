@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import '../screens/dashboard_screen.dart';
+import '../screens/dashboard_live_screen.dart';
 import '../screens/uninstaller_screen.dart';
 import '../services/installed_apps_service.dart';
 import '../theme/app_theme.dart';
@@ -31,7 +31,7 @@ class _AppShellState extends State<AppShell> {
   Widget build(BuildContext context) {
     final content = switch (_selectedIndex) {
       2 => UninstallerScreen(installedAppsService: widget.installedAppsService),
-      _ => const DashboardScreen(),
+      _ => const DashboardLiveScreen(),
     };
 
     return Scaffold(
