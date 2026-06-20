@@ -94,12 +94,55 @@ jobs:
             throw "Flutter release executable was not found."
           }
           Copy-Item "$releaseDir/wincleaner_desktop.exe" "$releaseDir/WinCleaner.exe" -Force
+
+          $redistCandidates = @()
+          if ($env:VCToolsRedistDir) {
+            $redistCandidates += Join-Path $env:VCToolsRedistDir "x64\Microsoft.VC143.CRT"
+            $redistCandidates += Join-Path $env:VCToolsRedistDir "x64\Microsoft.VC142.CRT"
+          }
+
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          if (Test-Path $vswhere) {
+            $installPath = & $vswhere -latest -products "*" -property installationPath
+            if ($installPath) {
+              $redistRoot = Join-Path $installPath "VC\Redist\MSVC"
+              if (Test-Path $redistRoot) {
+                Get-ChildItem $redistRoot -Directory |
+                  Sort-Object Name -Descending |
+                  ForEach-Object {
+                    $redistCandidates += Join-Path $_.FullName "x64\Microsoft.VC143.CRT"
+                    $redistCandidates += Join-Path $_.FullName "x64\Microsoft.VC142.CRT"
+                  }
+              }
+            }
+          }
+
+          $crtDir = $redistCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if ($crtDir) {
+            Copy-Item (Join-Path $crtDir "*.dll") $releaseDir -Force
+          }
+
+          $requiredRuntimeDlls = @("msvcp140.dll", "vcruntime140.dll", "vcruntime140_1.dll")
+          foreach ($dll in $requiredRuntimeDlls) {
+            $target = Join-Path $releaseDir $dll
+            if (-not (Test-Path $target)) {
+              $systemCopy = Join-Path $env:WINDIR "System32\$dll"
+              if (Test-Path $systemCopy) {
+                Copy-Item $systemCopy $target -Force
+              }
+            }
+            if (-not (Test-Path $target)) {
+              throw "Required VC++ runtime DLL was not found: $dll"
+            }
+          }
+
           $readme = @(
             "WinCleaner Flutter Windows",
             "",
             "1. Extract this zip completely.",
             "2. Run WinCleaner.exe or Start-WinCleaner.bat.",
-            "3. Keep the data folder and DLL files beside the exe."
+            "3. Keep the data folder and DLL files beside the exe.",
+            "4. This package includes the Visual C++ runtime DLLs required by Flutter."
           )
           Set-Content -Path "$releaseDir/README.txt" -Value $readme -Encoding UTF8
           $launcher = @(
