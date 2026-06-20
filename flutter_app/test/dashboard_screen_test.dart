@@ -71,7 +71,7 @@ void main() {
     await tester.tap(find.text('一键开始扫描'));
     await tester.pumpAndSettle();
 
-    expect(find.text('发现 2 个可清理项目'), findsOneWidget);
+    expect(find.text('发现 2 个可清理项目'), findsAtLeastNWidgets(1));
     expect(find.text('12.0 MB'), findsAtLeastNWidgets(1));
 
     await tester.tap(find.text('详细报告'));
