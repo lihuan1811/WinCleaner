@@ -19,6 +19,18 @@ the vendor uninstaller finishes.
 
 ## Toolbox features
 
+The dashboard is service-backed instead of static:
+
+- The storage card reads the real Windows C: drive size and free space through
+  PowerShell/CIM.
+- One-click scan walks common safe cleanup locations such as temp folders,
+  recycle bin, browser caches, Windows logs, update cache, thumbnail cache,
+  Prefetch, error reports, Delivery Optimization cache, and Downloads.
+- The detailed report shows category totals, scanned path counts, item counts,
+  and scan errors.
+- The health card, trend chart, and activity log update from the latest drive
+  status and scan result.
+
 The advanced toolbox entries are functional:
 
 - Ad cleanup writes and restores a WinCleaner-managed block in the Windows
