@@ -90,6 +90,7 @@ void main() {
     expect(find.text('重复文件'), findsWidgets);
     expect(find.text('超大文件'), findsWidgets);
     expect(find.text('空文件夹'), findsWidgets);
+    expect(find.text('C盘瘦身'), findsWidgets);
   });
 
   testWidgets('dashboard tool cards open their feature dialogs', (
@@ -157,6 +158,15 @@ void main() {
     await tester.tap(find.text('空文件夹').first);
     await tester.pumpAndSettle();
     expect(find.text('扫描空文件夹'), findsOneWidget);
+
+    await tester.tap(find.text('关闭'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('C盘瘦身').first);
+    await tester.pumpAndSettle();
+    expect(find.text('AppData 迁移瘦身'), findsOneWidget);
+    expect(find.text('扫描大目录'), findsOneWidget);
+    expect(find.text('执行迁移'), findsOneWidget);
   });
 
   testWidgets('about and settings actions are clickable', (tester) async {

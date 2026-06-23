@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 
 import '../services/ad_block_service.dart';
+import '../services/app_data_migration_service.dart';
 import '../services/disk_optimization_service.dart';
 import '../services/drive_status_service.dart';
 import '../services/duplicate_files_service.dart';
@@ -24,6 +25,7 @@ class DashboardScreen extends StatefulWidget {
     this.windowsOptimizationService,
     this.driveStatusService,
     this.cleanupScanService,
+    this.appDataMigrationService,
   });
 
   final AdBlockService? adBlockService;
@@ -33,6 +35,7 @@ class DashboardScreen extends StatefulWidget {
   final WindowsOptimizationService? windowsOptimizationService;
   final DriveStatusService? driveStatusService;
   final SystemCleanupScanService? cleanupScanService;
+  final AppDataMigrationService? appDataMigrationService;
 
   @override
   State<DashboardScreen> createState() => _DashboardScreenState();
@@ -46,6 +49,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   late final WindowsOptimizationService _windowsOptimizationService;
   late final DriveStatusService _driveStatusService;
   late final SystemCleanupScanService _cleanupScanService;
+  late final AppDataMigrationService _appDataMigrationService;
   DriveStatus? _driveStatus;
   CleanupScanResult? _scanResult;
   bool _loadingDriveStatus = true;
@@ -76,6 +80,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
     _driveStatusService = widget.driveStatusService ?? DriveStatusService();
     _cleanupScanService =
         widget.cleanupScanService ?? SystemCleanupScanService();
+    _appDataMigrationService =
+        widget.appDataMigrationService ?? AppDataMigrationService();
     _loadDriveStatus();
   }
 
@@ -299,6 +305,15 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
+  Future<void> _openAppDataMigrationTool() {
+    return showDialog<void>(
+      context: context,
+      builder: (context) => _AppDataMigrationDialog(
+        service: _appDataMigrationService,
+      ),
+    );
+  }
+
   Future<void> _openDiskOptimizationTool() {
     return showDialog<void>(
       context: context,
@@ -330,6 +345,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
         onOpenLargeFiles: () {
           Navigator.of(context).pop();
           _openLargeFilesTool();
+        },
+        onOpenAppDataMigration: () {
+          Navigator.of(context).pop();
+          _openAppDataMigrationTool();
         },
         onOpenDiskOptimization: () {
           Navigator.of(context).pop();
@@ -630,11 +649,13 @@ class FileManagementScreen extends StatelessWidget {
     this.duplicateFilesService,
     this.largeFilesService,
     this.emptyFolderService,
+    this.appDataMigrationService,
   });
 
   final DuplicateFilesService? duplicateFilesService;
   final LargeFilesService? largeFilesService;
   final EmptyFolderService? emptyFolderService;
+  final AppDataMigrationService? appDataMigrationService;
 
   Future<void> _openDuplicateTool(BuildContext context) {
     return showDialog<void>(
@@ -666,6 +687,15 @@ class FileManagementScreen extends StatelessWidget {
     );
   }
 
+  Future<void> _openAppDataMigrationTool(BuildContext context) {
+    return showDialog<void>(
+      context: context,
+      builder: (context) => _AppDataMigrationDialog(
+        service: appDataMigrationService ?? AppDataMigrationService(),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return _FeatureCenterScaffold(
@@ -689,6 +719,12 @@ class FileManagementScreen extends StatelessWidget {
           title: '空文件夹',
           subtitle: '按最深路径优先扫描和删除空目录',
           onTap: () => _openEmptyFoldersTool(context),
+        ),
+        _ToolCard(
+          icon: Icons.drive_file_move_outline,
+          title: 'C盘瘦身',
+          subtitle: '迁移 AppData 大目录到其他盘并保留原路径',
+          onTap: () => _openAppDataMigrationTool(context),
         ),
       ],
     );
@@ -1246,6 +1282,7 @@ class _AllToolsDialog extends StatelessWidget {
     required this.onOpenAdBlock,
     required this.onOpenDuplicateFiles,
     required this.onOpenLargeFiles,
+    required this.onOpenAppDataMigration,
     required this.onOpenDiskOptimization,
     required this.onOpenWindowsOptimization,
   });
@@ -1253,6 +1290,7 @@ class _AllToolsDialog extends StatelessWidget {
   final VoidCallback onOpenAdBlock;
   final VoidCallback onOpenDuplicateFiles;
   final VoidCallback onOpenLargeFiles;
+  final VoidCallback onOpenAppDataMigration;
   final VoidCallback onOpenDiskOptimization;
   final VoidCallback onOpenWindowsOptimization;
 
@@ -1282,6 +1320,12 @@ class _AllToolsDialog extends StatelessWidget {
               title: '超大文件',
               subtitle: '扫描目录中的大体积文件',
               onTap: onOpenLargeFiles,
+            ),
+            _ToolListTile(
+              icon: Icons.drive_file_move_outline,
+              title: 'C盘瘦身',
+              subtitle: '迁移 AppData 大目录并创建 Junction',
+              onTap: onOpenAppDataMigration,
             ),
             _ToolListTile(
               icon: Icons.tune_outlined,
@@ -1829,6 +1873,450 @@ class _EmptyFoldersDialogState extends State<_EmptyFoldersDialog> {
             ),
           ],
         ],
+      ),
+    );
+  }
+}
+
+class _AppDataMigrationDialog extends StatefulWidget {
+  const _AppDataMigrationDialog({required this.service});
+
+  final AppDataMigrationService service;
+
+  @override
+  State<_AppDataMigrationDialog> createState() =>
+      _AppDataMigrationDialogState();
+}
+
+class _AppDataMigrationDialogState extends State<_AppDataMigrationDialog> {
+  late final TextEditingController _targetController;
+  late List<AppDataScanSource> _sources;
+  AppDataMigrationScanResult? _result;
+  List<AppDataMigrationRecord> _history = const [];
+  final Set<int> _selectedFolders = {};
+  bool _busy = false;
+  String? _message;
+
+  @override
+  void initState() {
+    super.initState();
+    _targetController = TextEditingController(
+      text: AppDataMigrationService.defaultTargetRoot(),
+    );
+    _sources = AppDataMigrationService.defaultScanSources();
+    if (_sources.isEmpty) {
+      _sources = [
+        AppDataScanSource(
+          label: '当前用户目录',
+          path: _defaultUserScanPath(),
+          targetSubdir: 'Custom',
+        ),
+      ];
+    }
+    _history = widget.service.loadHistory();
+  }
+
+  @override
+  void dispose() {
+    _targetController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _scan() async {
+    setState(() {
+      _busy = true;
+      _message = null;
+      _selectedFolders.clear();
+    });
+    try {
+      final result = await widget.service.scanLargeFolders(_sources);
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _busy = false;
+        _result = result;
+        _selectedFolders.addAll(
+          List<int>.generate(result.folders.length, (index) => index),
+        );
+        _message =
+            '发现 ${result.folders.length} 个可迁移目录，总计 ${_formatBytes(result.totalBytes)}';
+      });
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _busy = false;
+        _message = error.toString();
+      });
+    }
+  }
+
+  Future<void> _migrateSelected() async {
+    final result = _result;
+    if (result == null || _selectedFolders.isEmpty) {
+      setState(() => _message = '请先扫描并勾选需要迁移的目录');
+      return;
+    }
+
+    final folders = _selectedFolders
+        .where((index) => index >= 0 && index < result.folders.length)
+        .map((index) => result.folders[index])
+        .toList();
+    final totalBytes =
+        folders.fold<int>(0, (total, folder) => total + folder.sizeBytes);
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('确认迁移 AppData 目录'),
+        content: Text(
+          '将移动 ${folders.length} 个目录到：\n${_targetController.text}\n\n'
+          '移动后会在原路径创建 Junction。建议关闭相关软件，并以管理员身份运行。\n'
+          '预计释放 C 盘 ${_formatBytes(totalBytes)}。',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('执行迁移'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) {
+      return;
+    }
+
+    setState(() {
+      _busy = true;
+      _message = '正在迁移 ${folders.length} 个目录...';
+    });
+
+    final batchId = DateTime.now().microsecondsSinceEpoch.toString();
+    var successCount = 0;
+    final outputs = <String>[];
+    for (final folder in folders) {
+      final operation = await widget.service.migrateFolder(
+        folder,
+        _targetController.text,
+        batchId: batchId,
+      );
+      if (operation.success) {
+        successCount++;
+      }
+      outputs.add('${folder.name}: ${operation.output}');
+    }
+
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _busy = false;
+      _history = widget.service.loadHistory();
+      _selectedFolders.clear();
+      _result = null;
+      _message = '迁移完成 $successCount/${folders.length}\n${outputs.join('\n')}';
+    });
+  }
+
+  Future<void> _restore(AppDataMigrationRecord record) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('确认还原'),
+        content: Text('将把 ${record.name} 从目标目录移回原路径：\n${record.sourcePath}'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('还原'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) {
+      return;
+    }
+
+    setState(() {
+      _busy = true;
+      _message = '正在还原 ${record.name}...';
+    });
+    final result = await widget.service.restoreMigration(record);
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _busy = false;
+      _history = widget.service.loadHistory();
+      _message = result.output;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scanResult = _result;
+    return _ToolDialogFrame(
+      title: 'AppData 迁移瘦身',
+      icon: Icons.drive_file_move_outline,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          TextField(
+            controller: _targetController,
+            decoration: const InputDecoration(
+              labelText: '目标根目录',
+              prefixIcon: Icon(Icons.drive_folder_upload_outlined),
+              helperText: '建议选择 D/E 盘，例如 D:\\Yugongyipan',
+            ),
+          ),
+          const SizedBox(height: 14),
+          const Text(
+            '扫描来源',
+            style: TextStyle(fontWeight: FontWeight.w900),
+          ),
+          const SizedBox(height: 8),
+          _ScanSourceSelector(
+            sources: _sources,
+            busy: _busy,
+            onChanged: (index, enabled) {
+              setState(() {
+                final source = _sources[index];
+                _sources[index] = AppDataScanSource(
+                  label: source.label,
+                  path: source.path,
+                  targetSubdir: source.targetSubdir,
+                  enabled: enabled,
+                );
+              });
+            },
+          ),
+          const SizedBox(height: 14),
+          Wrap(
+            spacing: 12,
+            runSpacing: 10,
+            children: [
+              FilledButton.icon(
+                onPressed: _busy ? null : _scan,
+                icon: const Icon(Icons.search),
+                label: const Text('扫描大目录'),
+              ),
+              OutlinedButton.icon(
+                onPressed:
+                    _busy || scanResult == null || _selectedFolders.isEmpty
+                        ? null
+                        : _migrateSelected,
+                icon: const Icon(Icons.drive_file_move_outline),
+                label: const Text('执行迁移'),
+              ),
+              OutlinedButton.icon(
+                onPressed: _busy
+                    ? null
+                    : () => setState(() {
+                          _history = widget.service.loadHistory();
+                          _message = '迁移记录已刷新';
+                        }),
+                icon: const Icon(Icons.history),
+                label: const Text('刷新记录'),
+              ),
+            ],
+          ),
+          if (_busy) ...[
+            const SizedBox(height: 18),
+            const LinearProgressIndicator(minHeight: 4),
+          ],
+          if (_message != null) ...[
+            const SizedBox(height: 16),
+            _CommandOutput(output: _message!),
+          ],
+          if (scanResult != null) ...[
+            const SizedBox(height: 16),
+            _StatusLine(
+              label: '可迁移',
+              value:
+                  '${scanResult.folders.length} 个目录 · ${_formatBytes(scanResult.totalBytes)}',
+            ),
+            const SizedBox(height: 12),
+            _MigrationFolderList(
+              folders: scanResult.folders,
+              selected: _selectedFolders,
+              onChanged: _busy
+                  ? null
+                  : (index, selected) {
+                      setState(() {
+                        if (selected) {
+                          _selectedFolders.add(index);
+                        } else {
+                          _selectedFolders.remove(index);
+                        }
+                      });
+                    },
+            ),
+          ],
+          const SizedBox(height: 18),
+          const Text(
+            '迁移记录',
+            style: TextStyle(fontWeight: FontWeight.w900),
+          ),
+          const SizedBox(height: 8),
+          _MigrationHistoryList(
+            records: _history,
+            onRestore: _busy ? null : _restore,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ScanSourceSelector extends StatelessWidget {
+  const _ScanSourceSelector({
+    required this.sources,
+    required this.busy,
+    required this.onChanged,
+  });
+
+  final List<AppDataScanSource> sources;
+  final bool busy;
+  final void Function(int index, bool enabled) onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: 150,
+      child: ListView.separated(
+        itemCount: sources.length,
+        separatorBuilder: (_, __) => const Divider(color: AppColors.border),
+        itemBuilder: (context, index) {
+          final source = sources[index];
+          return CheckboxListTile(
+            dense: true,
+            value: source.enabled,
+            onChanged:
+                busy ? null : (value) => onChanged(index, value ?? false),
+            title: Text(
+              source.label,
+              style: const TextStyle(fontWeight: FontWeight.w800),
+            ),
+            subtitle: Text(source.path, overflow: TextOverflow.ellipsis),
+            controlAffinity: ListTileControlAffinity.leading,
+          );
+        },
+      ),
+    );
+  }
+}
+
+class _MigrationFolderList extends StatelessWidget {
+  const _MigrationFolderList({
+    required this.folders,
+    required this.selected,
+    required this.onChanged,
+  });
+
+  final List<AppDataMigrationFolder> folders;
+  final Set<int> selected;
+  final void Function(int index, bool selected)? onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    if (folders.isEmpty) {
+      return const Text('未发现占比较高的大目录',
+          style: TextStyle(color: AppColors.muted));
+    }
+
+    return SizedBox(
+      height: 300,
+      child: ListView.separated(
+        itemCount: folders.length,
+        separatorBuilder: (_, __) => const Divider(color: AppColors.border),
+        itemBuilder: (context, index) {
+          final folder = folders[index];
+          final ratio = folder.parentTotalBytes == 0
+              ? 0
+              : (folder.sizeBytes / folder.parentTotalBytes * 100).round();
+          return CheckboxListTile(
+            dense: true,
+            value: selected.contains(index),
+            onChanged: onChanged == null
+                ? null
+                : (value) => onChanged!(index, value ?? false),
+            title: Text(
+              '${folder.name} · ${_formatBytes(folder.sizeBytes)}',
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontWeight: FontWeight.w800),
+            ),
+            subtitle: Text(
+              '${folder.sourceLabel} · 占父目录 $ratio%\n${folder.path}',
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
+            secondary: const FeatureIcon(
+              icon: Icons.folder_copy_outlined,
+              size: 38,
+              iconSize: 18,
+            ),
+          );
+        },
+      ),
+    );
+  }
+}
+
+class _MigrationHistoryList extends StatelessWidget {
+  const _MigrationHistoryList({
+    required this.records,
+    required this.onRestore,
+  });
+
+  final List<AppDataMigrationRecord> records;
+  final ValueChanged<AppDataMigrationRecord>? onRestore;
+
+  @override
+  Widget build(BuildContext context) {
+    if (records.isEmpty) {
+      return const Text('暂无迁移记录', style: TextStyle(color: AppColors.muted));
+    }
+
+    return SizedBox(
+      height: 240,
+      child: ListView.separated(
+        itemCount: records.length,
+        separatorBuilder: (_, __) => const Divider(color: AppColors.border),
+        itemBuilder: (context, index) {
+          final record = records[index];
+          final createdAt =
+              DateTime.fromMillisecondsSinceEpoch(record.createdAtMillis);
+          return ListTile(
+            contentPadding: EdgeInsets.zero,
+            leading: const FeatureIcon(
+              icon: Icons.history_outlined,
+              size: 38,
+              iconSize: 18,
+            ),
+            title: Text(
+              '${record.name} · ${_formatBytes(record.sizeBytes)}',
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontWeight: FontWeight.w800),
+            ),
+            subtitle: Text(
+              '${_formatClock(createdAt)}\n${record.sourcePath} -> ${record.targetPath}',
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
+            trailing: OutlinedButton(
+              onPressed: onRestore == null ? null : () => onRestore!(record),
+              child: const Text('还原'),
+            ),
+          );
+        },
       ),
     );
   }
