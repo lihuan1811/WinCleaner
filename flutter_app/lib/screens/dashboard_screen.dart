@@ -43,6 +43,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   CleanupScanResult? _scanResult;
   bool _loadingDriveStatus = true;
   bool _scanningSystem = false;
+  bool _cleaningSystem = false;
   String? _dashboardMessage;
   final List<int> _scanTrendBytes = [];
   final List<_ActivityLogEntry> _activities = [
@@ -165,6 +166,92 @@ class _DashboardScreenState extends State<DashboardScreen> {
     }
   }
 
+  Future<void> _startSystemClean() async {
+    final scanResult = _scanResult;
+    if (scanResult == null || scanResult.totalBytes == 0) {
+      setState(() {
+        _dashboardMessage = '请先扫描可清理项目';
+      });
+      return;
+    }
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('确认清理'),
+        content: Text(
+          '将清理已扫描到的临时文件、缓存、日志等安全目标，'
+          '下载目录会保持只扫描不自动删除。\n\n预计可清理 ${_formatBytes(scanResult.totalBytes)}。',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('开始清理'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) {
+      return;
+    }
+
+    setState(() {
+      _cleaningSystem = true;
+      _dashboardMessage = '正在清理安全目标...';
+    });
+
+    try {
+      final result = await _cleanupScanService.clean();
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _cleaningSystem = false;
+        _scanResult = null;
+        _dashboardMessage =
+            '已清理 ${result.deletedCount} 个文件，释放 ${_formatBytes(result.freedBytes)}';
+        _scanTrendBytes
+          ..add(result.freedBytes)
+          ..removeRange(
+              0, _scanTrendBytes.length > 7 ? _scanTrendBytes.length - 7 : 0);
+        _activities
+          ..removeWhere((entry) => entry.title == '等待首次扫描')
+          ..insert(
+            0,
+            _ActivityLogEntry(
+              icon: Icons.cleaning_services_outlined,
+              color: const Color(0xFFD8FBE4),
+              title: '清理完成 ${_formatBytes(result.freedBytes)}',
+              subtitle:
+                  '${result.deletedCount} 个文件 · 跳过 ${result.skippedCategories.length} 类保护目标',
+            ),
+          );
+      });
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _cleaningSystem = false;
+        _dashboardMessage = '清理失败：$error';
+        _activities.insert(
+          0,
+          _ActivityLogEntry(
+            icon: Icons.warning_amber,
+            color: const Color(0xFFFFF1C7),
+            title: '清理失败',
+            subtitle: error.toString(),
+          ),
+        );
+      });
+    }
+  }
+
   Future<void> _openScanReport() {
     return showDialog<void>(
       context: context,
@@ -173,11 +260,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   String get _defaultScanPath {
-    final userProfile = Platform.environment['USERPROFILE'];
-    if (Platform.isWindows && userProfile != null && userProfile.isNotEmpty) {
-      return '$userProfile\\Downloads';
-    }
-    return Platform.environment['HOME'] ?? Directory.current.path;
+    return _defaultUserScanPath();
   }
 
   Future<void> _openAdBlockTool() {
@@ -246,6 +329,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          const _SectionHeader(
+            title: 'C盘清理工作台',
+            subtitle: '先扫描可清理空间，再确认执行清理，下载目录默认保护。',
+          ),
+          const SizedBox(height: 24),
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -256,8 +344,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   scanResult: _scanResult,
                   loading: _loadingDriveStatus,
                   scanning: _scanningSystem,
+                  cleaning: _cleaningSystem,
                   message: _dashboardMessage,
                   onScan: _startSystemScan,
+                  onClean: _startSystemClean,
                   onReport: _openScanReport,
                 ),
               ),
@@ -353,14 +443,238 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 }
 
+class SystemOptimizationScreen extends StatelessWidget {
+  const SystemOptimizationScreen({
+    super.key,
+    this.adBlockService,
+    this.diskOptimizationService,
+  });
+
+  final AdBlockService? adBlockService;
+  final DiskOptimizationService? diskOptimizationService;
+
+  Future<void> _openAdBlockTool(BuildContext context) {
+    return showDialog<void>(
+      context: context,
+      builder: (context) =>
+          _AdBlockDialog(service: adBlockService ?? AdBlockService()),
+    );
+  }
+
+  Future<void> _openDiskOptimizationTool(BuildContext context) {
+    return showDialog<void>(
+      context: context,
+      builder: (context) => _DiskOptimizationDialog(
+        service: diskOptimizationService ?? DiskOptimizationService(),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return _FeatureCenterScaffold(
+      title: '系统优化中心',
+      subtitle: '集中处理 hosts 广告屏蔽和 Windows 磁盘优化。',
+      children: [
+        _ToolCard(
+          icon: Icons.block_outlined,
+          title: '广告清理',
+          subtitle: '写入 hosts 规则，屏蔽常见广告域名',
+          onTap: () => _openAdBlockTool(context),
+        ),
+        _ToolCard(
+          icon: Icons.grid_view_outlined,
+          title: '碎片整理',
+          subtitle: '调用 Windows defrag 分析和优化磁盘',
+          onTap: () => _openDiskOptimizationTool(context),
+        ),
+      ],
+    );
+  }
+}
+
+class FileManagementScreen extends StatelessWidget {
+  const FileManagementScreen({
+    super.key,
+    this.duplicateFilesService,
+    this.largeFilesService,
+  });
+
+  final DuplicateFilesService? duplicateFilesService;
+  final LargeFilesService? largeFilesService;
+
+  Future<void> _openDuplicateTool(BuildContext context) {
+    return showDialog<void>(
+      context: context,
+      builder: (context) => _DuplicateFilesDialog(
+        service: duplicateFilesService ?? DuplicateFilesService(),
+        initialPath: _defaultUserScanPath(),
+      ),
+    );
+  }
+
+  Future<void> _openLargeFilesTool(BuildContext context) {
+    return showDialog<void>(
+      context: context,
+      builder: (context) => _LargeFilesDialog(
+        service: largeFilesService ?? LargeFilesService(),
+        initialPath: _defaultUserScanPath(),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return _FeatureCenterScaffold(
+      title: '文件管理中心',
+      subtitle: '发现重复文件和大体积文件，先定位再处理。',
+      children: [
+        _ToolCard(
+          icon: Icons.copy_outlined,
+          title: '重复文件',
+          subtitle: '按文件大小和 SHA-256 查找重复副本',
+          onTap: () => _openDuplicateTool(context),
+        ),
+        _ToolCard(
+          icon: Icons.sd_storage_outlined,
+          title: '超大文件',
+          subtitle: '扫描目录中的大文件并按大小排序',
+          onTap: () => _openLargeFilesTool(context),
+        ),
+      ],
+    );
+  }
+}
+
+class _FeatureCenterScaffold extends StatelessWidget {
+  const _FeatureCenterScaffold({
+    required this.title,
+    required this.subtitle,
+    required this.children,
+  });
+
+  final String title;
+  final String subtitle;
+  final List<Widget> children;
+
+  @override
+  Widget build(BuildContext context) {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(32),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _SectionHeader(title: title, subtitle: subtitle),
+          const SizedBox(height: 24),
+          LayoutBuilder(
+            builder: (context, constraints) {
+              const gap = 24.0;
+              final columns = constraints.maxWidth < 760 ? 1 : 2;
+              final tileWidth =
+                  (constraints.maxWidth - gap * (columns - 1)) / columns;
+              return Wrap(
+                spacing: gap,
+                runSpacing: gap,
+                children: [
+                  for (final child in children)
+                    SizedBox(width: tileWidth, child: child),
+                ],
+              );
+            },
+          ),
+          const SizedBox(height: 28),
+          const _GuidanceCard(),
+        ],
+      ),
+    );
+  }
+}
+
+class _SectionHeader extends StatelessWidget {
+  const _SectionHeader({required this.title, required this.subtitle});
+
+  final String title;
+  final String subtitle;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(28),
+      decoration: BoxDecoration(
+        color: AppColors.warmSurface,
+        borderRadius: BorderRadius.circular(28),
+        border: Border.all(color: AppColors.border),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(title, style: Theme.of(context).textTheme.headlineMedium),
+                const SizedBox(height: 8),
+                Text(
+                  subtitle,
+                  style: const TextStyle(
+                    color: AppColors.muted,
+                    fontSize: 15,
+                    height: 1.5,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Container(
+            width: 54,
+            height: 54,
+            decoration: const BoxDecoration(
+              color: AppColors.paleBlue,
+              shape: BoxShape.circle,
+            ),
+            child: const Icon(Icons.north_east, color: AppColors.primaryDark),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _GuidanceCard extends StatelessWidget {
+  const _GuidanceCard();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Card(
+      child: Padding(
+        padding: EdgeInsets.all(24),
+        child: Row(
+          children: [
+            Icon(Icons.verified_user_outlined, color: AppColors.primary),
+            SizedBox(width: 14),
+            Expanded(
+              child: Text(
+                '会修改系统或删除文件的操作都需要确认。建议在 Windows 上以管理员身份运行。',
+                style: TextStyle(color: AppColors.muted, height: 1.5),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _StorageCard extends StatelessWidget {
   const _StorageCard({
     required this.status,
     required this.scanResult,
     required this.loading,
     required this.scanning,
+    required this.cleaning,
     required this.message,
     required this.onScan,
+    required this.onClean,
     required this.onReport,
   });
 
@@ -368,8 +682,10 @@ class _StorageCard extends StatelessWidget {
   final CleanupScanResult? scanResult;
   final bool loading;
   final bool scanning;
+  final bool cleaning;
   final String? message;
   final VoidCallback onScan;
+  final VoidCallback onClean;
   final VoidCallback onReport;
 
   @override
@@ -432,7 +748,7 @@ class _StorageCard extends StatelessWidget {
                       style: const TextStyle(color: AppColors.muted),
                     ),
                   ],
-                  if (scanning) ...[
+                  if (scanning || cleaning) ...[
                     const SizedBox(height: 16),
                     const LinearProgressIndicator(minHeight: 4),
                   ],
@@ -449,7 +765,7 @@ class _StorageCard extends StatelessWidget {
                             borderRadius: BorderRadius.circular(10),
                           ),
                         ),
-                        onPressed: scanning ? null : onScan,
+                        onPressed: scanning || cleaning ? null : onScan,
                         icon: const Icon(Icons.search),
                         label: const Text(
                           '一键开始扫描',
@@ -457,14 +773,33 @@ class _StorageCard extends StatelessWidget {
                         ),
                       ),
                       const SizedBox(width: 18),
+                      FilledButton.icon(
+                        style: FilledButton.styleFrom(
+                          fixedSize: const Size(150, 62),
+                          foregroundColor: AppColors.primaryDark,
+                          backgroundColor: AppColors.paleBlue,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(16),
+                          ),
+                        ),
+                        onPressed: scanning ||
+                                cleaning ||
+                                scanResult == null ||
+                                scanResult!.totalBytes == 0
+                            ? null
+                            : onClean,
+                        icon: const Icon(Icons.cleaning_services_outlined),
+                        label: Text(cleaning ? '清理中' : '一键清理'),
+                      ),
+                      const SizedBox(width: 18),
                       OutlinedButton(
                         style: OutlinedButton.styleFrom(
                           fixedSize: const Size(150, 62),
                           shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(10),
+                            borderRadius: BorderRadius.circular(16),
                           ),
                         ),
-                        onPressed: onReport,
+                        onPressed: scanning || cleaning ? null : onReport,
                         child: const Text(
                           '详细报告',
                           style: TextStyle(fontWeight: FontWeight.w800),
@@ -688,34 +1023,71 @@ class _ToolCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Card(
+      clipBehavior: Clip.antiAlias,
+      color: AppColors.surfaceTint,
       child: InkWell(
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(28),
         onTap: onTap,
         child: SizedBox(
-          height: 170,
-          child: Padding(
-            padding: const EdgeInsets.all(28),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Container(
-                  width: 56,
-                  height: 56,
-                  decoration: BoxDecoration(
-                    color: AppColors.paleBlue,
-                    borderRadius: BorderRadius.circular(10),
+          height: 190,
+          child: Stack(
+            children: [
+              Padding(
+                padding: const EdgeInsets.all(28),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Container(
+                      width: 58,
+                      height: 58,
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(18),
+                      ),
+                      child: Icon(icon, color: AppColors.primaryDark),
+                    ),
+                    const Spacer(),
+                    Text(title, style: Theme.of(context).textTheme.titleMedium),
+                    const SizedBox(height: 6),
+                    Text(
+                      subtitle,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style:
+                          const TextStyle(color: AppColors.muted, fontSize: 13),
+                    ),
+                  ],
+                ),
+              ),
+              Positioned(
+                right: 0,
+                bottom: 0,
+                child: Container(
+                  width: 72,
+                  height: 72,
+                  decoration: const BoxDecoration(
+                    color: AppColors.warmSurface,
+                    borderRadius:
+                        BorderRadius.only(topLeft: Radius.circular(24)),
                   ),
-                  child: Icon(icon, color: AppColors.text),
+                  child: Center(
+                    child: Container(
+                      width: 46,
+                      height: 46,
+                      decoration: const BoxDecoration(
+                        color: AppColors.primary,
+                        shape: BoxShape.circle,
+                      ),
+                      child: const Icon(
+                        Icons.north_east,
+                        color: Colors.white,
+                        size: 20,
+                      ),
+                    ),
+                  ),
                 ),
-                const Spacer(),
-                Text(title, style: Theme.of(context).textTheme.titleMedium),
-                const SizedBox(height: 6),
-                Text(
-                  subtitle,
-                  style: const TextStyle(color: AppColors.muted, fontSize: 13),
-                ),
-              ],
-            ),
+              ),
+            ],
           ),
         ),
       ),
@@ -1515,6 +1887,14 @@ String _formatBytes(int bytes) {
     return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
   }
   return '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(2)} GB';
+}
+
+String _defaultUserScanPath() {
+  final userProfile = Platform.environment['USERPROFILE'];
+  if (Platform.isWindows && userProfile != null && userProfile.isNotEmpty) {
+    return '$userProfile\\Downloads';
+  }
+  return Platform.environment['HOME'] ?? Directory.current.path;
 }
 
 String _formatClock(DateTime value) {

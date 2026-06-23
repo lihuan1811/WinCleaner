@@ -52,4 +52,97 @@ void main() {
     expect(find.text('BCU 后端未配置'), findsOneWidget);
     expect(find.text('卸载选中项'), findsOneWidget);
   });
+
+  testWidgets('primary navigation opens distinct feature centers', (
+    tester,
+  ) async {
+    useDesktopTestWindow(tester);
+
+    await tester.pumpWidget(
+      const WinCleanerApp(installedAppsService: _FakeInstalledAppsService()),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('C盘清理工作台'), findsOneWidget);
+
+    await tester.tap(find.text('系统优化'));
+    await tester.pumpAndSettle();
+    expect(find.text('系统优化中心'), findsOneWidget);
+    expect(find.text('广告清理'), findsWidgets);
+    expect(find.text('碎片整理'), findsWidgets);
+
+    await tester.tap(find.text('文件管理'));
+    await tester.pumpAndSettle();
+    expect(find.text('文件管理中心'), findsOneWidget);
+    expect(find.text('重复文件'), findsWidgets);
+    expect(find.text('超大文件'), findsWidgets);
+  });
+
+  testWidgets('dashboard tool cards open their feature dialogs', (
+    tester,
+  ) async {
+    useDesktopTestWindow(tester);
+
+    await tester.pumpWidget(
+      const WinCleanerApp(installedAppsService: _FakeInstalledAppsService()),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.ensureVisible(find.text('广告清理').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('广告清理').first);
+    await tester.pump(const Duration(milliseconds: 300));
+
+    expect(find.text('启用屏蔽'), findsOneWidget);
+
+    await tester.tap(find.text('关闭'));
+    await tester.pump(const Duration(milliseconds: 300));
+
+    await tester.ensureVisible(find.text('重复文件').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('重复文件').first);
+    await tester.pump(const Duration(milliseconds: 300));
+
+    expect(find.text('扫描重复文件'), findsOneWidget);
+  });
+
+  testWidgets('about and settings actions are clickable', (tester) async {
+    useDesktopTestWindow(tester);
+
+    await tester.pumpWidget(
+      const WinCleanerApp(installedAppsService: _FakeInstalledAppsService()),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('设置'));
+    await tester.pumpAndSettle();
+    expect(find.text('设置'), findsWidgets);
+
+    await tester.tap(find.text('关闭'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('关于我们'));
+    await tester.pumpAndSettle();
+    expect(find.text('关于 WinCleaner'), findsOneWidget);
+  });
+
+  testWidgets('search and account actions provide feedback', (tester) async {
+    useDesktopTestWindow(tester);
+
+    await tester.pumpWidget(
+      const WinCleanerApp(installedAppsService: _FakeInstalledAppsService()),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('搜索'));
+    await tester.pumpAndSettle();
+    expect(find.text('搜索工具'), findsOneWidget);
+
+    await tester.tap(find.text('关闭'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Administrator'));
+    await tester.pumpAndSettle();
+    expect(find.text('账户'), findsOneWidget);
+  });
 }

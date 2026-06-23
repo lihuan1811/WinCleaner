@@ -87,7 +87,7 @@ class _UninstallerScreenState extends State<UninstallerScreen> {
               Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text('软件卸载', style: Theme.of(context).textTheme.titleLarge),
+                  Text('软件卸载中心', style: Theme.of(context).textTheme.titleLarge),
                   const SizedBox(height: 4),
                   const Text(
                     '通过 BCUninstaller 后端执行卸载，危险操作需二次确认',
@@ -245,9 +245,9 @@ class _UninstallerScreenState extends State<UninstallerScreen> {
         return;
       }
       setState(() {
-        _apps = sampleInstalledApps;
+        _apps = const [];
         _isLoading = false;
-        _loadError = '读取软件列表失败，已显示示例数据：$error';
+        _loadError = '读取软件列表失败：$error';
       });
     }
   }
@@ -427,6 +427,15 @@ class _AppTable extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    if (apps.isEmpty) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: 54),
+        child: Center(
+          child: Text('未读取到可卸载软件', style: TextStyle(color: AppColors.muted)),
+        ),
+      );
+    }
+
     return Column(
       children: [
         const _TableHeader(),

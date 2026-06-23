@@ -52,4 +52,48 @@ void main() {
     expect(result.categories.last.itemCount, 1);
     expect(result.categories.last.totalBytes, 3);
   });
+
+  test('cleans eligible cleanup targets and skips protected targets', () async {
+    final tempDir =
+        await Directory.systemTemp.createTemp('cleanup-clean-test-');
+    addTearDown(() => tempDir.delete(recursive: true));
+
+    final tempTarget = Directory('${tempDir.path}${Platform.pathSeparator}temp')
+      ..createSync();
+    final protectedTarget =
+        Directory('${tempDir.path}${Platform.pathSeparator}downloads')
+          ..createSync();
+    final removableFile =
+        File('${tempTarget.path}${Platform.pathSeparator}one.tmp')
+          ..writeAsStringSync('12345');
+    final protectedFile =
+        File('${protectedTarget.path}${Platform.pathSeparator}keep.zip')
+          ..writeAsStringSync('1234567');
+
+    final service = SystemCleanupScanService(
+      targets: [
+        CleanupScanTarget(
+          id: 'temp',
+          name: '临时文件',
+          description: '系统和用户临时目录',
+          paths: [tempTarget.path],
+        ),
+        CleanupScanTarget(
+          id: 'downloads',
+          name: '下载目录',
+          description: '当前用户下载目录',
+          paths: [protectedTarget.path],
+          canClean: false,
+        ),
+      ],
+    );
+
+    final result = await service.clean();
+
+    expect(result.deletedCount, 1);
+    expect(result.freedBytes, 5);
+    expect(result.skippedCategories, contains('下载目录'));
+    expect(await removableFile.exists(), isFalse);
+    expect(await protectedFile.exists(), isTrue);
+  });
 }

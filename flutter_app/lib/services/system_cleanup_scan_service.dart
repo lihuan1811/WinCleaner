@@ -6,12 +6,14 @@ class CleanupScanTarget {
     required this.name,
     required this.description,
     required this.paths,
+    this.canClean = true,
   });
 
   final String id;
   final String name;
   final String description;
   final List<String> paths;
+  final bool canClean;
 }
 
 class CleanupCategoryResult {
@@ -52,6 +54,22 @@ class CleanupScanResult {
       categories.fold(0, (total, category) => total + category.totalBytes);
 }
 
+class CleanupCleanResult {
+  const CleanupCleanResult({
+    required this.deletedCount,
+    required this.freedBytes,
+    required this.skippedCategories,
+    required this.errors,
+    required this.completedAt,
+  });
+
+  final int deletedCount;
+  final int freedBytes;
+  final List<String> skippedCategories;
+  final List<String> errors;
+  final DateTime completedAt;
+}
+
 class SystemCleanupScanService {
   SystemCleanupScanService({List<CleanupScanTarget>? targets})
       : _targets = targets;
@@ -71,6 +89,60 @@ class SystemCleanupScanService {
       startedAt: startedAt,
       completedAt: DateTime.now(),
       categories: categories,
+    );
+  }
+
+  Future<CleanupCleanResult> clean() async {
+    var deletedCount = 0;
+    var freedBytes = 0;
+    final skippedCategories = <String>[];
+    final errors = <String>[];
+
+    for (final target in _targets ?? defaultTargets()) {
+      if (!target.canClean) {
+        skippedCategories.add(target.name);
+        continue;
+      }
+
+      for (final rawPath in target.paths) {
+        final path = rawPath.trim();
+        if (path.isEmpty) {
+          continue;
+        }
+
+        final directory = Directory(path);
+        if (!await directory.exists()) {
+          continue;
+        }
+
+        try {
+          await for (final entity
+              in directory.list(recursive: true, followLinks: false)) {
+            if (entity is! File) {
+              continue;
+            }
+
+            try {
+              final stat = await entity.stat();
+              await entity.delete();
+              deletedCount++;
+              freedBytes += stat.size;
+            } on FileSystemException catch (error) {
+              errors.add('${entity.path}: ${error.message}');
+            }
+          }
+        } on FileSystemException catch (error) {
+          errors.add('${directory.path}: ${error.message}');
+        }
+      }
+    }
+
+    return CleanupCleanResult(
+      deletedCount: deletedCount,
+      freedBytes: freedBytes,
+      skippedCategories: skippedCategories,
+      errors: errors,
+      completedAt: DateTime.now(),
     );
   }
 
@@ -215,6 +287,7 @@ class SystemCleanupScanService {
         paths: [
           '$userProfile\\Downloads',
         ],
+        canClean: false,
       ),
     ];
   }

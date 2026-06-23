@@ -13,7 +13,7 @@ class InstalledAppsService {
 
   Future<List<InstalledApp>> loadInstalledApps() async {
     if (!Platform.isWindows) {
-      return sampleInstalledApps;
+      return const [];
     }
 
     final buffer = StringBuffer();
@@ -25,7 +25,7 @@ class InstalledAppsService {
     }
 
     final apps = parseRegistryOutput(buffer.toString());
-    return apps.isEmpty ? sampleInstalledApps : apps;
+    return apps;
   }
 
   static List<InstalledApp> parseRegistryOutput(String output) {
