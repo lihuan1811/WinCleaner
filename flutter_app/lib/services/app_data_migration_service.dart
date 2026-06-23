@@ -6,6 +6,22 @@ typedef AppDataProcessRunner = Future<ProcessResult> Function(
   List<String> arguments,
 );
 
+const Set<String> _protectedFolderNames = {
+  'windowsapps',
+  'packages',
+  'microsoft',
+  'microsoftedge',
+  'nvidia corporation',
+  'intel',
+  'amd',
+  'usoprivate',
+  'usoshared',
+  'package cache',
+  'program files',
+  'program files (x86)',
+  'programdata',
+};
+
 class AppDataScanSource {
   const AppDataScanSource({
     required this.label,
@@ -147,6 +163,9 @@ class AppDataMigrationService {
           if (await FileSystemEntity.isLink(entity.path)) {
             continue;
           }
+          if (isProtectedMigrationPath(entity.path)) {
+            continue;
+          }
           children.add(entity);
         }
       } on FileSystemException catch (error) {
@@ -202,6 +221,13 @@ class AppDataMigrationService {
     String targetBase, {
     String? batchId,
   }) async {
+    if (isProtectedMigrationPath(folder.path)) {
+      return AppDataMigrationOperationResult(
+        success: false,
+        output: '受保护目录不建议迁移：${folder.path}',
+      );
+    }
+
     final source = Directory(folder.path);
     if (!await source.exists()) {
       return AppDataMigrationOperationResult(
@@ -468,25 +494,22 @@ class AppDataMigrationService {
           path: env['APPDATA']!,
           targetSubdir: 'Roaming',
         ),
-      if ((env['ProgramFiles'] ?? '').trim().isNotEmpty)
-        AppDataScanSource(
-          label: 'Program Files',
-          path: env['ProgramFiles']!,
-          targetSubdir: 'Program Files',
-        ),
-      if ((env['ProgramFiles(x86)'] ?? '').trim().isNotEmpty)
-        AppDataScanSource(
-          label: 'Program Files (x86)',
-          path: env['ProgramFiles(x86)']!,
-          targetSubdir: 'Program Files (x86)',
-        ),
-      if ((env['ProgramData'] ?? '').trim().isNotEmpty)
-        AppDataScanSource(
-          label: 'ProgramData',
-          path: env['ProgramData']!,
-          targetSubdir: 'ProgramData',
-        ),
     ];
+  }
+
+  static bool isProtectedMigrationPath(String path) {
+    final name = _baseName(path).toLowerCase();
+    if (_protectedFolderNames.contains(name)) {
+      return true;
+    }
+
+    final normalized = path.replaceAll('/', r'\').toLowerCase();
+    return normalized.contains(r'\appdata\local\packages\') ||
+        normalized.contains(r'\appdata\local\windowsapps\') ||
+        normalized.contains(r'\programdata\microsoft\') ||
+        normalized.contains(r'\programdata\package cache\') ||
+        normalized.contains(r'\program files\') ||
+        normalized.contains(r'\program files (x86)\');
   }
 
   static String defaultTargetRoot({Map<String, String>? environment}) {

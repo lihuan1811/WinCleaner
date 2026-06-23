@@ -31,6 +31,96 @@ void main() {
     expect(result.scannedCount, 3);
   });
 
+  test('skips protected Windows app and system folders during scan', () async {
+    final tempDir = await Directory.systemTemp.createTemp('appdata-safe-scan-');
+    addTearDown(() => tempDir.delete(recursive: true));
+
+    final root = Directory('${tempDir.path}/Local')..createSync();
+    for (final name in [
+      'WindowsApps',
+      'Packages',
+      'Microsoft',
+      'NVIDIA Corporation',
+    ]) {
+      final directory = Directory('${root.path}/$name')..createSync();
+      File('${directory.path}/locked.bin').writeAsBytesSync(List.filled(40, 1));
+    }
+    final cursor = Directory('${root.path}/Cursor')..createSync();
+    File('${cursor.path}/cache.bin').writeAsBytesSync(List.filled(20, 1));
+
+    final service = AppDataMigrationService();
+    final result = await service.scanLargeFolders([
+      AppDataScanSource(
+        label: 'LocalAppData',
+        path: root.path,
+        targetSubdir: 'Local',
+      ),
+    ], minParentRatio: 0.05);
+
+    expect(result.folders.map((folder) => folder.name), ['Cursor']);
+    expect(result.scannedCount, 1);
+  });
+
+  test('default scan sources stay limited to user AppData folders', () {
+    final sources = AppDataMigrationService.defaultScanSources(
+      environment: const {
+        'LOCALAPPDATA': r'C:\Users\Ada\AppData\Local',
+        'APPDATA': r'C:\Users\Ada\AppData\Roaming',
+        'ProgramData': r'C:\ProgramData',
+        'ProgramFiles': r'C:\Program Files',
+        'ProgramFiles(x86)': r'C:\Program Files (x86)',
+      },
+    );
+
+    expect(sources.map((source) => source.label), [
+      'LocalAppData',
+      'RoamingAppData',
+    ]);
+  });
+
+  test('treats Windows program roots as protected migration paths', () {
+    expect(
+      AppDataMigrationService.isProtectedMigrationPath(r'C:\Program Files'),
+      isTrue,
+    );
+    expect(
+      AppDataMigrationService.isProtectedMigrationPath(r'C:\ProgramData'),
+      isTrue,
+    );
+  });
+
+  test('rejects protected folder migrations before moving files', () async {
+    final tempDir =
+        await Directory.systemTemp.createTemp('appdata-protected-move-');
+    addTearDown(() => tempDir.delete(recursive: true));
+
+    final source = Directory('${tempDir.path}/WindowsApps')..createSync();
+    File('${source.path}/system.bin').writeAsBytesSync(List.filled(4, 1));
+    final targetRoot = Directory('${tempDir.path}/Target')..createSync();
+    final service = AppDataMigrationService(
+      isWindowsOverride: true,
+      processRunner: (_, __) async {
+        fail('protected folders must be rejected before running mklink');
+      },
+    );
+
+    final result = await service.migrateFolder(
+      AppDataMigrationFolder(
+        path: source.path,
+        name: 'WindowsApps',
+        sizeBytes: 4,
+        sourceLabel: 'LocalAppData',
+        targetSubdir: 'Local',
+        parentTotalBytes: 4,
+      ),
+      targetRoot.path,
+    );
+
+    expect(result.success, isFalse);
+    expect(result.output, contains('受保护目录'));
+    expect(Directory(source.path).existsSync(), isTrue);
+  });
+
   test('computes Windows-style target parent preserving source hierarchy', () {
     final parent = AppDataMigrationService.computeTargetParent(
       r'D:\Yugongyipan',

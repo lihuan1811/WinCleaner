@@ -2082,6 +2082,11 @@ class _AppDataMigrationDialogState extends State<_AppDataMigrationDialog> {
             '扫描来源',
             style: TextStyle(fontWeight: FontWeight.w900),
           ),
+          const SizedBox(height: 4),
+          const Text(
+            '默认只扫描用户 AppData，并跳过 WindowsApps、Packages、Microsoft、ProgramData 等受保护目录。',
+            style: TextStyle(color: AppColors.muted, height: 1.45),
+          ),
           const SizedBox(height: 8),
           _ScanSourceSelector(
             sources: _sources,
