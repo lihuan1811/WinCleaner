@@ -435,22 +435,17 @@ class _BrandMark extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Row(
+    return const Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        Container(
-          width: 44,
-          height: 44,
-          decoration: BoxDecoration(
-            gradient: const LinearGradient(
-              colors: [AppColors.primary, AppColors.primaryDark],
-            ),
-            borderRadius: BorderRadius.circular(16),
-          ),
-          child: const Icon(Icons.cleaning_services, color: Colors.white),
+        FeatureIcon(
+          icon: Icons.cleaning_services,
+          size: 44,
+          iconSize: 21,
+          selected: true,
         ),
-        const SizedBox(width: 12),
-        const Text(
+        SizedBox(width: 12),
+        Text(
           'WinCleaner',
           style: TextStyle(
             fontSize: 20,
@@ -493,10 +488,12 @@ class _NavPill extends StatelessWidget {
           ),
           child: Row(
             children: [
-              Icon(
-                item.icon,
-                size: 18,
-                color: selected ? Colors.white : AppColors.muted,
+              FeatureIcon(
+                icon: item.icon,
+                size: 28,
+                iconSize: 15,
+                primary: selected ? AppColors.primaryDark : AppColors.primary,
+                secondary: selected ? AppColors.primary : AppColors.accent,
               ),
               const SizedBox(width: 8),
               Text(

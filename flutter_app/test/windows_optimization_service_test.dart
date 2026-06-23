@@ -18,10 +18,24 @@ void main() {
         'disable_game_dvr',
         'disable_startup_delay',
         'disable_transparency',
+        'enable_storage_sense',
+        'disable_windows_tips',
+        'disable_background_apps',
+        'disable_search_highlights',
+        'optimize_visual_effects',
+        'repair_explorer_associations',
+        'clear_icon_cache',
       ]),
     );
+    expect(actions.length, greaterThanOrEqualTo(14));
     expect(actions.firstWhere((action) => action.id == 'flush_dns').commands,
         isNotEmpty);
+    expect(
+      actions
+          .firstWhere((action) => action.id == 'repair_explorer_associations')
+          .requiresAdmin,
+      isTrue,
+    );
   });
 
   test('apply runs configured Windows command through runner', () async {
@@ -61,6 +75,44 @@ void main() {
     expect(calls.first, contains(r'HKCU\System\GameConfigStore'));
     expect(calls.last,
         contains(r'HKCU\Software\Microsoft\Windows\CurrentVersion\GameDVR'));
+  });
+
+  test('expanded Windows settings write concrete registry values', () async {
+    final calls = <String>[];
+    final service = WindowsOptimizationService(
+      isWindowsOverride: true,
+      processRunner: (exe, args) async {
+        calls.add('$exe ${args.join(' ')}');
+        return ProcessResult(1, 0, '', '');
+      },
+    );
+
+    final result = await service.apply('disable_windows_tips');
+
+    expect(result.success, isTrue);
+    expect(calls, hasLength(greaterThanOrEqualTo(3)));
+    expect(calls.join('\n'), contains('ContentDeliveryManager'));
+    expect(calls.join('\n'), contains('SubscribedContent-338389Enabled'));
+    expect(calls.join('\n'), contains('SystemPaneSuggestionsEnabled'));
+  });
+
+  test('shell repair action restores executable and shortcut associations',
+      () async {
+    final calls = <String>[];
+    final service = WindowsOptimizationService(
+      isWindowsOverride: true,
+      processRunner: (exe, args) async {
+        calls.add('$exe ${args.join(' ')}');
+        return ProcessResult(1, 0, '', '');
+      },
+    );
+
+    final result = await service.apply('repair_explorer_associations');
+
+    expect(result.success, isTrue);
+    expect(calls.join('\n'), contains(r'HKCR\.exe'));
+    expect(calls.join('\n'), contains(r'HKCR\exefile\shell\open\command'));
+    expect(calls.join('\n'), contains(r'HKCR\lnkfile'));
   });
 
   test('revert runs restore command when available', () async {

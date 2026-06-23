@@ -6,8 +6,11 @@ import '../services/ad_block_service.dart';
 import '../services/disk_optimization_service.dart';
 import '../services/drive_status_service.dart';
 import '../services/duplicate_files_service.dart';
+import '../services/empty_folder_service.dart';
 import '../services/large_files_service.dart';
+import '../services/rule_store_service.dart';
 import '../services/system_cleanup_scan_service.dart';
+import '../services/windows_maintenance_service.dart';
 import '../services/windows_optimization_service.dart';
 import '../theme/app_theme.dart';
 
@@ -467,11 +470,15 @@ class SystemOptimizationScreen extends StatelessWidget {
     this.adBlockService,
     this.diskOptimizationService,
     this.windowsOptimizationService,
+    this.maintenanceService,
+    this.ruleStoreService = const RuleStoreService(),
   });
 
   final AdBlockService? adBlockService;
   final DiskOptimizationService? diskOptimizationService;
   final WindowsOptimizationService? windowsOptimizationService;
+  final WindowsMaintenanceService? maintenanceService;
+  final RuleStoreService ruleStoreService;
 
   Future<void> _openAdBlockTool(BuildContext context) {
     return showDialog<void>(
@@ -499,16 +506,75 @@ class SystemOptimizationScreen extends StatelessWidget {
     );
   }
 
+  Future<void> _openInvalidShortcutTool(BuildContext context) {
+    return showDialog<void>(
+      context: context,
+      builder: (context) => _InvalidShortcutDialog(
+        service: maintenanceService ?? WindowsMaintenanceService(),
+      ),
+    );
+  }
+
+  Future<void> _openContextMenuTool(BuildContext context) {
+    return showDialog<void>(
+      context: context,
+      builder: (context) => _RegistryMaintenanceDialog(
+        title: '右键菜单清理',
+        icon: Icons.menu_open_outlined,
+        scanLabel: '扫描右键菜单',
+        emptyText: '未发现右键菜单扩展项',
+        scan: () => (maintenanceService ?? WindowsMaintenanceService())
+            .scanContextMenuEntries(),
+        deleteEntry: (path) =>
+            (maintenanceService ?? WindowsMaintenanceService())
+                .deleteRegistryEntry(path),
+      ),
+    );
+  }
+
+  Future<void> _openUninstallRegistryTool(BuildContext context) {
+    return showDialog<void>(
+      context: context,
+      builder: (context) => _RegistryMaintenanceDialog(
+        title: '卸载残留注册表',
+        icon: Icons.app_blocking_outlined,
+        scanLabel: '扫描卸载残留',
+        emptyText: '未发现无效卸载注册表项',
+        scan: () => (maintenanceService ?? WindowsMaintenanceService())
+            .scanInvalidUninstallEntries(),
+        deleteEntry: (path) =>
+            (maintenanceService ?? WindowsMaintenanceService())
+                .deleteRegistryEntry(path),
+      ),
+    );
+  }
+
+  Future<void> _openScheduledTaskTool(BuildContext context) {
+    return showDialog<void>(
+      context: context,
+      builder: (context) => _ScheduledCleanupDialog(
+        service: maintenanceService ?? WindowsMaintenanceService(),
+      ),
+    );
+  }
+
+  Future<void> _openRuleStore(BuildContext context) {
+    return showDialog<void>(
+      context: context,
+      builder: (context) => _RuleStoreDialog(service: ruleStoreService),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return _FeatureCenterScaffold(
       title: '系统优化中心',
-      subtitle: '集中处理 hosts 广告屏蔽、Windows 设置优化和磁盘优化。',
+      subtitle: '集中处理 Windows 设置、广告屏蔽、右键菜单、快捷方式和计划任务。',
       children: [
         _ToolCard(
           icon: Icons.tune_outlined,
           title: 'Windows 设置优化',
-          subtitle: '执行 powercfg、ipconfig、netsh 和注册表优化',
+          subtitle: '执行 powercfg、netsh、ipconfig、注册表和资源管理器修复',
           onTap: () => _openWindowsOptimizationTool(context),
         ),
         _ToolCard(
@@ -523,6 +589,36 @@ class SystemOptimizationScreen extends StatelessWidget {
           subtitle: '调用 Windows defrag 分析和优化磁盘',
           onTap: () => _openDiskOptimizationTool(context),
         ),
+        _ToolCard(
+          icon: Icons.link_off_outlined,
+          title: '无效快捷方式',
+          subtitle: '扫描桌面、开始菜单和任务栏失效 .lnk',
+          onTap: () => _openInvalidShortcutTool(context),
+        ),
+        _ToolCard(
+          icon: Icons.menu_open_outlined,
+          title: '右键菜单清理',
+          subtitle: '扫描 Directory、Folder、Drive 和文件右键扩展',
+          onTap: () => _openContextMenuTool(context),
+        ),
+        _ToolCard(
+          icon: Icons.app_blocking_outlined,
+          title: '卸载残留注册表',
+          subtitle: '发现安装目录已丢失的卸载注册表项',
+          onTap: () => _openUninstallRegistryTool(context),
+        ),
+        _ToolCard(
+          icon: Icons.event_repeat_outlined,
+          title: '定时任务',
+          subtitle: '通过 schtasks 创建高权限清理计划',
+          onTap: () => _openScheduledTaskTool(context),
+        ),
+        _ToolCard(
+          icon: Icons.storefront_outlined,
+          title: '规则商店',
+          subtitle: '下载 c_cleaner_plus 清理规则包 JSON',
+          onTap: () => _openRuleStore(context),
+        ),
       ],
     );
   }
@@ -533,10 +629,12 @@ class FileManagementScreen extends StatelessWidget {
     super.key,
     this.duplicateFilesService,
     this.largeFilesService,
+    this.emptyFolderService,
   });
 
   final DuplicateFilesService? duplicateFilesService;
   final LargeFilesService? largeFilesService;
+  final EmptyFolderService? emptyFolderService;
 
   Future<void> _openDuplicateTool(BuildContext context) {
     return showDialog<void>(
@@ -553,6 +651,16 @@ class FileManagementScreen extends StatelessWidget {
       context: context,
       builder: (context) => _LargeFilesDialog(
         service: largeFilesService ?? LargeFilesService(),
+        initialPath: _defaultUserScanPath(),
+      ),
+    );
+  }
+
+  Future<void> _openEmptyFoldersTool(BuildContext context) {
+    return showDialog<void>(
+      context: context,
+      builder: (context) => _EmptyFoldersDialog(
+        service: emptyFolderService ?? EmptyFolderService(),
         initialPath: _defaultUserScanPath(),
       ),
     );
@@ -575,6 +683,12 @@ class FileManagementScreen extends StatelessWidget {
           title: '超大文件',
           subtitle: '扫描目录中的大文件并按大小排序',
           onTap: () => _openLargeFilesTool(context),
+        ),
+        _ToolCard(
+          icon: Icons.folder_delete_outlined,
+          title: '空文件夹',
+          subtitle: '按最深路径优先扫描和删除空目录',
+          onTap: () => _openEmptyFoldersTool(context),
         ),
       ],
     );
@@ -655,14 +769,11 @@ class _SectionHeader extends StatelessWidget {
               ],
             ),
           ),
-          Container(
-            width: 54,
-            height: 54,
-            decoration: const BoxDecoration(
-              color: AppColors.paleBlue,
-              shape: BoxShape.circle,
-            ),
-            child: const Icon(Icons.north_east, color: AppColors.primaryDark),
+          const FeatureIcon(
+            icon: Icons.north_east,
+            size: 54,
+            iconSize: 22,
+            selected: true,
           ),
         ],
       ),
@@ -1083,16 +1194,7 @@ class _ToolCard extends StatelessWidget {
               padding: const EdgeInsets.all(22),
               child: Row(
                 children: [
-                  Container(
-                    width: 52,
-                    height: 52,
-                    decoration: BoxDecoration(
-                      color: AppColors.glassStrong,
-                      border: Border.all(color: AppColors.border),
-                      borderRadius: BorderRadius.circular(14),
-                    ),
-                    child: Icon(icon, color: AppColors.primary),
-                  ),
+                  FeatureIcon(icon: icon),
                   const SizedBox(width: 18),
                   Expanded(
                     child: Column(
@@ -1223,7 +1325,7 @@ class _ToolListTile extends StatelessWidget {
   Widget build(BuildContext context) {
     return ListTile(
       contentPadding: EdgeInsets.zero,
-      leading: Icon(icon, color: AppColors.primary),
+      leading: FeatureIcon(icon: icon, size: 42, iconSize: 20),
       title: Text(title, style: const TextStyle(fontWeight: FontWeight.w800)),
       subtitle: Text(subtitle),
       trailing: const Icon(Icons.chevron_right),
@@ -1583,6 +1685,657 @@ class _LargeFilesDialogState extends State<_LargeFilesDialog> {
   }
 }
 
+class _EmptyFoldersDialog extends StatefulWidget {
+  const _EmptyFoldersDialog({
+    required this.service,
+    required this.initialPath,
+  });
+
+  final EmptyFolderService service;
+  final String initialPath;
+
+  @override
+  State<_EmptyFoldersDialog> createState() => _EmptyFoldersDialogState();
+}
+
+class _EmptyFoldersDialogState extends State<_EmptyFoldersDialog> {
+  late final TextEditingController _pathController;
+  EmptyFolderScanResult? _result;
+  bool _busy = false;
+  String? _message;
+
+  @override
+  void initState() {
+    super.initState();
+    _pathController = TextEditingController(text: widget.initialPath);
+  }
+
+  @override
+  void dispose() {
+    _pathController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _scan() async {
+    setState(() {
+      _busy = true;
+      _message = null;
+    });
+    try {
+      final result = await widget.service.scan(_pathController.text);
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _busy = false;
+        _result = result;
+        _message = '发现 ${result.folders.length} 个空文件夹';
+      });
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _busy = false;
+        _message = error.toString();
+      });
+    }
+  }
+
+  Future<void> _delete() async {
+    final folders = _result?.folders ?? const <EmptyFolderEntry>[];
+    if (folders.isEmpty) {
+      return;
+    }
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('确认删除空文件夹'),
+        content: Text('将删除 ${folders.length} 个仍为空的文件夹。非空目录会自动跳过。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('删除'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) {
+      return;
+    }
+
+    setState(() {
+      _busy = true;
+      _message = null;
+    });
+    final result = await widget.service.deleteFolders(folders);
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _busy = false;
+      _result = null;
+      _message =
+          '已删除 ${result.deletedCount} 个空文件夹，跳过 ${result.skippedPaths.length} 个';
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final result = _result;
+    return _ToolDialogFrame(
+      title: '空文件夹',
+      icon: Icons.folder_delete_outlined,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _PathInput(controller: _pathController),
+          const SizedBox(height: 14),
+          Row(
+            children: [
+              FilledButton.icon(
+                onPressed: _busy ? null : _scan,
+                icon: const Icon(Icons.search),
+                label: const Text('扫描空文件夹'),
+              ),
+              const SizedBox(width: 12),
+              OutlinedButton.icon(
+                onPressed: _busy || result == null || result.folders.isEmpty
+                    ? null
+                    : _delete,
+                icon: const Icon(Icons.delete_outline),
+                label: const Text('删除空文件夹'),
+              ),
+            ],
+          ),
+          if (_busy) ...[
+            const SizedBox(height: 18),
+            const LinearProgressIndicator(minHeight: 4),
+          ],
+          if (_message != null) ...[
+            const SizedBox(height: 16),
+            Text(_message!, style: const TextStyle(color: AppColors.muted)),
+          ],
+          if (result != null) ...[
+            const SizedBox(height: 14),
+            _PathList(
+              emptyText: '未发现空文件夹',
+              paths: result.folders.map((folder) => folder.path).toList(),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _InvalidShortcutDialog extends StatefulWidget {
+  const _InvalidShortcutDialog({required this.service});
+
+  final WindowsMaintenanceService service;
+
+  @override
+  State<_InvalidShortcutDialog> createState() => _InvalidShortcutDialogState();
+}
+
+class _InvalidShortcutDialogState extends State<_InvalidShortcutDialog> {
+  List<ShortcutIssue> _issues = const [];
+  bool _busy = false;
+  String? _message;
+
+  Future<void> _scan() async {
+    setState(() {
+      _busy = true;
+      _message = null;
+    });
+    try {
+      final issues = await widget.service.scanInvalidShortcuts(
+        _defaultShortcutRoots(),
+      );
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _busy = false;
+        _issues = issues;
+        _message = '发现 ${issues.length} 个无效快捷方式';
+      });
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _busy = false;
+        _message = error.toString();
+      });
+    }
+  }
+
+  Future<void> _deleteAll() async {
+    if (_issues.isEmpty) {
+      return;
+    }
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('确认删除快捷方式'),
+        content: Text('将删除 ${_issues.length} 个无效 .lnk 文件，不会删除目标程序。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('删除'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) {
+      return;
+    }
+
+    var deleted = 0;
+    final failed = <String>[];
+    for (final issue in _issues) {
+      try {
+        final file = File(issue.path);
+        if (await file.exists()) {
+          await file.delete();
+          deleted++;
+        }
+      } on FileSystemException catch (error) {
+        failed.add('${issue.path}: ${error.message}');
+      }
+    }
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _issues = const [];
+      _message = '已删除 $deleted 个快捷方式，失败 ${failed.length} 个';
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return _ToolDialogFrame(
+      title: '无效快捷方式',
+      icon: Icons.link_off_outlined,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            '扫描桌面、公共桌面、开始菜单和任务栏固定项，使用 Windows WScript 解析 .lnk 目标。',
+            style: TextStyle(color: AppColors.muted, height: 1.5),
+          ),
+          const SizedBox(height: 14),
+          Row(
+            children: [
+              FilledButton.icon(
+                onPressed: _busy ? null : _scan,
+                icon: const Icon(Icons.search),
+                label: const Text('扫描快捷方式'),
+              ),
+              const SizedBox(width: 12),
+              OutlinedButton.icon(
+                onPressed: _busy || _issues.isEmpty ? null : _deleteAll,
+                icon: const Icon(Icons.delete_outline),
+                label: const Text('删除无效项'),
+              ),
+            ],
+          ),
+          if (_busy) ...[
+            const SizedBox(height: 18),
+            const LinearProgressIndicator(minHeight: 4),
+          ],
+          if (_message != null) ...[
+            const SizedBox(height: 16),
+            Text(_message!, style: const TextStyle(color: AppColors.muted)),
+          ],
+          const SizedBox(height: 14),
+          _ShortcutIssueList(issues: _issues),
+        ],
+      ),
+    );
+  }
+}
+
+class _RegistryMaintenanceDialog extends StatefulWidget {
+  const _RegistryMaintenanceDialog({
+    required this.title,
+    required this.icon,
+    required this.scanLabel,
+    required this.emptyText,
+    required this.scan,
+    required this.deleteEntry,
+  });
+
+  final String title;
+  final IconData icon;
+  final String scanLabel;
+  final String emptyText;
+  final Future<List<MaintenanceRegistryEntry>> Function() scan;
+  final Future<MaintenanceResult> Function(String path) deleteEntry;
+
+  @override
+  State<_RegistryMaintenanceDialog> createState() =>
+      _RegistryMaintenanceDialogState();
+}
+
+class _RegistryMaintenanceDialogState
+    extends State<_RegistryMaintenanceDialog> {
+  List<MaintenanceRegistryEntry> _entries = const [];
+  bool _busy = false;
+  String? _message;
+
+  Future<void> _scan() async {
+    setState(() {
+      _busy = true;
+      _message = null;
+    });
+    try {
+      final entries = await widget.scan();
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _busy = false;
+        _entries = entries;
+        _message = '发现 ${entries.length} 项';
+      });
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _busy = false;
+        _message = error.toString();
+      });
+    }
+  }
+
+  Future<void> _delete(MaintenanceRegistryEntry entry) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('确认删除注册表项'),
+        content: SelectableText(entry.path),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('删除'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) {
+      return;
+    }
+
+    setState(() {
+      _busy = true;
+      _message = null;
+    });
+    final result = await widget.deleteEntry(entry.path);
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _busy = false;
+      _message = result.success ? '已删除 ${entry.name}' : result.output;
+      if (result.success) {
+        _entries = _entries.where((item) => item.path != entry.path).toList();
+      }
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return _ToolDialogFrame(
+      title: widget.title,
+      icon: widget.icon,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          FilledButton.icon(
+            onPressed: _busy ? null : _scan,
+            icon: const Icon(Icons.search),
+            label: Text(widget.scanLabel),
+          ),
+          if (_busy) ...[
+            const SizedBox(height: 18),
+            const LinearProgressIndicator(minHeight: 4),
+          ],
+          if (_message != null) ...[
+            const SizedBox(height: 16),
+            Text(_message!, style: const TextStyle(color: AppColors.muted)),
+          ],
+          const SizedBox(height: 14),
+          _RegistryEntryList(
+            entries: _entries,
+            emptyText: widget.emptyText,
+            onDelete: _busy ? null : _delete,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ScheduledCleanupDialog extends StatefulWidget {
+  const _ScheduledCleanupDialog({required this.service});
+
+  final WindowsMaintenanceService service;
+
+  @override
+  State<_ScheduledCleanupDialog> createState() =>
+      _ScheduledCleanupDialogState();
+}
+
+class _ScheduledCleanupDialogState extends State<_ScheduledCleanupDialog> {
+  final _nameController = TextEditingController(text: 'DailyClean');
+  final _timeController = TextEditingController(text: '09:00');
+  String? _output;
+  bool _busy = false;
+
+  @override
+  void dispose() {
+    _nameController.dispose();
+    _timeController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _run(Future<MaintenanceResult> Function() action) async {
+    setState(() {
+      _busy = true;
+      _output = null;
+    });
+    try {
+      final result = await action();
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _busy = false;
+        _output = '退出码 ${result.exitCode}\n${result.output}';
+      });
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _busy = false;
+        _output = error.toString();
+      });
+    }
+  }
+
+  Future<void> _createDaily() {
+    return _run(
+      () => widget.service.createScheduledCleanupTask(
+        taskName: _nameController.text,
+        executablePath: Platform.resolvedExecutable,
+        schedule: MaintenanceSchedule.daily,
+        time: _timeController.text,
+      ),
+    );
+  }
+
+  Future<void> _deleteTask() {
+    return _run(
+      () => widget.service.deleteScheduledTask(_nameController.text),
+    );
+  }
+
+  Future<void> _runTask() {
+    return _run(
+      () => widget.service.runScheduledTask(_nameController.text),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return _ToolDialogFrame(
+      title: '定时任务',
+      icon: Icons.event_repeat_outlined,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            '使用 Windows schtasks 创建高权限清理计划。默认每天执行一次当前 WinCleaner 程序。',
+            style: TextStyle(color: AppColors.muted, height: 1.5),
+          ),
+          const SizedBox(height: 14),
+          Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: _nameController,
+                  decoration: const InputDecoration(labelText: '任务名称'),
+                ),
+              ),
+              const SizedBox(width: 12),
+              SizedBox(
+                width: 140,
+                child: TextField(
+                  controller: _timeController,
+                  decoration: const InputDecoration(labelText: '时间 HH:mm'),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          Wrap(
+            spacing: 12,
+            runSpacing: 12,
+            children: [
+              FilledButton.icon(
+                onPressed: _busy ? null : _createDaily,
+                icon: const Icon(Icons.add_task_outlined),
+                label: const Text('创建每日任务'),
+              ),
+              OutlinedButton.icon(
+                onPressed: _busy ? null : _runTask,
+                icon: const Icon(Icons.play_arrow_outlined),
+                label: const Text('立即运行'),
+              ),
+              OutlinedButton.icon(
+                onPressed: _busy ? null : _deleteTask,
+                icon: const Icon(Icons.delete_outline),
+                label: const Text('删除任务'),
+              ),
+            ],
+          ),
+          if (_busy) ...[
+            const SizedBox(height: 18),
+            const LinearProgressIndicator(minHeight: 4),
+          ],
+          if (_output != null) ...[
+            const SizedBox(height: 16),
+            _CommandOutput(output: _output!),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _RuleStoreDialog extends StatefulWidget {
+  const _RuleStoreDialog({required this.service});
+
+  final RuleStoreService service;
+
+  @override
+  State<_RuleStoreDialog> createState() => _RuleStoreDialogState();
+}
+
+class _RuleStoreDialogState extends State<_RuleStoreDialog> {
+  bool _busy = false;
+  String? _message;
+
+  Future<void> _download(RulePack pack) async {
+    setState(() {
+      _busy = true;
+      _message = null;
+    });
+    try {
+      final result = await widget.service.downloadRulePack(
+        pack,
+        _defaultRulePackDirectory(),
+      );
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _busy = false;
+        _message = '已下载 ${pack.name}: ${result.file.path}';
+      });
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _busy = false;
+        _message = error.toString();
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final packs = widget.service.packs;
+    return _ToolDialogFrame(
+      title: '规则商店',
+      icon: Icons.storefront_outlined,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            '规则来源为 Kiowx/c_cleaner_plus 的 config 目录。下载后保存在本机 WinCleaner rules 目录，后续可继续接入自定义规则扫描。',
+            style: TextStyle(color: AppColors.muted, height: 1.5),
+          ),
+          if (_busy) ...[
+            const SizedBox(height: 18),
+            const LinearProgressIndicator(minHeight: 4),
+          ],
+          if (_message != null) ...[
+            const SizedBox(height: 16),
+            SelectableText(
+              _message!,
+              style: const TextStyle(color: AppColors.muted),
+            ),
+          ],
+          const SizedBox(height: 14),
+          SizedBox(
+            height: 360,
+            child: ListView.separated(
+              itemCount: packs.length,
+              separatorBuilder: (_, __) =>
+                  const Divider(color: AppColors.border),
+              itemBuilder: (context, index) {
+                final pack = packs[index];
+                return ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: const FeatureIcon(
+                    icon: Icons.description_outlined,
+                    size: 42,
+                    iconSize: 20,
+                  ),
+                  title: Text(
+                    pack.name,
+                    style: const TextStyle(fontWeight: FontWeight.w800),
+                  ),
+                  subtitle: Text(
+                    '${pack.category} · ${pack.description}\n${pack.fileName}',
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  trailing: OutlinedButton(
+                    onPressed: _busy ? null : () => _download(pack),
+                    child: const Text('下载'),
+                  ),
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _DiskOptimizationDialog extends StatefulWidget {
   const _DiskOptimizationDialog({required this.service});
 
@@ -1810,10 +2563,10 @@ class _WindowsOptimizationDialogState
                 final active = _busy && _activeActionId == action.id;
                 return ListTile(
                   contentPadding: EdgeInsets.zero,
-                  leading: CircleAvatar(
-                    backgroundColor: AppColors.paleBlue,
-                    foregroundColor: AppColors.primaryDark,
-                    child: Icon(_optimizationIcon(action.category)),
+                  leading: FeatureIcon(
+                    icon: _optimizationIcon(action.category),
+                    size: 44,
+                    iconSize: 20,
                   ),
                   title: Text(
                     action.title,
@@ -1876,6 +2629,8 @@ class _WindowsOptimizationDialogState
       '存储' => Icons.sd_storage_outlined,
       '启动' => Icons.rocket_launch_outlined,
       '视觉' => Icons.auto_awesome_motion_outlined,
+      '隐私' => Icons.visibility_off_outlined,
+      '修复' => Icons.construction_outlined,
       _ => Icons.tune_outlined,
     };
   }
@@ -1974,8 +2729,8 @@ class _ToolDialogFrame extends StatelessWidget {
       contentPadding: const EdgeInsets.fromLTRB(24, 18, 24, 24),
       title: Row(
         children: [
-          Icon(icon, color: AppColors.primary),
-          const SizedBox(width: 10),
+          FeatureIcon(icon: icon, size: 40, iconSize: 20),
+          const SizedBox(width: 12),
           Text(title),
         ],
       ),
@@ -2114,6 +2869,141 @@ class _LargeFileList extends StatelessWidget {
   }
 }
 
+class _PathList extends StatelessWidget {
+  const _PathList({required this.paths, required this.emptyText});
+
+  final List<String> paths;
+  final String emptyText;
+
+  @override
+  Widget build(BuildContext context) {
+    if (paths.isEmpty) {
+      return Text(emptyText, style: const TextStyle(color: AppColors.muted));
+    }
+
+    return SizedBox(
+      height: 280,
+      child: ListView.separated(
+        itemCount: paths.length,
+        separatorBuilder: (_, __) => const Divider(color: AppColors.border),
+        itemBuilder: (context, index) => ListTile(
+          dense: true,
+          contentPadding: EdgeInsets.zero,
+          leading: const Icon(Icons.folder_outlined, color: AppColors.primary),
+          title: Text(paths[index], overflow: TextOverflow.ellipsis),
+        ),
+      ),
+    );
+  }
+}
+
+class _ShortcutIssueList extends StatelessWidget {
+  const _ShortcutIssueList({required this.issues});
+
+  final List<ShortcutIssue> issues;
+
+  @override
+  Widget build(BuildContext context) {
+    if (issues.isEmpty) {
+      return const Text('未发现无效快捷方式', style: TextStyle(color: AppColors.muted));
+    }
+
+    return SizedBox(
+      height: 280,
+      child: ListView.separated(
+        itemCount: issues.length,
+        separatorBuilder: (_, __) => const Divider(color: AppColors.border),
+        itemBuilder: (context, index) {
+          final issue = issues[index];
+          return ListTile(
+            dense: true,
+            contentPadding: EdgeInsets.zero,
+            leading:
+                const Icon(Icons.link_off_outlined, color: AppColors.warning),
+            title: Text(issue.path, overflow: TextOverflow.ellipsis),
+            subtitle: Text(
+              '${issue.reason} · ${issue.targetPath.isEmpty ? '无目标' : issue.targetPath}',
+              overflow: TextOverflow.ellipsis,
+            ),
+          );
+        },
+      ),
+    );
+  }
+}
+
+class _RegistryEntryList extends StatelessWidget {
+  const _RegistryEntryList({
+    required this.entries,
+    required this.emptyText,
+    required this.onDelete,
+  });
+
+  final List<MaintenanceRegistryEntry> entries;
+  final String emptyText;
+  final ValueChanged<MaintenanceRegistryEntry>? onDelete;
+
+  @override
+  Widget build(BuildContext context) {
+    if (entries.isEmpty) {
+      return Text(emptyText, style: const TextStyle(color: AppColors.muted));
+    }
+
+    return SizedBox(
+      height: 320,
+      child: ListView.separated(
+        itemCount: entries.length,
+        separatorBuilder: (_, __) => const Divider(color: AppColors.border),
+        itemBuilder: (context, index) {
+          final entry = entries[index];
+          return ListTile(
+            contentPadding: EdgeInsets.zero,
+            leading: const Icon(Icons.account_tree_outlined,
+                color: AppColors.primary),
+            title: Text(
+              entry.name,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontWeight: FontWeight.w800),
+            ),
+            subtitle: Text(
+              '${entry.detail}\n${entry.path}',
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
+            trailing: OutlinedButton(
+              onPressed: onDelete == null ? null : () => onDelete!(entry),
+              child: const Text('删除'),
+            ),
+          );
+        },
+      ),
+    );
+  }
+}
+
+class _CommandOutput extends StatelessWidget {
+  const _CommandOutput({required this.output});
+
+  final String output;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: AppColors.glassStrong,
+        border: Border.all(color: AppColors.border),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: SelectableText(
+        output,
+        style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
+      ),
+    );
+  }
+}
+
 String _formatBytes(int bytes) {
   if (bytes < 1024) {
     return '$bytes B';
@@ -2133,6 +3023,29 @@ String _defaultUserScanPath() {
     return '$userProfile\\Downloads';
   }
   return Platform.environment['HOME'] ?? Directory.current.path;
+}
+
+List<String> _defaultShortcutRoots() {
+  final userProfile = Platform.environment['USERPROFILE'] ?? '';
+  final appData = Platform.environment['APPDATA'] ?? '';
+  final roots = <String>[
+    if (userProfile.isNotEmpty) '$userProfile\\Desktop',
+    r'C:\Users\Public\Desktop',
+    if (appData.isNotEmpty) '$appData\\Microsoft\\Windows\\Start Menu',
+    r'C:\ProgramData\Microsoft\Windows\Start Menu',
+    if (appData.isNotEmpty)
+      '$appData\\Microsoft\\Internet Explorer\\Quick Launch\\User Pinned\\TaskBar',
+  ];
+  return roots;
+}
+
+Directory _defaultRulePackDirectory() {
+  final appData = Platform.environment['APPDATA'];
+  if (Platform.isWindows && appData != null && appData.isNotEmpty) {
+    return Directory('$appData\\WinCleaner\\rules');
+  }
+  final home = Platform.environment['HOME'] ?? Directory.current.path;
+  return Directory('$home/.wincleaner/rules');
 }
 
 String _formatClock(DateTime value) {

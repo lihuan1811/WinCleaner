@@ -407,6 +407,92 @@ class SystemCleanupScanService {
         fileNamePatterns: ['*.dmp', 'MEMORY.DMP'],
       ),
       CleanupScanTarget(
+        id: 'crash_dumps',
+        name: '应用崩溃转储',
+        description: 'c_cleaner_plus 常用规则: 用户态 CrashDumps',
+        paths: [
+          '$localAppData\\CrashDumps',
+        ],
+      ),
+      CleanupScanTarget(
+        id: 'vscode_cache',
+        name: 'VS Code 缓存',
+        description: 'c_cleaner_plus 常用规则: Cache、CachedData、GPUCache 和日志',
+        paths: [
+          '$appData\\Code\\Cache',
+          '$appData\\Code\\CachedData',
+          '$appData\\Code\\GPUCache',
+          '$appData\\Code\\Service Worker\\CacheStorage',
+          '$appData\\Code\\logs',
+        ],
+      ),
+      CleanupScanTarget(
+        id: 'cursor_cache',
+        name: 'Cursor 缓存',
+        description: 'c_cleaner_plus 常用规则: Cache、CachedData、GPUCache 和日志',
+        paths: [
+          '$appData\\Cursor\\Cache',
+          '$appData\\Cursor\\CachedData',
+          '$appData\\Cursor\\GPUCache',
+          '$appData\\Cursor\\Service Worker\\CacheStorage',
+          '$appData\\Cursor\\logs',
+        ],
+      ),
+      CleanupScanTarget(
+        id: 'discord_cache',
+        name: 'Discord 缓存',
+        description: 'c_cleaner_plus 常用规则: Cache、Code Cache、GPUCache',
+        paths: [
+          '$appData\\discord\\Cache',
+          '$appData\\discord\\Code Cache',
+          '$appData\\discord\\GPUCache',
+          '$appData\\discord\\Service Worker\\CacheStorage',
+        ],
+      ),
+      CleanupScanTarget(
+        id: 'steam_web_cache',
+        name: 'Steam 网页缓存',
+        description: 'c_cleaner_plus 常用规则: Steam htmlcache',
+        paths: [
+          '$localAppData\\Steam\\htmlcache\\Cache',
+          '$localAppData\\Steam\\htmlcache\\Code Cache',
+          '$localAppData\\Steam\\htmlcache\\GPUCache',
+        ],
+      ),
+      CleanupScanTarget(
+        id: 'slack_cache',
+        name: 'Slack 缓存',
+        description: 'c_cleaner_plus 常用规则: Cache、Code Cache、GPUCache 和日志',
+        paths: [
+          '$appData\\Slack\\Cache',
+          '$appData\\Slack\\Code Cache',
+          '$appData\\Slack\\GPUCache',
+          '$appData\\Slack\\Service Worker\\CacheStorage',
+          '$appData\\Slack\\logs',
+        ],
+      ),
+      CleanupScanTarget(
+        id: 'notion_cache',
+        name: 'Notion 缓存',
+        description: 'c_cleaner_plus 常用规则: Cache、Code Cache、GPUCache',
+        paths: [
+          '$appData\\Notion\\Cache',
+          '$appData\\Notion\\Code Cache',
+          '$appData\\Notion\\GPUCache',
+          '$appData\\Notion\\Service Worker\\CacheStorage',
+        ],
+      ),
+      CleanupScanTarget(
+        id: 'obs_cache',
+        name: 'OBS Studio 缓存',
+        description: 'c_cleaner_plus 常用规则: 日志、崩溃记录和浏览器源缓存',
+        paths: [
+          '$appData\\obs-studio\\logs',
+          '$appData\\obs-studio\\crashes',
+          '$appData\\obs-studio\\plugin_config\\obs-browser\\Cache',
+        ],
+      ),
+      CleanupScanTarget(
         id: 'recent_files',
         name: '最近文件记录',
         description: 'Windows 最近使用项目快捷方式',

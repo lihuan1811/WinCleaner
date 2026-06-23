@@ -71,6 +71,11 @@ void main() {
     expect(find.text('广告清理'), findsWidgets);
     expect(find.text('碎片整理'), findsWidgets);
     expect(find.text('Windows 设置优化'), findsWidgets);
+    expect(find.text('无效快捷方式'), findsWidgets);
+    expect(find.text('右键菜单清理'), findsWidgets);
+    expect(find.text('卸载残留注册表'), findsWidgets);
+    expect(find.text('定时任务'), findsWidgets);
+    expect(find.text('规则商店'), findsWidgets);
 
     await tester.tap(find.text('Windows 设置优化').first);
     await tester.pumpAndSettle();
@@ -84,6 +89,7 @@ void main() {
     expect(find.text('文件管理中心'), findsOneWidget);
     expect(find.text('重复文件'), findsWidgets);
     expect(find.text('超大文件'), findsWidgets);
+    expect(find.text('空文件夹'), findsWidgets);
   });
 
   testWidgets('dashboard tool cards open their feature dialogs', (
@@ -112,6 +118,45 @@ void main() {
     await tester.pump(const Duration(milliseconds: 300));
 
     expect(find.text('扫描重复文件'), findsOneWidget);
+  });
+
+  testWidgets('new maintenance tool cards open action dialogs', (tester) async {
+    useDesktopTestWindow(tester);
+
+    await tester.pumpWidget(
+      const WinCleanerApp(installedAppsService: _FakeInstalledAppsService()),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('系统优化'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('无效快捷方式').first);
+    await tester.pumpAndSettle();
+    expect(find.text('扫描快捷方式'), findsOneWidget);
+
+    await tester.tap(find.text('关闭'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('定时任务').first);
+    await tester.pumpAndSettle();
+    expect(find.text('创建每日任务'), findsOneWidget);
+
+    await tester.tap(find.text('关闭'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('规则商店').first);
+    await tester.pumpAndSettle();
+    expect(find.text('通用应用缓存'), findsOneWidget);
+
+    await tester.tap(find.text('关闭'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('文件管理'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('空文件夹').first);
+    await tester.pumpAndSettle();
+    expect(find.text('扫描空文件夹'), findsOneWidget);
   });
 
   testWidgets('about and settings actions are clickable', (tester) async {

@@ -170,3 +170,57 @@ class GlassPanel extends StatelessWidget {
     );
   }
 }
+
+class FeatureIcon extends StatelessWidget {
+  const FeatureIcon({
+    super.key,
+    required this.icon,
+    this.size = 52,
+    this.iconSize = 24,
+    this.primary = AppColors.primary,
+    this.secondary = AppColors.accent,
+    this.selected = false,
+  });
+
+  final IconData icon;
+  final double size;
+  final double iconSize;
+  final Color primary;
+  final Color secondary;
+  final bool selected;
+
+  @override
+  Widget build(BuildContext context) {
+    final foreground = selected ? Colors.white : primary;
+    return Container(
+      width: size,
+      height: size,
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: selected
+              ? [primary, secondary]
+              : [
+                  Color.alphaBlend(
+                      primary.withValues(alpha: 0.12), Colors.white),
+                  Color.alphaBlend(
+                      secondary.withValues(alpha: 0.08), Colors.white),
+                ],
+        ),
+        border: Border.all(
+          color: selected ? const Color(0x66FFFFFF) : AppColors.border,
+        ),
+        borderRadius: BorderRadius.circular(size * 0.28),
+        boxShadow: [
+          BoxShadow(
+            color: primary.withValues(alpha: selected ? 0.26 : 0.12),
+            blurRadius: selected ? 18 : 14,
+            offset: const Offset(0, 10),
+          ),
+        ],
+      ),
+      child: Icon(icon, color: foreground, size: iconSize),
+    );
+  }
+}

@@ -36,6 +36,14 @@ void main() {
         'system_event_logs',
         'windows_update_cache',
         'thumb_cache',
+        'vscode_cache',
+        'cursor_cache',
+        'discord_cache',
+        'steam_web_cache',
+        'slack_cache',
+        'notion_cache',
+        'obs_cache',
+        'crash_dumps',
       ]),
     );
     expect(
@@ -46,6 +54,14 @@ void main() {
     expect(byId['browser_passwords']!.canClean, isFalse);
     expect(byId['registry_invalid_uninstall_entries']!.canClean, isFalse);
     expect(byId['downloads']!.canClean, isFalse);
+    expect(
+      byId['vscode_cache']!.paths,
+      contains(r'C:\Users\Ada\AppData\Roaming\Code\Cache'),
+    );
+    expect(
+      byId['steam_web_cache']!.paths,
+      contains(r'C:\Users\Ada\AppData\Local\Steam\htmlcache\Cache'),
+    );
   });
 
   test('scans cleanup targets and totals discovered file sizes', () async {
