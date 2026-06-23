@@ -175,11 +175,26 @@ jobs:
             '    <PublishSingleFile>true</PublishSingleFile>'
             '    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>'
             '    <AssemblyName>WinCleaner-Setup</AssemblyName>'
+            '    <ApplicationManifest>app.manifest</ApplicationManifest>'
             '  </PropertyGroup>'
             '  <ItemGroup>'
             '    <EmbeddedResource Include="payload.zip" LogicalName="payload.zip" />'
             '  </ItemGroup>'
             '</Project>'
+          )
+
+          Set-Content -Path "$installerDir/app.manifest" -Encoding UTF8 -Value @(
+            '<?xml version="1.0" encoding="utf-8"?>'
+            '<assembly manifestVersion="1.0" xmlns="urn:schemas-microsoft-com:asm.v1">'
+            '  <assemblyIdentity version="1.0.0.0" name="WinCleaner.Setup" />'
+            '  <trustInfo xmlns="urn:schemas-microsoft-com:asm.v2">'
+            '    <security>'
+            '      <requestedPrivileges xmlns="urn:schemas-microsoft-com:asm.v3">'
+            '        <requestedExecutionLevel level="requireAdministrator" uiAccess="false" />'
+            '      </requestedPrivileges>'
+            '    </security>'
+            '  </trustInfo>'
+            '</assembly>'
           )
 
           Set-Content -Path "$installerDir/Program.cs" -Encoding UTF8 -Value @(
