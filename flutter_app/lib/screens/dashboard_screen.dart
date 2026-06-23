@@ -8,6 +8,7 @@ import '../services/drive_status_service.dart';
 import '../services/duplicate_files_service.dart';
 import '../services/large_files_service.dart';
 import '../services/system_cleanup_scan_service.dart';
+import '../services/windows_optimization_service.dart';
 import '../theme/app_theme.dart';
 
 class DashboardScreen extends StatefulWidget {
@@ -17,6 +18,7 @@ class DashboardScreen extends StatefulWidget {
     this.duplicateFilesService,
     this.largeFilesService,
     this.diskOptimizationService,
+    this.windowsOptimizationService,
     this.driveStatusService,
     this.cleanupScanService,
   });
@@ -25,6 +27,7 @@ class DashboardScreen extends StatefulWidget {
   final DuplicateFilesService? duplicateFilesService;
   final LargeFilesService? largeFilesService;
   final DiskOptimizationService? diskOptimizationService;
+  final WindowsOptimizationService? windowsOptimizationService;
   final DriveStatusService? driveStatusService;
   final SystemCleanupScanService? cleanupScanService;
 
@@ -37,6 +40,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   late final DuplicateFilesService _duplicateFilesService;
   late final LargeFilesService _largeFilesService;
   late final DiskOptimizationService _diskOptimizationService;
+  late final WindowsOptimizationService _windowsOptimizationService;
   late final DriveStatusService _driveStatusService;
   late final SystemCleanupScanService _cleanupScanService;
   DriveStatus? _driveStatus;
@@ -64,6 +68,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
     _largeFilesService = widget.largeFilesService ?? LargeFilesService();
     _diskOptimizationService =
         widget.diskOptimizationService ?? DiskOptimizationService();
+    _windowsOptimizationService =
+        widget.windowsOptimizationService ?? WindowsOptimizationService();
     _driveStatusService = widget.driveStatusService ?? DriveStatusService();
     _cleanupScanService =
         widget.cleanupScanService ?? SystemCleanupScanService();
@@ -298,6 +304,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
+  Future<void> _openWindowsOptimizationTool() {
+    return showDialog<void>(
+      context: context,
+      builder: (context) =>
+          _WindowsOptimizationDialog(service: _windowsOptimizationService),
+    );
+  }
+
   Future<void> _openAllTools() {
     return showDialog<void>(
       context: context,
@@ -317,6 +331,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
         onOpenDiskOptimization: () {
           Navigator.of(context).pop();
           _openDiskOptimizationTool();
+        },
+        onOpenWindowsOptimization: () {
+          Navigator.of(context).pop();
+          _openWindowsOptimizationTool();
         },
       ),
     );
@@ -448,10 +466,12 @@ class SystemOptimizationScreen extends StatelessWidget {
     super.key,
     this.adBlockService,
     this.diskOptimizationService,
+    this.windowsOptimizationService,
   });
 
   final AdBlockService? adBlockService;
   final DiskOptimizationService? diskOptimizationService;
+  final WindowsOptimizationService? windowsOptimizationService;
 
   Future<void> _openAdBlockTool(BuildContext context) {
     return showDialog<void>(
@@ -470,12 +490,27 @@ class SystemOptimizationScreen extends StatelessWidget {
     );
   }
 
+  Future<void> _openWindowsOptimizationTool(BuildContext context) {
+    return showDialog<void>(
+      context: context,
+      builder: (context) => _WindowsOptimizationDialog(
+        service: windowsOptimizationService ?? WindowsOptimizationService(),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return _FeatureCenterScaffold(
       title: '系统优化中心',
-      subtitle: '集中处理 hosts 广告屏蔽和 Windows 磁盘优化。',
+      subtitle: '集中处理 hosts 广告屏蔽、Windows 设置优化和磁盘优化。',
       children: [
+        _ToolCard(
+          icon: Icons.tune_outlined,
+          title: 'Windows 设置优化',
+          subtitle: '执行 powercfg、ipconfig、netsh 和注册表优化',
+          onTap: () => _openWindowsOptimizationTool(context),
+        ),
         _ToolCard(
           icon: Icons.block_outlined,
           title: '广告清理',
@@ -1101,12 +1136,14 @@ class _AllToolsDialog extends StatelessWidget {
     required this.onOpenDuplicateFiles,
     required this.onOpenLargeFiles,
     required this.onOpenDiskOptimization,
+    required this.onOpenWindowsOptimization,
   });
 
   final VoidCallback onOpenAdBlock;
   final VoidCallback onOpenDuplicateFiles;
   final VoidCallback onOpenLargeFiles;
   final VoidCallback onOpenDiskOptimization;
+  final VoidCallback onOpenWindowsOptimization;
 
   @override
   Widget build(BuildContext context) {
@@ -1134,6 +1171,12 @@ class _AllToolsDialog extends StatelessWidget {
               title: '超大文件',
               subtitle: '扫描目录中的大体积文件',
               onTap: onOpenLargeFiles,
+            ),
+            _ToolListTile(
+              icon: Icons.tune_outlined,
+              title: 'Windows 设置优化',
+              subtitle: '执行 powercfg、netsh、ipconfig 和注册表优化',
+              onTap: onOpenWindowsOptimization,
             ),
             _ToolListTile(
               icon: Icons.grid_view_outlined,
@@ -1640,6 +1683,192 @@ class _DiskOptimizationDialogState extends State<_DiskOptimizationDialog> {
         ],
       ),
     );
+  }
+}
+
+class _WindowsOptimizationDialog extends StatefulWidget {
+  const _WindowsOptimizationDialog({required this.service});
+
+  final WindowsOptimizationService service;
+
+  @override
+  State<_WindowsOptimizationDialog> createState() =>
+      _WindowsOptimizationDialogState();
+}
+
+class _WindowsOptimizationDialogState
+    extends State<_WindowsOptimizationDialog> {
+  bool _busy = false;
+  String? _activeActionId;
+  String? _output;
+
+  Future<void> _apply(WindowsOptimizationAction action) async {
+    final confirmed = await _confirm(action, revert: false);
+    if (confirmed != true) {
+      return;
+    }
+    await _run(action, () => widget.service.apply(action.id));
+  }
+
+  Future<void> _revert(WindowsOptimizationAction action) async {
+    final confirmed = await _confirm(action, revert: true);
+    if (confirmed != true) {
+      return;
+    }
+    await _run(action, () => widget.service.revert(action.id));
+  }
+
+  Future<bool?> _confirm(
+    WindowsOptimizationAction action, {
+    required bool revert,
+  }) {
+    return showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(revert ? '确认恢复默认' : '确认执行优化'),
+        content: Text(
+          '${action.title}\n\n${action.description}\n\n'
+          '风险: ${action.riskLabel}'
+          '${action.requiresAdmin ? '\n需要管理员权限。' : ''}',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: Text(revert ? '恢复默认' : '执行优化'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _run(
+    WindowsOptimizationAction action,
+    Future<WindowsOptimizationResult> Function() runner,
+  ) async {
+    setState(() {
+      _busy = true;
+      _activeActionId = action.id;
+      _output = null;
+    });
+
+    try {
+      final result = await runner();
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _busy = false;
+        _activeActionId = null;
+        _output = result.output;
+      });
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _busy = false;
+        _activeActionId = null;
+        _output = error.toString();
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return _ToolDialogFrame(
+      title: 'Windows 设置优化',
+      icon: Icons.tune_outlined,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            '这些操作会真实调用 Windows 命令；请在 Windows 上以管理员身份运行以获得完整权限。',
+            style: TextStyle(color: AppColors.muted, height: 1.5),
+          ),
+          const SizedBox(height: 18),
+          SizedBox(
+            height: 380,
+            child: ListView.separated(
+              itemCount: widget.service.actions.length,
+              separatorBuilder: (_, __) =>
+                  const Divider(color: AppColors.border),
+              itemBuilder: (context, index) {
+                final action = widget.service.actions[index];
+                final active = _busy && _activeActionId == action.id;
+                return ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: CircleAvatar(
+                    backgroundColor: AppColors.paleBlue,
+                    foregroundColor: AppColors.primaryDark,
+                    child: Icon(_optimizationIcon(action.category)),
+                  ),
+                  title: Text(
+                    action.title,
+                    style: const TextStyle(fontWeight: FontWeight.w900),
+                  ),
+                  subtitle: Text(
+                    '${action.category} · ${action.riskLabel}'
+                    '${action.requiresAdmin ? ' · 需要管理员' : ''}\n'
+                    '${action.description}\n'
+                    '${action.commands.map((c) => c.commandLine).join('\n')}',
+                  ),
+                  trailing: Wrap(
+                    spacing: 8,
+                    children: [
+                      FilledButton(
+                        onPressed: _busy ? null : () => _apply(action),
+                        child: Text(active ? '执行中' : '执行优化'),
+                      ),
+                      OutlinedButton(
+                        onPressed: _busy || !action.canRevert
+                            ? null
+                            : () => _revert(action),
+                        child: const Text('恢复默认'),
+                      ),
+                    ],
+                  ),
+                );
+              },
+            ),
+          ),
+          if (_busy) ...[
+            const SizedBox(height: 18),
+            const LinearProgressIndicator(minHeight: 4),
+          ],
+          if (_output != null) ...[
+            const SizedBox(height: 16),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: const Color(0xFFF8FAFC),
+                border: Border.all(color: AppColors.border),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: SelectableText(
+                _output!,
+                style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  IconData _optimizationIcon(String category) {
+    return switch (category) {
+      '网络' => Icons.wifi_tethering_outlined,
+      '性能' => Icons.speed_outlined,
+      '存储' => Icons.sd_storage_outlined,
+      '启动' => Icons.rocket_launch_outlined,
+      '视觉' => Icons.auto_awesome_motion_outlined,
+      _ => Icons.tune_outlined,
+    };
   }
 }
 

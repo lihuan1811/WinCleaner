@@ -4,6 +4,50 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:wincleaner_desktop/services/system_cleanup_scan_service.dart';
 
 void main() {
+  test('default targets include WindowsCleanUP-inspired cleanup categories',
+      () {
+    final targets = SystemCleanupScanService.defaultTargets(
+      environment: const {
+        'SystemRoot': r'C:\Windows',
+        'USERPROFILE': r'C:\Users\Ada',
+        'LOCALAPPDATA': r'C:\Users\Ada\AppData\Local',
+        'APPDATA': r'C:\Users\Ada\AppData\Roaming',
+        'ProgramData': r'C:\ProgramData',
+        'TEMP': r'C:\Users\Ada\AppData\Local\Temp',
+      },
+    );
+    final byId = {for (final target in targets) target.id: target};
+
+    expect(
+      byId.keys,
+      containsAll([
+        'chrome_cache',
+        'edge_cache',
+        'firefox_cache',
+        'browser_cookies',
+        'browser_history',
+        'browser_passwords',
+        'chrome_update_cache',
+        'edge_update_cache',
+        'memory_dumps',
+        'invalid_shortcuts',
+        'recent_files',
+        'registry_invalid_uninstall_entries',
+        'system_event_logs',
+        'windows_update_cache',
+        'thumb_cache',
+      ]),
+    );
+    expect(
+      byId['chrome_cache']!.paths,
+      contains(
+          r'C:\Users\Ada\AppData\Local\Google\Chrome\User Data\Default\Cache'),
+    );
+    expect(byId['browser_passwords']!.canClean, isFalse);
+    expect(byId['registry_invalid_uninstall_entries']!.canClean, isFalse);
+    expect(byId['downloads']!.canClean, isFalse);
+  });
+
   test('scans cleanup targets and totals discovered file sizes', () async {
     final tempDir = await Directory.systemTemp.createTemp('cleanup-scan-test-');
     addTearDown(() => tempDir.delete(recursive: true));

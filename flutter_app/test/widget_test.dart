@@ -70,6 +70,14 @@ void main() {
     expect(find.text('系统优化中心'), findsOneWidget);
     expect(find.text('广告清理'), findsWidgets);
     expect(find.text('碎片整理'), findsWidgets);
+    expect(find.text('Windows 设置优化'), findsWidgets);
+
+    await tester.tap(find.text('Windows 设置优化').first);
+    await tester.pumpAndSettle();
+    expect(find.text('刷新 DNS 缓存'), findsOneWidget);
+
+    await tester.tap(find.text('关闭'));
+    await tester.pumpAndSettle();
 
     await tester.tap(find.text('文件管理'));
     await tester.pumpAndSettle();

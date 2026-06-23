@@ -6,6 +6,8 @@ class CleanupScanTarget {
     required this.name,
     required this.description,
     required this.paths,
+    this.fileNamePatterns = const [],
+    this.pathContains = const [],
     this.canClean = true,
   });
 
@@ -13,6 +15,8 @@ class CleanupScanTarget {
   final String name;
   final String description;
   final List<String> paths;
+  final List<String> fileNamePatterns;
+  final List<String> pathContains;
   final bool canClean;
 }
 
@@ -110,6 +114,23 @@ class SystemCleanupScanService {
           continue;
         }
 
+        final file = File(path);
+        if (await file.exists()) {
+          if (!target.matches(file.path)) {
+            continue;
+          }
+
+          try {
+            final stat = await file.stat();
+            await file.delete();
+            deletedCount++;
+            freedBytes += stat.size;
+          } on FileSystemException catch (error) {
+            errors.add('${file.path}: ${error.message}');
+          }
+          continue;
+        }
+
         final directory = Directory(path);
         if (!await directory.exists()) {
           continue;
@@ -118,7 +139,7 @@ class SystemCleanupScanService {
         try {
           await for (final entity
               in directory.list(recursive: true, followLinks: false)) {
-            if (entity is! File) {
+            if (entity is! File || !target.matches(entity.path)) {
               continue;
             }
 
@@ -158,6 +179,23 @@ class SystemCleanupScanService {
         continue;
       }
 
+      final file = File(path);
+      if (await file.exists()) {
+        if (!target.matches(file.path)) {
+          continue;
+        }
+
+        scannedPathCount++;
+        try {
+          final stat = await file.stat();
+          totalBytes += stat.size;
+          itemCount++;
+        } on FileSystemException catch (error) {
+          errors.add('${file.path}: ${error.message}');
+        }
+        continue;
+      }
+
       final directory = Directory(path);
       if (!await directory.exists()) {
         continue;
@@ -167,7 +205,7 @@ class SystemCleanupScanService {
       try {
         await for (final entity
             in directory.list(recursive: true, followLinks: false)) {
-          if (entity is! File) {
+          if (entity is! File || !target.matches(entity.path)) {
             continue;
           }
           try {
@@ -201,8 +239,10 @@ class SystemCleanupScanService {
     final systemRoot = env['SystemRoot'] ?? r'C:\Windows';
     final userProfile = env['USERPROFILE'] ?? '';
     final localAppData = env['LOCALAPPDATA'] ?? '';
+    final appData = env['APPDATA'] ?? '';
     final programData = env['ProgramData'] ?? r'C:\ProgramData';
     final temp = env['TEMP'] ?? env['TMP'] ?? '';
+    final systemDrive = env['SystemDrive'] ?? _driveFromSystemRoot(systemRoot);
 
     return [
       CleanupScanTarget(
@@ -221,39 +261,123 @@ class SystemCleanupScanService {
         paths: [r'C:\$Recycle.Bin'],
       ),
       CleanupScanTarget(
-        id: 'browser_cache',
-        name: '浏览器缓存',
-        description: 'Chrome、Edge、Firefox 缓存目录',
+        id: 'chrome_cache',
+        name: 'Chrome 缓存',
+        description: 'Google Chrome Cache、Code Cache 和 GPUCache',
         paths: [
           '$localAppData\\Google\\Chrome\\User Data\\Default\\Cache',
-          '$localAppData\\Microsoft\\Edge\\User Data\\Default\\Cache',
-          '$localAppData\\Mozilla\\Firefox\\Profiles',
+          '$localAppData\\Google\\Chrome\\User Data\\Default\\Code Cache',
+          '$localAppData\\Google\\Chrome\\User Data\\Default\\GPUCache',
         ],
       ),
       CleanupScanTarget(
-        id: 'logs',
-        name: '系统日志',
-        description: 'Windows 日志和诊断日志',
+        id: 'edge_cache',
+        name: 'Edge 缓存',
+        description: 'Microsoft Edge Cache、Code Cache 和 GPUCache',
+        paths: [
+          '$localAppData\\Microsoft\\Edge\\User Data\\Default\\Cache',
+          '$localAppData\\Microsoft\\Edge\\User Data\\Default\\Code Cache',
+          '$localAppData\\Microsoft\\Edge\\User Data\\Default\\GPUCache',
+        ],
+      ),
+      CleanupScanTarget(
+        id: 'firefox_cache',
+        name: 'Firefox 缓存',
+        description: 'Mozilla Firefox profile cache2 entries',
+        paths: [
+          '$appData\\Mozilla\\Firefox\\Profiles',
+        ],
+        pathContains: [r'\cache2\entries\'],
+      ),
+      CleanupScanTarget(
+        id: 'browser_cookies',
+        name: '浏览器 Cookie',
+        description: 'Chrome、Edge、Firefox Cookie 数据库，默认保护不自动删除',
+        paths: [
+          '$localAppData\\Google\\Chrome\\User Data\\Default\\Network\\Cookies',
+          '$localAppData\\Microsoft\\Edge\\User Data\\Default\\Network\\Cookies',
+          '$appData\\Mozilla\\Firefox\\Profiles',
+        ],
+        fileNamePatterns: ['Cookies', 'cookies.sqlite'],
+        canClean: false,
+      ),
+      CleanupScanTarget(
+        id: 'browser_history',
+        name: '浏览器历史记录',
+        description: 'Chrome、Edge、Firefox 历史数据库，默认保护不自动删除',
+        paths: [
+          '$localAppData\\Google\\Chrome\\User Data\\Default\\History',
+          '$localAppData\\Microsoft\\Edge\\User Data\\Default\\History',
+          '$appData\\Mozilla\\Firefox\\Profiles',
+        ],
+        fileNamePatterns: ['History', 'places.sqlite'],
+        canClean: false,
+      ),
+      CleanupScanTarget(
+        id: 'browser_passwords',
+        name: '浏览器保存密码',
+        description: 'Chrome、Edge、Firefox 登录数据，只统计不自动清理',
+        paths: [
+          '$localAppData\\Google\\Chrome\\User Data\\Default\\Login Data',
+          '$localAppData\\Microsoft\\Edge\\User Data\\Default\\Login Data',
+          '$appData\\Mozilla\\Firefox\\Profiles',
+        ],
+        fileNamePatterns: ['Login Data', 'logins.json', 'key4.db'],
+        canClean: false,
+      ),
+      CleanupScanTarget(
+        id: 'chrome_update_cache',
+        name: 'Chrome 更新缓存',
+        description: 'Google Update 下载缓存',
+        paths: [
+          '$localAppData\\Google\\Update',
+        ],
+      ),
+      CleanupScanTarget(
+        id: 'edge_update_cache',
+        name: 'Edge 更新缓存',
+        description: 'Microsoft EdgeUpdate 下载缓存',
+        paths: [
+          '$localAppData\\Microsoft\\EdgeUpdate',
+        ],
+      ),
+      CleanupScanTarget(
+        id: 'system_logs',
+        name: '诊断日志',
+        description: 'Windows Logs 和 System32 LogFiles',
         paths: [
           '$systemRoot\\Logs',
           '$systemRoot\\System32\\LogFiles',
         ],
       ),
       CleanupScanTarget(
-        id: 'updates',
-        name: '更新缓存',
-        description: 'Windows 更新下载缓存',
+        id: 'system_event_logs',
+        name: '系统事件日志',
+        description: 'Windows 事件日志 evtx 文件，默认保护不直接删除',
+        paths: [
+          '$systemRoot\\System32\\winevt\\Logs',
+        ],
+        fileNamePatterns: ['*.evtx'],
+        canClean: false,
+      ),
+      CleanupScanTarget(
+        id: 'windows_update_cache',
+        name: 'Windows 更新缓存',
+        description: 'SoftwareDistribution、DeliveryOptimization 和 Windows.old',
         paths: [
           '$systemRoot\\SoftwareDistribution\\Download',
+          '$systemRoot\\SoftwareDistribution\\DeliveryOptimization',
+          '$systemDrive\\Windows.old',
         ],
       ),
       CleanupScanTarget(
-        id: 'thumbnails',
+        id: 'thumb_cache',
         name: '缩略图缓存',
-        description: '资源管理器缩略图数据库',
+        description: '资源管理器 thumbcache_*.db 数据库',
         paths: [
           '$localAppData\\Microsoft\\Windows\\Explorer',
         ],
+        fileNamePatterns: ['thumbcache_*.db'],
       ),
       CleanupScanTarget(
         id: 'prefetch',
@@ -273,6 +397,46 @@ class SystemCleanupScanService {
         ],
       ),
       CleanupScanTarget(
+        id: 'memory_dumps',
+        name: '内存转储',
+        description: 'Minidump 和 MEMORY.DMP 崩溃转储文件',
+        paths: [
+          '$systemRoot\\Minidump',
+          '$systemRoot\\MEMORY.DMP',
+        ],
+        fileNamePatterns: ['*.dmp', 'MEMORY.DMP'],
+      ),
+      CleanupScanTarget(
+        id: 'recent_files',
+        name: '最近文件记录',
+        description: 'Windows 最近使用项目快捷方式',
+        paths: [
+          '$appData\\Microsoft\\Windows\\Recent',
+        ],
+        fileNamePatterns: ['*.lnk'],
+      ),
+      CleanupScanTarget(
+        id: 'invalid_shortcuts',
+        name: '快捷方式检查',
+        description: '桌面、开始菜单和任务栏快捷方式，默认只扫描不删除',
+        paths: [
+          '$userProfile\\Desktop',
+          r'C:\Users\Public\Desktop',
+          '$appData\\Microsoft\\Windows\\Start Menu',
+          r'C:\ProgramData\Microsoft\Windows\Start Menu',
+          '$appData\\Microsoft\\Internet Explorer\\Quick Launch\\User Pinned\\TaskBar',
+        ],
+        fileNamePatterns: ['*.lnk'],
+        canClean: false,
+      ),
+      const CleanupScanTarget(
+        id: 'registry_invalid_uninstall_entries',
+        name: '卸载注册表残留',
+        description: 'WindowsCleanUP 提到的无效卸载注册表项，默认保护不删除',
+        paths: [],
+        canClean: false,
+      ),
+      CleanupScanTarget(
         id: 'delivery_optimization',
         name: '传递优化缓存',
         description: 'Windows Delivery Optimization 缓存',
@@ -290,5 +454,38 @@ class SystemCleanupScanService {
         canClean: false,
       ),
     ];
+  }
+
+  static String _driveFromSystemRoot(String systemRoot) {
+    final match = RegExp(r'^[A-Za-z]:').firstMatch(systemRoot);
+    return match?.group(0) ?? r'C:';
+  }
+}
+
+extension on CleanupScanTarget {
+  bool matches(String path) {
+    final normalizedPath = path.replaceAll('/', r'\').toLowerCase();
+    if (pathContains.isNotEmpty &&
+        !pathContains.any((fragment) => normalizedPath
+            .contains(fragment.replaceAll('/', r'\').toLowerCase()))) {
+      return false;
+    }
+
+    if (fileNamePatterns.isEmpty) {
+      return true;
+    }
+
+    final fileName = path.split(RegExp(r'[\\/]')).last;
+    return fileNamePatterns
+        .any((pattern) => _matchesWildcard(fileName, pattern));
+  }
+
+  bool _matchesWildcard(String value, String pattern) {
+    if (!pattern.contains('*')) {
+      return value.toLowerCase() == pattern.toLowerCase();
+    }
+
+    final escaped = RegExp.escape(pattern).replaceAll(r'\*', '.*');
+    return RegExp('^$escaped\$', caseSensitive: false).hasMatch(value);
   }
 }
