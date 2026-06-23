@@ -633,14 +633,9 @@ class _SectionHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
+    return GlassPanel(
       width: double.infinity,
       padding: const EdgeInsets.all(28),
-      decoration: BoxDecoration(
-        color: AppColors.warmSurface,
-        borderRadius: BorderRadius.circular(28),
-        border: Border.all(color: AppColors.border),
-      ),
       child: Row(
         children: [
           Expanded(
@@ -680,21 +675,20 @@ class _GuidanceCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const Card(
-      child: Padding(
-        padding: EdgeInsets.all(24),
-        child: Row(
-          children: [
-            Icon(Icons.verified_user_outlined, color: AppColors.primary),
-            SizedBox(width: 14),
-            Expanded(
-              child: Text(
-                '会修改系统或删除文件的操作都需要确认。建议在 Windows 上以管理员身份运行。',
-                style: TextStyle(color: AppColors.muted, height: 1.5),
-              ),
+    return const GlassPanel(
+      padding: EdgeInsets.all(20),
+      radius: 16,
+      child: Row(
+        children: [
+          Icon(Icons.verified_user_outlined, color: AppColors.primary),
+          SizedBox(width: 14),
+          Expanded(
+            child: Text(
+              '会修改系统或删除文件的操作都需要确认。建议在 Windows 上以管理员身份运行。',
+              style: TextStyle(color: AppColors.muted, height: 1.5),
             ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
@@ -737,122 +731,120 @@ class _StorageCard extends StatelessWidget {
         ? '尚未扫描'
         : '本次可清理 ${_formatBytes(scanResult!.totalBytes)}';
 
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(32),
-        child: Row(
-          children: [
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
+    return GlassPanel(
+      padding: const EdgeInsets.all(28),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '系统存储监控',
+                  style: Theme.of(context).textTheme.headlineMedium,
+                ),
+                const SizedBox(height: 10),
+                Text(
+                  loading
+                      ? '正在读取驱动器 C: 的实时状态'
+                      : currentStatus?.healthMessage ?? '等待读取驱动器 C:',
+                  style: const TextStyle(color: AppColors.muted),
+                ),
+                const SizedBox(height: 34),
+                Wrap(
+                  spacing: 30,
+                  runSpacing: 16,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: [
+                    _Metric(label: '已用空间', value: used),
+                    const SizedBox(
+                      height: 52,
+                      child: VerticalDivider(color: AppColors.border),
+                    ),
+                    _Metric(label: '剩余空间', value: free, dark: true),
+                    const SizedBox(
+                      height: 52,
+                      child: VerticalDivider(color: AppColors.border),
+                    ),
+                    _Metric(label: '扫描结果', value: scannedBytes, dark: true),
+                  ],
+                ),
+                if (message != null) ...[
+                  const SizedBox(height: 18),
                   Text(
-                    '系统存储监控',
-                    style: Theme.of(context).textTheme.headlineMedium,
-                  ),
-                  const SizedBox(height: 10),
-                  Text(
-                    loading
-                        ? '正在读取驱动器 C: 的实时状态'
-                        : currentStatus?.healthMessage ?? '等待读取驱动器 C:',
+                    message!,
                     style: const TextStyle(color: AppColors.muted),
                   ),
-                  const SizedBox(height: 34),
-                  Wrap(
-                    spacing: 30,
-                    runSpacing: 16,
-                    crossAxisAlignment: WrapCrossAlignment.center,
-                    children: [
-                      _Metric(label: '已用空间', value: used),
-                      const SizedBox(
-                        height: 52,
-                        child: VerticalDivider(color: AppColors.border),
+                ],
+                if (scanning || cleaning) ...[
+                  const SizedBox(height: 16),
+                  const LinearProgressIndicator(minHeight: 4),
+                ],
+                const SizedBox(height: 28),
+                Wrap(
+                  spacing: 18,
+                  runSpacing: 12,
+                  children: [
+                    FilledButton.icon(
+                      style: FilledButton.styleFrom(
+                        fixedSize: const Size(220, 62),
+                        backgroundColor: AppColors.primaryDark,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(10),
+                        ),
                       ),
-                      _Metric(label: '剩余空间', value: free, dark: true),
-                      const SizedBox(
-                        height: 52,
-                        child: VerticalDivider(color: AppColors.border),
+                      onPressed: scanning || cleaning ? null : onScan,
+                      icon: const Icon(Icons.search),
+                      label: const Text(
+                        '一键开始扫描',
+                        style: TextStyle(fontWeight: FontWeight.w800),
                       ),
-                      _Metric(label: '扫描结果', value: scannedBytes, dark: true),
-                    ],
-                  ),
-                  if (message != null) ...[
-                    const SizedBox(height: 18),
-                    Text(
-                      message!,
-                      style: const TextStyle(color: AppColors.muted),
+                    ),
+                    const SizedBox(width: 18),
+                    FilledButton.icon(
+                      style: FilledButton.styleFrom(
+                        fixedSize: const Size(150, 62),
+                        foregroundColor: AppColors.primaryDark,
+                        backgroundColor: AppColors.paleBlue,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                      ),
+                      onPressed: scanning ||
+                              cleaning ||
+                              scanResult == null ||
+                              scanResult!.totalBytes == 0
+                          ? null
+                          : onClean,
+                      icon: const Icon(Icons.cleaning_services_outlined),
+                      label: Text(cleaning ? '清理中' : '一键清理'),
+                    ),
+                    const SizedBox(width: 18),
+                    OutlinedButton(
+                      style: OutlinedButton.styleFrom(
+                        fixedSize: const Size(150, 62),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                      ),
+                      onPressed: scanning || cleaning ? null : onReport,
+                      child: const Text(
+                        '详细报告',
+                        style: TextStyle(fontWeight: FontWeight.w800),
+                      ),
                     ),
                   ],
-                  if (scanning || cleaning) ...[
-                    const SizedBox(height: 16),
-                    const LinearProgressIndicator(minHeight: 4),
-                  ],
-                  const SizedBox(height: 28),
-                  Wrap(
-                    spacing: 18,
-                    runSpacing: 12,
-                    children: [
-                      FilledButton.icon(
-                        style: FilledButton.styleFrom(
-                          fixedSize: const Size(220, 62),
-                          backgroundColor: AppColors.primaryDark,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(10),
-                          ),
-                        ),
-                        onPressed: scanning || cleaning ? null : onScan,
-                        icon: const Icon(Icons.search),
-                        label: const Text(
-                          '一键开始扫描',
-                          style: TextStyle(fontWeight: FontWeight.w800),
-                        ),
-                      ),
-                      const SizedBox(width: 18),
-                      FilledButton.icon(
-                        style: FilledButton.styleFrom(
-                          fixedSize: const Size(150, 62),
-                          foregroundColor: AppColors.primaryDark,
-                          backgroundColor: AppColors.paleBlue,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(16),
-                          ),
-                        ),
-                        onPressed: scanning ||
-                                cleaning ||
-                                scanResult == null ||
-                                scanResult!.totalBytes == 0
-                            ? null
-                            : onClean,
-                        icon: const Icon(Icons.cleaning_services_outlined),
-                        label: Text(cleaning ? '清理中' : '一键清理'),
-                      ),
-                      const SizedBox(width: 18),
-                      OutlinedButton(
-                        style: OutlinedButton.styleFrom(
-                          fixedSize: const Size(150, 62),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(16),
-                          ),
-                        ),
-                        onPressed: scanning || cleaning ? null : onReport,
-                        child: const Text(
-                          '详细报告',
-                          style: TextStyle(fontWeight: FontWeight.w800),
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
+                ),
+              ],
             ),
-            const SizedBox(width: 30),
-            SizedBox(
-              width: 230,
-              height: 230,
-              child: _PercentRing(percent: percent),
-            ),
-          ],
-        ),
+          ),
+          const SizedBox(width: 30),
+          SizedBox(
+            width: 230,
+            height: 230,
+            child: _PercentRing(percent: percent),
+          ),
+        ],
       ),
     );
   }
@@ -951,31 +943,33 @@ class _HealthCard extends StatelessWidget {
     final cleanablePercent =
         (cleanableBytes / (10 * 1024 * 1024 * 1024)).clamp(0.0, 1.0).toDouble();
 
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(32),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('系统健康状态', style: Theme.of(context).textTheme.titleLarge),
-            const SizedBox(height: 28),
-            Row(
-              children: [
-                const CircleAvatar(
-                  radius: 42,
-                  backgroundColor: Color(0xFFE6ECF5),
-                  child: Icon(
-                    Icons.shield_outlined,
-                    color: AppColors.primary,
-                    size: 40,
-                  ),
+    return GlassPanel(
+      padding: const EdgeInsets.all(28),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('系统健康状态', style: Theme.of(context).textTheme.titleLarge),
+          const SizedBox(height: 28),
+          Row(
+            children: [
+              const CircleAvatar(
+                radius: 42,
+                backgroundColor: Color(0xFFE6ECF5),
+                child: Icon(
+                  Icons.shield_outlined,
+                  color: AppColors.primary,
+                  size: 40,
                 ),
-                const SizedBox(width: 22),
-                Column(
+              ),
+              const SizedBox(width: 22),
+              Expanded(
+                child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
                       healthLabel,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
                         fontSize: 24,
                         fontWeight: FontWeight.w900,
@@ -984,26 +978,28 @@ class _HealthCard extends StatelessWidget {
                     ),
                     Text(
                       lastScan,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                       style: const TextStyle(color: AppColors.muted),
                     ),
                   ],
                 ),
-              ],
-            ),
-            const SizedBox(height: 36),
-            _HealthLine(
-              label: '系统盘占用',
-              value: '${diskPercent.round()}%',
-              percent: (diskPercent / 100).clamp(0.0, 1.0).toDouble(),
-            ),
-            const SizedBox(height: 26),
-            _HealthLine(
-              label: '可清理空间',
-              value: cleanableBytes == 0 ? '待扫描' : _formatBytes(cleanableBytes),
-              percent: cleanablePercent,
-            ),
-          ],
-        ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 36),
+          _HealthLine(
+            label: '系统盘占用',
+            value: '${diskPercent.round()}%',
+            percent: (diskPercent / 100).clamp(0.0, 1.0).toDouble(),
+          ),
+          const SizedBox(height: 26),
+          _HealthLine(
+            label: '可清理空间',
+            value: cleanableBytes == 0 ? '待扫描' : _formatBytes(cleanableBytes),
+            percent: cleanablePercent,
+          ),
+        ],
       ),
     );
   }
@@ -1026,9 +1022,24 @@ class _HealthLine extends StatelessWidget {
       children: [
         Row(
           children: [
-            Text(label, style: const TextStyle(color: AppColors.muted)),
+            Expanded(
+              child: Text(
+                label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(color: AppColors.muted),
+              ),
+            ),
             const Spacer(),
-            Text(value, style: const TextStyle(fontWeight: FontWeight.w800)),
+            Flexible(
+              child: Text(
+                value,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.end,
+                style: const TextStyle(fontWeight: FontWeight.w800),
+              ),
+            ),
           ],
         ),
         const SizedBox(height: 10),
@@ -1057,72 +1068,70 @@ class _ToolCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Card(
-      clipBehavior: Clip.antiAlias,
-      color: AppColors.surfaceTint,
-      child: InkWell(
-        borderRadius: BorderRadius.circular(28),
-        onTap: onTap,
-        child: SizedBox(
-          height: 190,
-          child: Stack(
-            children: [
-              Padding(
-                padding: const EdgeInsets.all(28),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Container(
-                      width: 58,
-                      height: 58,
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(18),
-                      ),
-                      child: Icon(icon, color: AppColors.primaryDark),
+    return GlassPanel(
+      radius: 16,
+      padding: EdgeInsets.zero,
+      color: AppColors.glassMuted,
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(16),
+          onTap: onTap,
+          child: SizedBox(
+            height: 156,
+            child: Padding(
+              padding: const EdgeInsets.all(22),
+              child: Row(
+                children: [
+                  Container(
+                    width: 52,
+                    height: 52,
+                    decoration: BoxDecoration(
+                      color: AppColors.glassStrong,
+                      border: Border.all(color: AppColors.border),
+                      borderRadius: BorderRadius.circular(14),
                     ),
-                    const Spacer(),
-                    Text(title, style: Theme.of(context).textTheme.titleMedium),
-                    const SizedBox(height: 6),
-                    Text(
-                      subtitle,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style:
-                          const TextStyle(color: AppColors.muted, fontSize: 13),
-                    ),
-                  ],
-                ),
-              ),
-              Positioned(
-                right: 0,
-                bottom: 0,
-                child: Container(
-                  width: 72,
-                  height: 72,
-                  decoration: const BoxDecoration(
-                    color: AppColors.warmSurface,
-                    borderRadius:
-                        BorderRadius.only(topLeft: Radius.circular(24)),
+                    child: Icon(icon, color: AppColors.primary),
                   ),
-                  child: Center(
-                    child: Container(
-                      width: 46,
-                      height: 46,
-                      decoration: const BoxDecoration(
-                        color: AppColors.primary,
-                        shape: BoxShape.circle,
-                      ),
-                      child: const Icon(
-                        Icons.north_east,
-                        color: Colors.white,
-                        size: 20,
-                      ),
+                  const SizedBox(width: 18),
+                  Expanded(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          title,
+                          style: Theme.of(context).textTheme.titleMedium,
+                        ),
+                        const SizedBox(height: 6),
+                        Text(
+                          subtitle,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: AppColors.muted,
+                            fontSize: 13,
+                          ),
+                        ),
+                      ],
                     ),
                   ),
-                ),
+                  Container(
+                    width: 38,
+                    height: 38,
+                    decoration: BoxDecoration(
+                      color: AppColors.primary,
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: const Icon(
+                      Icons.north_east,
+                      color: Colors.white,
+                      size: 18,
+                    ),
+                  ),
+                ],
               ),
-            ],
+            ),
           ),
         ),
       ),
@@ -2141,87 +2150,82 @@ class _TrendCard extends StatelessWidget {
     final values = valuesBytes.isEmpty ? const <int>[0] : valuesBytes;
     final maxValue =
         values.fold<int>(1, (max, value) => value > max ? value : max);
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(28),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('最近清理趋势', style: Theme.of(context).textTheme.titleMedium),
-            const SizedBox(height: 34),
-            SizedBox(
-              height: 230,
-              child: valuesBytes.isEmpty
-                  ? const Center(
-                      child: Text(
-                        '暂无扫描记录',
-                        style: TextStyle(color: AppColors.muted),
-                      ),
-                    )
-                  : Row(
-                      crossAxisAlignment: CrossAxisAlignment.end,
-                      children: [
-                        for (var i = 0; i < values.length; i++)
-                          Expanded(
-                            child: Padding(
-                              padding:
-                                  const EdgeInsets.symmetric(horizontal: 5),
-                              child: Column(
-                                mainAxisAlignment: MainAxisAlignment.end,
-                                children: [
-                                  Text(
-                                    _formatBytes(values[i]),
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: const TextStyle(
-                                      color: AppColors.muted,
-                                      fontSize: 11,
-                                    ),
+    return GlassPanel(
+      padding: const EdgeInsets.all(24),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('最近清理趋势', style: Theme.of(context).textTheme.titleMedium),
+          const SizedBox(height: 34),
+          SizedBox(
+            height: 230,
+            child: valuesBytes.isEmpty
+                ? const Center(
+                    child: Text(
+                      '暂无扫描记录',
+                      style: TextStyle(color: AppColors.muted),
+                    ),
+                  )
+                : Row(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      for (var i = 0; i < values.length; i++)
+                        Expanded(
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 5),
+                            child: Column(
+                              mainAxisAlignment: MainAxisAlignment.end,
+                              children: [
+                                Text(
+                                  _formatBytes(values[i]),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    color: AppColors.muted,
+                                    fontSize: 11,
                                   ),
-                                  const SizedBox(height: 8),
-                                  Expanded(
-                                    child: Align(
-                                      alignment: Alignment.bottomCenter,
-                                      child: FractionallySizedBox(
-                                        heightFactor: (values[i] / maxValue)
-                                            .clamp(.05, 1)
-                                            .toDouble(),
-                                        child: Container(
-                                          decoration: BoxDecoration(
-                                            color: i == values.length - 1
-                                                ? AppColors.primaryDark
-                                                : const Color(0xFFD8E4FF),
-                                            borderRadius:
-                                                const BorderRadius.vertical(
-                                              top: Radius.circular(3),
-                                            ),
+                                ),
+                                const SizedBox(height: 8),
+                                Expanded(
+                                  child: Align(
+                                    alignment: Alignment.bottomCenter,
+                                    child: FractionallySizedBox(
+                                      heightFactor: (values[i] / maxValue)
+                                          .clamp(.05, 1)
+                                          .toDouble(),
+                                      child: Container(
+                                        decoration: BoxDecoration(
+                                          color: i == values.length - 1
+                                              ? AppColors.primaryDark
+                                              : const Color(0xFFD8E4FF),
+                                          borderRadius:
+                                              const BorderRadius.vertical(
+                                            top: Radius.circular(3),
                                           ),
                                         ),
                                       ),
                                     ),
                                   ),
-                                  const SizedBox(height: 14),
-                                  Text(
-                                    i == values.length - 1
-                                        ? '本次'
-                                        : '第${i + 1}次',
-                                    style: TextStyle(
-                                      fontSize: 12,
-                                      fontWeight: i == values.length - 1
-                                          ? FontWeight.w800
-                                          : FontWeight.w500,
-                                      color: AppColors.muted,
-                                    ),
+                                ),
+                                const SizedBox(height: 14),
+                                Text(
+                                  i == values.length - 1 ? '本次' : '第${i + 1}次',
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    fontWeight: i == values.length - 1
+                                        ? FontWeight.w800
+                                        : FontWeight.w500,
+                                    color: AppColors.muted,
                                   ),
-                                ],
-                              ),
+                                ),
+                              ],
                             ),
                           ),
-                      ],
-                    ),
-            ),
-          ],
-        ),
+                        ),
+                    ],
+                  ),
+          ),
+        ],
       ),
     );
   }
@@ -2234,23 +2238,21 @@ class _ActivityCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(28),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('实时活动日志', style: Theme.of(context).textTheme.titleMedium),
-            const SizedBox(height: 26),
-            for (final entry in entries)
-              _Activity(
-                icon: entry.icon,
-                color: entry.color,
-                title: entry.title,
-                subtitle: entry.subtitle,
-              ),
-          ],
-        ),
+    return GlassPanel(
+      padding: const EdgeInsets.all(24),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('实时活动日志', style: Theme.of(context).textTheme.titleMedium),
+          const SizedBox(height: 26),
+          for (final entry in entries)
+            _Activity(
+              icon: entry.icon,
+              color: entry.color,
+              title: entry.title,
+              subtitle: entry.subtitle,
+            ),
+        ],
       ),
     );
   }

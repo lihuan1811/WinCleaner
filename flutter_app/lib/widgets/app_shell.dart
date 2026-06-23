@@ -59,49 +59,67 @@ class _AppShellState extends State<AppShell> {
     };
 
     return Scaffold(
-      body: LayoutBuilder(
-        builder: (context, constraints) {
-          final shellWidth =
-              constraints.maxWidth < 1280 ? 1280.0 : constraints.maxWidth;
-          return SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: SizedBox(
-              width: shellWidth,
-              height: constraints.maxHeight,
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(22, 20, 22, 0),
-                child: Column(
-                  children: [
-                    _CommerceStyleHeader(
-                      selectedIndex: _selectedIndex,
-                      selected: selected,
-                      items: _items,
-                      onSelect: (index) =>
-                          setState(() => _selectedIndex = index),
-                      onAbout: _showAboutDialog,
-                      onSettings: _showSettingsDialog,
-                      onSearch: _showSearchDialog,
-                      onAccount: _showAccountDialog,
-                      onNotifications: _showNotifications,
-                    ),
-                    const SizedBox(height: 18),
-                    Expanded(
-                      child: AnimatedSwitcher(
-                        duration: const Duration(milliseconds: 220),
-                        switchInCurve: Curves.easeOut,
-                        switchOutCurve: Curves.easeIn,
-                        child: KeyedSubtree(
-                          key: ValueKey(selected.label),
-                          child: content,
-                        ),
+      body: DecoratedBox(
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [
+              Color(0xFFF8FBFF),
+              AppColors.background,
+              AppColors.backgroundDeep,
+            ],
+          ),
+        ),
+        child: Stack(
+          children: [
+            const Positioned.fill(child: CustomPaint(painter: _DesktopGrid())),
+            LayoutBuilder(
+              builder: (context, constraints) {
+                final shellWidth =
+                    constraints.maxWidth < 1280 ? 1280.0 : constraints.maxWidth;
+                return SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: SizedBox(
+                    width: shellWidth,
+                    height: constraints.maxHeight,
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(18, 16, 18, 0),
+                      child: Column(
+                        children: [
+                          _CommerceStyleHeader(
+                            selectedIndex: _selectedIndex,
+                            selected: selected,
+                            items: _items,
+                            onSelect: (index) =>
+                                setState(() => _selectedIndex = index),
+                            onAbout: _showAboutDialog,
+                            onSettings: _showSettingsDialog,
+                            onSearch: _showSearchDialog,
+                            onAccount: _showAccountDialog,
+                            onNotifications: _showNotifications,
+                          ),
+                          const SizedBox(height: 14),
+                          Expanded(
+                            child: AnimatedSwitcher(
+                              duration: const Duration(milliseconds: 220),
+                              switchInCurve: Curves.easeOutCubic,
+                              switchOutCurve: Curves.easeInCubic,
+                              child: KeyedSubtree(
+                                key: ValueKey(selected.label),
+                                child: content,
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
                     ),
-                  ],
-                ),
-              ),
+                  ),
+                );
+              },
             ),
-          );
-        },
+          ],
+        ),
       ),
     );
   }
@@ -247,151 +265,169 @@ class _CommerceStyleHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      decoration: BoxDecoration(
-        color: AppColors.surfaceTint,
-        borderRadius: BorderRadius.circular(30),
-      ),
-      child: Column(
+    return GlassPanel(
+      radius: 20,
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      color: AppColors.glass,
+      child: Row(
         children: [
-          Row(
-            children: [
-              Container(
-                width: 860,
-                padding: const EdgeInsets.all(14),
-                decoration: const BoxDecoration(
-                  color: AppColors.warmSurface,
-                  borderRadius: BorderRadius.only(
-                    topLeft: Radius.circular(30),
-                    bottomRight: Radius.circular(30),
+          const _BrandMark(),
+          const SizedBox(width: 18),
+          Container(width: 1, height: 34, color: AppColors.hairline),
+          const SizedBox(width: 14),
+          for (var i = 0; i < items.length; i++) ...[
+            _NavPill(
+              item: items[i],
+              selected: selectedIndex == i,
+              onTap: () => onSelect(i),
+            ),
+            if (i != items.length - 1) const SizedBox(width: 6),
+          ],
+          const SizedBox(width: 18),
+          Expanded(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '当前模块: ${selected.label}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: AppColors.text,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w900,
                   ),
                 ),
-                child: Row(
+                const SizedBox(height: 2),
+                Text(
+                  selected.subtitle,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(color: AppColors.muted, fontSize: 12),
+                ),
+              ],
+            ),
+          ),
+          _HeaderIconButton(
+            tooltip: '搜索',
+            onPressed: onSearch,
+            icon: Icons.search,
+          ),
+          const SizedBox(width: 8),
+          _HeaderIconButton(
+            tooltip: '通知',
+            onPressed: onNotifications,
+            icon: Icons.notifications_none_outlined,
+          ),
+          const SizedBox(width: 8),
+          _HeaderIconButton(
+            tooltip: '设置',
+            onPressed: onSettings,
+            icon: Icons.settings_outlined,
+          ),
+          const SizedBox(width: 10),
+          TextButton(onPressed: onAbout, child: const Text('关于我们')),
+          const SizedBox(width: 10),
+          Material(
+            color: Colors.transparent,
+            borderRadius: BorderRadius.circular(999),
+            child: InkWell(
+              borderRadius: BorderRadius.circular(999),
+              onTap: onAccount,
+              child: Container(
+                height: 44,
+                padding: const EdgeInsets.only(left: 14, right: 4),
+                decoration: BoxDecoration(
+                  color: AppColors.glassStrong,
+                  border: Border.all(color: AppColors.border),
+                  borderRadius: BorderRadius.circular(999),
+                ),
+                child: const Row(
+                  mainAxisSize: MainAxisSize.min,
                   children: [
-                    const _BrandMark(),
-                    const SizedBox(width: 18),
-                    for (var i = 0; i < items.length; i++) ...[
-                      _NavPill(
-                        item: items[i],
-                        selected: selectedIndex == i,
-                        onTap: () => onSelect(i),
+                    Text(
+                      'Administrator',
+                      style: TextStyle(
+                        color: AppColors.text,
+                        fontWeight: FontWeight.w800,
                       ),
-                      if (i != items.length - 1) const SizedBox(width: 4),
-                    ],
-                    const SizedBox(width: 8),
-                    IconButton(
-                      tooltip: '搜索',
-                      onPressed: onSearch,
-                      icon: const Icon(Icons.search),
+                    ),
+                    SizedBox(width: 10),
+                    CircleAvatar(
+                      radius: 18,
+                      backgroundColor: AppColors.paleBlue,
+                      child: Icon(Icons.person_outline, size: 18),
                     ),
                   ],
                 ),
               ),
-              const Spacer(),
-              IconButton(
-                tooltip: '通知',
-                onPressed: onNotifications,
-                icon: const Icon(Icons.notifications_none_outlined),
-              ),
-              const SizedBox(width: 8),
-              IconButton(
-                tooltip: '设置',
-                onPressed: onSettings,
-                icon: const Icon(Icons.settings_outlined),
-              ),
-              const SizedBox(width: 18),
-              TextButton(
-                onPressed: onAbout,
-                child: const Text('关于我们'),
-              ),
-              const SizedBox(width: 18),
-              Padding(
-                padding: const EdgeInsets.only(right: 18),
-                child: Material(
-                  color: Colors.transparent,
-                  borderRadius: BorderRadius.circular(999),
-                  child: Ink(
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(999),
-                      boxShadow: const [
-                        BoxShadow(
-                          color: Color(0x14000000),
-                          blurRadius: 18,
-                          offset: Offset(0, 8),
-                        ),
-                      ],
-                    ),
-                    child: InkWell(
-                      borderRadius: BorderRadius.circular(999),
-                      onTap: onAccount,
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          const Padding(
-                            padding: EdgeInsets.only(left: 18),
-                            child: Text(
-                              'Administrator',
-                              style: TextStyle(fontWeight: FontWeight.w800),
-                            ),
-                          ),
-                          Container(
-                            width: 42,
-                            height: 42,
-                            margin: const EdgeInsets.all(4),
-                            decoration: const BoxDecoration(
-                              color: AppColors.background,
-                              shape: BoxShape.circle,
-                            ),
-                            child: const Icon(Icons.north_east, size: 20),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-            ],
-          ),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(34, 34, 34, 38),
-            child: Row(
-              children: [
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const _GradientText('系统性能工作台'),
-                      const SizedBox(height: 12),
-                      Text(
-                        selected.subtitle,
-                        style: const TextStyle(
-                          color: AppColors.muted,
-                          fontSize: 16,
-                          height: 1.5,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                _HeroMetric(
-                  icon: selected.icon,
-                  label: '当前模块',
-                  value: '功能已接入',
-                ),
-                const SizedBox(width: 16),
-                const _HeroMetric(
-                  icon: Icons.security_outlined,
-                  label: '保护策略',
-                  value: '确认后执行',
-                ),
-              ],
             ),
           ),
         ],
       ),
     );
   }
+}
+
+class _HeaderIconButton extends StatelessWidget {
+  const _HeaderIconButton({
+    required this.tooltip,
+    required this.onPressed,
+    required this.icon,
+  });
+
+  final String tooltip;
+  final VoidCallback onPressed;
+  final IconData icon;
+
+  @override
+  Widget build(BuildContext context) {
+    return IconButton(
+      tooltip: tooltip,
+      onPressed: onPressed,
+      style: IconButton.styleFrom(
+        backgroundColor: AppColors.glassStrong,
+        foregroundColor: AppColors.text,
+        minimumSize: const Size(44, 44),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(12),
+          side: const BorderSide(color: AppColors.border),
+        ),
+      ),
+      icon: Icon(icon, size: 20),
+    );
+  }
+}
+
+class _DesktopGrid extends CustomPainter {
+  const _DesktopGrid();
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final linePaint = Paint()
+      ..color = const Color(0x21AFC1D4)
+      ..strokeWidth = 1;
+    const step = 48.0;
+    for (var x = 0.0; x < size.width; x += step) {
+      canvas.drawLine(Offset(x, 0), Offset(x, size.height), linePaint);
+    }
+    for (var y = 0.0; y < size.height; y += step) {
+      canvas.drawLine(Offset(0, y), Offset(size.width, y), linePaint);
+    }
+
+    final washPaint = Paint()
+      ..shader = const LinearGradient(
+        begin: Alignment.topCenter,
+        end: Alignment.bottomCenter,
+        colors: [Color(0xB8FFFFFF), Color(0x00FFFFFF)],
+      ).createShader(Rect.fromLTWH(0, 0, size.width, size.height * .45));
+    canvas.drawRect(
+        Rect.fromLTWH(0, 0, size.width, size.height * .45), washPaint);
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }
 
 class _BrandMark extends StatelessWidget {
@@ -415,11 +451,11 @@ class _BrandMark extends StatelessWidget {
         ),
         const SizedBox(width: 12),
         const Text(
-          'WinCleaner_',
+          'WinCleaner',
           style: TextStyle(
-            fontSize: 21,
+            fontSize: 20,
             fontWeight: FontWeight.w900,
-            color: AppColors.primaryDark,
+            color: AppColors.text,
           ),
         ),
       ],
@@ -440,98 +476,39 @@ class _NavPill extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return TextButton.icon(
-      onPressed: onTap,
-      icon: Icon(item.icon, size: 18),
-      label: Text(item.label),
-      style: TextButton.styleFrom(
-        foregroundColor: selected ? Colors.white : AppColors.text,
-        backgroundColor: selected ? AppColors.primary : Colors.transparent,
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(999)),
-      ),
-    );
-  }
-}
-
-class _GradientText extends StatelessWidget {
-  const _GradientText(this.text);
-
-  final String text;
-
-  @override
-  Widget build(BuildContext context) {
-    return ShaderMask(
-      blendMode: BlendMode.srcIn,
-      shaderCallback: (bounds) => const LinearGradient(
-        colors: [AppColors.primaryDark, AppColors.primary],
-      ).createShader(bounds),
-      child: Text(
-        text,
-        style: const TextStyle(
-          fontSize: 52,
-          height: 1.05,
-          fontWeight: FontWeight.w900,
+    return Material(
+      color: selected ? AppColors.primary : Colors.transparent,
+      borderRadius: BorderRadius.circular(12),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: onTap,
+        child: Container(
+          height: 44,
+          padding: const EdgeInsets.symmetric(horizontal: 13),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(
+              color: selected ? const Color(0x66FFFFFF) : Colors.transparent,
+            ),
+          ),
+          child: Row(
+            children: [
+              Icon(
+                item.icon,
+                size: 18,
+                color: selected ? Colors.white : AppColors.muted,
+              ),
+              const SizedBox(width: 8),
+              Text(
+                item.label,
+                style: TextStyle(
+                  color: selected ? Colors.white : AppColors.text,
+                  fontWeight: selected ? FontWeight.w900 : FontWeight.w700,
+                ),
+              ),
+            ],
+          ),
         ),
-      ),
-    );
-  }
-}
-
-class _HeroMetric extends StatelessWidget {
-  const _HeroMetric({
-    required this.icon,
-    required this.label,
-    required this.value,
-  });
-
-  final IconData icon;
-  final String label;
-  final String value;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: 210,
-      padding: const EdgeInsets.all(18),
-      decoration: BoxDecoration(
-        color: const Color(0xC7FFFFFF),
-        borderRadius: BorderRadius.circular(26),
-        border: Border.all(color: const Color(0xCCFFFFFF)),
-      ),
-      child: Row(
-        children: [
-          Container(
-            width: 46,
-            height: 46,
-            decoration: const BoxDecoration(
-              color: AppColors.background,
-              shape: BoxShape.circle,
-            ),
-            child: Icon(icon, color: AppColors.primary),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  label,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(color: AppColors.muted, fontSize: 12),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  value,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(fontWeight: FontWeight.w900),
-                ),
-              ],
-            ),
-          ),
-        ],
       ),
     );
   }

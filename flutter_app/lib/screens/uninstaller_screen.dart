@@ -104,7 +104,7 @@ class _UninstallerScreenState extends State<UninstallerScreen> {
                     prefixIcon: const Icon(Icons.search),
                     hintText: '搜索软件或发布者',
                     filled: true,
-                    fillColor: Colors.white,
+                    fillColor: AppColors.glassStrong,
                     border: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(12),
                       borderSide: const BorderSide(color: AppColors.border),
@@ -119,88 +119,88 @@ class _UninstallerScreenState extends State<UninstallerScreen> {
             ],
           ),
           const SizedBox(height: 20),
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.all(20),
-              child: Column(
-                children: [
-                  Row(
-                    children: [
-                      Text(
-                        '软件列表',
-                        style: Theme.of(context).textTheme.titleMedium,
-                      ),
-                      const SizedBox(width: 10),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 10,
-                          vertical: 5,
-                        ),
-                        decoration: BoxDecoration(
-                          color: AppColors.paleBlue,
-                          borderRadius: BorderRadius.circular(6),
-                        ),
-                        child: Text(
-                          '$selectedCount 已选择',
-                          style: const TextStyle(
-                            color: AppColors.primaryDark,
-                            fontWeight: FontWeight.w800,
-                          ),
-                        ),
-                      ),
-                      const Spacer(),
-                      TextButton.icon(
-                        onPressed: _isLoading ? null : _loadInstalledApps,
-                        icon: const Icon(Icons.refresh),
-                        label: const Text('刷新'),
-                      ),
-                      const SizedBox(width: 12),
-                      OutlinedButton.icon(
-                        onPressed: selectedCount == 0
-                            ? null
-                            : () => _confirmUninstall(selectedApps),
-                        icon: const Icon(Icons.delete_outline),
-                        label: const Text('卸载选中项'),
-                      ),
-                      const SizedBox(width: 12),
-                      FilledButton.icon(
-                        onPressed: status.isAvailable ? _launchBcu : null,
-                        icon: const Icon(Icons.open_in_new),
-                        label: const Text('打开 BCU'),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 18),
-                  if (_isLoading)
-                    const Padding(
-                      padding: EdgeInsets.symmetric(vertical: 54),
-                      child: Center(child: CircularProgressIndicator()),
-                    )
-                  else if (_loadError != null)
-                    Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 42),
-                      child: Text(_loadError!,
-                          style: const TextStyle(color: Colors.red)),
-                    )
-                  else
-                    _AppTable(
-                      apps: filteredApps,
-                      onChanged: (app, selected) {
-                        setState(() {
-                          _apps = [
-                            for (final current in _apps)
-                              if (current.name == app.name &&
-                                  current.uninstallCommand ==
-                                      app.uninstallCommand)
-                                current.copyWith(isSelected: selected)
-                              else
-                                current,
-                          ];
-                        });
-                      },
+          GlassPanel(
+            padding: const EdgeInsets.all(20),
+            child: Column(
+              children: [
+                Row(
+                  children: [
+                    Text(
+                      '软件列表',
+                      style: Theme.of(context).textTheme.titleMedium,
                     ),
-                ],
-              ),
+                    const SizedBox(width: 10),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 5,
+                      ),
+                      decoration: BoxDecoration(
+                        color: AppColors.paleBlue,
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: Text(
+                        '$selectedCount 已选择',
+                        style: const TextStyle(
+                          color: AppColors.primaryDark,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ),
+                    const Spacer(),
+                    TextButton.icon(
+                      onPressed: _isLoading ? null : _loadInstalledApps,
+                      icon: const Icon(Icons.refresh),
+                      label: const Text('刷新'),
+                    ),
+                    const SizedBox(width: 12),
+                    OutlinedButton.icon(
+                      onPressed: selectedCount == 0
+                          ? null
+                          : () => _confirmUninstall(selectedApps),
+                      icon: const Icon(Icons.delete_outline),
+                      label: const Text('卸载选中项'),
+                    ),
+                    const SizedBox(width: 12),
+                    FilledButton.icon(
+                      onPressed: status.isAvailable ? _launchBcu : null,
+                      icon: const Icon(Icons.open_in_new),
+                      label: const Text('打开 BCU'),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 18),
+                if (_isLoading)
+                  const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 54),
+                    child: Center(child: CircularProgressIndicator()),
+                  )
+                else if (_loadError != null)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 42),
+                    child: Text(
+                      _loadError!,
+                      style: const TextStyle(color: Colors.red),
+                    ),
+                  )
+                else
+                  _AppTable(
+                    apps: filteredApps,
+                    onChanged: (app, selected) {
+                      setState(() {
+                        _apps = [
+                          for (final current in _apps)
+                            if (current.name == app.name &&
+                                current.uninstallCommand ==
+                                    app.uninstallCommand)
+                              current.copyWith(isSelected: selected)
+                            else
+                              current,
+                        ];
+                      });
+                    },
+                  ),
+              ],
             ),
           ),
         ],
@@ -318,42 +318,40 @@ class _SummaryCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(24),
-        child: Row(
-          children: [
-            Container(
-              width: 54,
-              height: 54,
-              decoration: BoxDecoration(
-                color: AppColors.paleBlue,
-                borderRadius: BorderRadius.circular(12),
+    return GlassPanel(
+      padding: const EdgeInsets.all(22),
+      child: Row(
+        children: [
+          Container(
+            width: 54,
+            height: 54,
+            decoration: BoxDecoration(
+              color: AppColors.paleBlue,
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: const Icon(Icons.apps_outlined, color: AppColors.primary),
+          ),
+          const SizedBox(width: 18),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(title, style: const TextStyle(color: AppColors.muted)),
+              const SizedBox(height: 5),
+              Text(
+                value,
+                style: const TextStyle(
+                  fontSize: 28,
+                  fontWeight: FontWeight.w900,
+                  color: AppColors.primaryDark,
+                ),
               ),
-              child: const Icon(Icons.apps_outlined, color: AppColors.primary),
-            ),
-            const SizedBox(width: 18),
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(title, style: const TextStyle(color: AppColors.muted)),
-                const SizedBox(height: 5),
-                Text(
-                  value,
-                  style: const TextStyle(
-                    fontSize: 28,
-                    fontWeight: FontWeight.w900,
-                    color: AppColors.primaryDark,
-                  ),
-                ),
-                Text(
-                  subtitle,
-                  style: const TextStyle(fontSize: 12, color: AppColors.muted),
-                ),
-              ],
-            ),
-          ],
-        ),
+              Text(
+                subtitle,
+                style: const TextStyle(fontSize: 12, color: AppColors.muted),
+              ),
+            ],
+          ),
+        ],
       ),
     );
   }
@@ -367,53 +365,50 @@ class _BcuStatusCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(24),
-        child: Row(
-          children: [
-            CircleAvatar(
-              radius: 27,
-              backgroundColor: status.isAvailable
-                  ? const Color(0xFFD8FBE4)
-                  : const Color(0xFFFFF1C7),
-              child: Icon(
-                status.isAvailable ? Icons.check : Icons.priority_high,
-                color:
-                    status.isAvailable ? AppColors.success : AppColors.warning,
-              ),
+    return GlassPanel(
+      padding: const EdgeInsets.all(22),
+      child: Row(
+        children: [
+          CircleAvatar(
+            radius: 27,
+            backgroundColor: status.isAvailable
+                ? const Color(0xFFD8FBE4)
+                : const Color(0xFFFFF1C7),
+            child: Icon(
+              status.isAvailable ? Icons.check : Icons.priority_high,
+              color: status.isAvailable ? AppColors.success : AppColors.warning,
             ),
-            const SizedBox(width: 18),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    status.isAvailable ? 'BCU 后端可用' : 'BCU 后端未配置',
-                    style: const TextStyle(
-                      fontWeight: FontWeight.w900,
-                      color: AppColors.text,
-                    ),
+          ),
+          const SizedBox(width: 18),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  status.isAvailable ? 'BCU 后端可用' : 'BCU 后端未配置',
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w900,
+                    color: AppColors.text,
                   ),
-                  const SizedBox(height: 5),
-                  Text(
-                    status.message,
-                    style: const TextStyle(
-                      color: AppColors.muted,
-                      fontSize: 12,
-                    ),
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
+                ),
+                const SizedBox(height: 5),
+                Text(
+                  status.message,
+                  style: const TextStyle(
+                    color: AppColors.muted,
+                    fontSize: 12,
                   ),
-                ],
-              ),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ],
             ),
-            IconButton(
-              onPressed: status.isAvailable ? onLaunch : null,
-              icon: const Icon(Icons.open_in_new),
-            ),
-          ],
-        ),
+          ),
+          IconButton(
+            onPressed: status.isAvailable ? onLaunch : null,
+            icon: const Icon(Icons.open_in_new),
+          ),
+        ],
       ),
     );
   }
