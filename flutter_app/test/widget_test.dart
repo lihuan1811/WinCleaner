@@ -33,6 +33,10 @@ void main() {
     expect(find.text('系统优化'), findsOneWidget);
     expect(find.text('软件卸载'), findsOneWidget);
     expect(find.text('文件管理'), findsOneWidget);
+    expect(find.text('系统修复'), findsOneWidget);
+    expect(find.text('本次操作数据统计'), findsWidgets);
+    expect(find.text('全局一键还原所有修改'), findsWidgets);
+    expect(find.text('查看全部操作日志'), findsWidgets);
   });
 
   testWidgets('software uninstall navigation opens uninstall center', (
@@ -50,7 +54,7 @@ void main() {
 
     expect(find.text('软件卸载中心'), findsOneWidget);
     expect(find.text('BCU 后端未配置'), findsOneWidget);
-    expect(find.text('卸载选中项'), findsOneWidget);
+    expect(find.text('批量卸载选中软件'), findsOneWidget);
   });
 
   testWidgets('primary navigation opens distinct feature centers', (
@@ -91,6 +95,13 @@ void main() {
     expect(find.text('超大文件'), findsWidgets);
     expect(find.text('空文件夹'), findsWidgets);
     expect(find.text('C盘瘦身'), findsWidgets);
+
+    await tester.tap(find.text('系统修复'));
+    await tester.pumpAndSettle();
+    expect(find.text('CMD 系统修复工具箱'), findsOneWidget);
+    expect(find.text('推荐安全修复'), findsWidgets);
+    expect(find.text('深度系统修复'), findsWidgets);
+    expect(find.text('SFC 系统文件修复'), findsWidgets);
   });
 
   testWidgets('dashboard tool cards open their feature dialogs', (

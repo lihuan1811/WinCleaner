@@ -336,12 +336,12 @@ class AppDataMigrationService {
   }
 
   List<AppDataMigrationRecord> loadHistory() {
-    final file = _resolvedHistoryFile();
-    if (!file.existsSync()) {
-      return const [];
-    }
-
     try {
+      final file = _resolvedHistoryFile();
+      if (!file.existsSync()) {
+        return const [];
+      }
+
       final decoded = jsonDecode(file.readAsStringSync());
       final rows = decoded is List ? decoded : const [];
       return rows
@@ -355,16 +355,22 @@ class AppDataMigrationService {
       return const [];
     } on FileSystemException {
       return const [];
+    } on UnsupportedError {
+      return const [];
     }
   }
 
   void saveHistory(List<AppDataMigrationRecord> records) {
-    final file = _resolvedHistoryFile();
-    file.parent.createSync(recursive: true);
-    file.writeAsStringSync(
-      const JsonEncoder.withIndent('  ')
-          .convert(records.map((record) => record.toJson()).toList()),
-    );
+    try {
+      final file = _resolvedHistoryFile();
+      file.parent.createSync(recursive: true);
+      file.writeAsStringSync(
+        const JsonEncoder.withIndent('  ')
+            .convert(records.map((record) => record.toJson()).toList()),
+      );
+    } on UnsupportedError {
+      return;
+    }
   }
 
   void _addHistoryRecord(AppDataMigrationRecord record) {
@@ -383,18 +389,22 @@ class AppDataMigrationService {
       return injected;
     }
 
-    final localAppData = Platform.environment['LOCALAPPDATA'];
-    if (localAppData != null && localAppData.trim().isNotEmpty) {
-      return File(_joinPath(localAppData, [
+    try {
+      final localAppData = Platform.environment['LOCALAPPDATA'];
+      if (localAppData != null && localAppData.trim().isNotEmpty) {
+        return File(_joinPath(localAppData, [
+          'WinCleaner',
+          'appdata_migration_history.json',
+        ]));
+      }
+
+      return File(_joinPath(Directory.systemTemp.path, [
         'WinCleaner',
         'appdata_migration_history.json',
       ]));
+    } on UnsupportedError {
+      return File('/WinCleaner/appdata_migration_history.json');
     }
-
-    return File(_joinPath(Directory.systemTemp.path, [
-      'WinCleaner',
-      'appdata_migration_history.json',
-    ]));
   }
 
   Future<AppDataMigrationOperationResult> _moveSourceToTarget(
@@ -480,7 +490,12 @@ class AppDataMigrationService {
   static List<AppDataScanSource> defaultScanSources({
     Map<String, String>? environment,
   }) {
-    final env = environment ?? Platform.environment;
+    final Map<String, String> env;
+    try {
+      env = environment ?? Platform.environment;
+    } on UnsupportedError {
+      return const [];
+    }
     return [
       if ((env['LOCALAPPDATA'] ?? '').trim().isNotEmpty)
         AppDataScanSource(
@@ -513,7 +528,12 @@ class AppDataMigrationService {
   }
 
   static String defaultTargetRoot({Map<String, String>? environment}) {
-    final env = environment ?? Platform.environment;
+    final Map<String, String> env;
+    try {
+      env = environment ?? Platform.environment;
+    } on UnsupportedError {
+      return r'D:\Yugongyipan';
+    }
     final systemDrive = env['SystemDrive'] ?? 'C:';
     final fallbackDrive =
         systemDrive.toUpperCase().startsWith('D') ? r'E:\' : r'D:\';

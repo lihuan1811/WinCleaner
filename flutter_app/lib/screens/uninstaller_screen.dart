@@ -4,7 +4,18 @@ import '../models/installed_app.dart';
 import '../services/bcu_service.dart';
 import '../services/installed_apps_service.dart';
 import '../services/uninstall_service.dart';
+import '../services/windows_maintenance_service.dart';
 import '../theme/app_theme.dart';
+
+enum _AppSortMode {
+  name('软件名称'),
+  size('占用大小'),
+  installDate('安装时间');
+
+  const _AppSortMode(this.label);
+
+  final String label;
+}
 
 class UninstallerScreen extends StatefulWidget {
   const UninstallerScreen({
@@ -12,11 +23,13 @@ class UninstallerScreen extends StatefulWidget {
     this.bcuService,
     this.installedAppsService = const InstalledAppsService(),
     this.uninstallService,
+    this.maintenanceService,
   });
 
   final BcuService? bcuService;
   final InstalledAppsService installedAppsService;
   final UninstallService? uninstallService;
+  final WindowsMaintenanceService? maintenanceService;
 
   @override
   State<UninstallerScreen> createState() => _UninstallerScreenState();
@@ -25,8 +38,10 @@ class UninstallerScreen extends StatefulWidget {
 class _UninstallerScreenState extends State<UninstallerScreen> {
   late final BcuService _bcuService;
   late final UninstallService _uninstallService;
+  late final WindowsMaintenanceService _maintenanceService;
   late List<InstalledApp> _apps;
   String _query = '';
+  _AppSortMode _sortMode = _AppSortMode.name;
   bool _isLoading = true;
   String? _loadError;
 
@@ -35,6 +50,8 @@ class _UninstallerScreenState extends State<UninstallerScreen> {
     super.initState();
     _bcuService = widget.bcuService ?? BcuService();
     _uninstallService = widget.uninstallService ?? UninstallService();
+    _maintenanceService =
+        widget.maintenanceService ?? WindowsMaintenanceService();
     _apps = const [];
     _loadInstalledApps();
   }
@@ -51,7 +68,8 @@ class _UninstallerScreenState extends State<UninstallerScreen> {
       }
       return app.name.toLowerCase().contains(query) ||
           app.publisher.toLowerCase().contains(query);
-    }).toList();
+    }).toList()
+      ..sort(_compareApps);
 
     return SingleChildScrollView(
       padding: const EdgeInsets.all(32),
@@ -116,6 +134,27 @@ class _UninstallerScreenState extends State<UninstallerScreen> {
                   ),
                 ),
               ),
+              const SizedBox(width: 12),
+              SizedBox(
+                width: 180,
+                child: DropdownButtonFormField<_AppSortMode>(
+                  initialValue: _sortMode,
+                  decoration: const InputDecoration(
+                    labelText: '排序',
+                    prefixIcon: Icon(Icons.sort),
+                  ),
+                  items: [
+                    for (final mode in _AppSortMode.values)
+                      DropdownMenuItem(value: mode, child: Text(mode.label)),
+                  ],
+                  onChanged: (value) {
+                    if (value == null) {
+                      return;
+                    }
+                    setState(() => _sortMode = value);
+                  },
+                ),
+              ),
             ],
           ),
           const SizedBox(height: 20),
@@ -159,7 +198,21 @@ class _UninstallerScreenState extends State<UninstallerScreen> {
                           ? null
                           : () => _confirmUninstall(selectedApps),
                       icon: const Icon(Icons.delete_outline),
-                      label: const Text('卸载选中项'),
+                      label: const Text('批量卸载选中软件'),
+                    ),
+                    const SizedBox(width: 12),
+                    OutlinedButton.icon(
+                      onPressed: selectedCount == 0
+                          ? null
+                          : () => _confirmForceCleanup(selectedApps),
+                      icon: const Icon(Icons.auto_delete_outlined),
+                      label: const Text('强力粉碎卸载'),
+                    ),
+                    const SizedBox(width: 12),
+                    OutlinedButton.icon(
+                      onPressed: _scanUninstallResidue,
+                      icon: const Icon(Icons.manage_search_outlined),
+                      label: const Text('扫描卸载残留'),
                     ),
                     const SizedBox(width: 12),
                     FilledButton.icon(
@@ -252,6 +305,15 @@ class _UninstallerScreenState extends State<UninstallerScreen> {
     }
   }
 
+  int _compareApps(InstalledApp left, InstalledApp right) {
+    return switch (_sortMode) {
+      _AppSortMode.name =>
+        left.name.toLowerCase().compareTo(right.name.toLowerCase()),
+      _AppSortMode.size => right.sizeBytes.compareTo(left.sizeBytes),
+      _AppSortMode.installDate => right.installDate.compareTo(left.installDate),
+    };
+  }
+
   Future<void> _confirmUninstall(List<InstalledApp> selectedApps) async {
     final confirmed = await showDialog<bool>(
       context: context,
@@ -300,6 +362,108 @@ class _UninstallerScreenState extends State<UninstallerScreen> {
     if (mounted && launched > 0) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('已启动 $launched 个卸载程序')),
+      );
+    }
+  }
+
+  Future<void> _confirmForceCleanup(List<InstalledApp> selectedApps) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('确认强力粉碎卸载'),
+          content: Text(
+            '将对 ${selectedApps.length} 个软件执行残留清理：删除安装目录、卸载注册表项，'
+            'UWP 应用会调用 Remove-AppxPackage。该操作不可简单撤销。',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: const Text('强力粉碎'),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (confirmed != true) {
+      return;
+    }
+
+    final outputs = <String>[];
+    for (final app in selectedApps) {
+      final result = await _uninstallService.forceCleanup(app);
+      outputs.add('${app.name}: ${result.output}');
+    }
+    if (!mounted) {
+      return;
+    }
+    await showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('强力粉碎结果'),
+        content: SizedBox(
+          width: 620,
+          child: SelectableText(outputs.join('\n\n')),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('关闭'),
+          ),
+        ],
+      ),
+    );
+    await _loadInstalledApps();
+  }
+
+  Future<void> _scanUninstallResidue() async {
+    try {
+      final entries = await _maintenanceService.scanInvalidUninstallEntries();
+      if (!mounted) {
+        return;
+      }
+      await showDialog<void>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('卸载残留扫描结果'),
+          content: SizedBox(
+            width: 620,
+            child: entries.isEmpty
+                ? const Text('未发现无效卸载注册表项')
+                : Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      for (final entry in entries.take(20))
+                        ListTile(
+                          title: Text(entry.name),
+                          subtitle: Text(
+                            '${entry.detail}\n${entry.path}',
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                    ],
+                  ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('关闭'),
+            ),
+          ],
+        ),
+      );
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('扫描卸载残留失败：$error')),
       );
     }
   }
@@ -471,6 +635,10 @@ class _TableHeader extends StatelessWidget {
           Expanded(
             child: Text('来源', style: TextStyle(fontWeight: FontWeight.w800)),
           ),
+          Expanded(
+            flex: 2,
+            child: Text('安装路径', style: TextStyle(fontWeight: FontWeight.w800)),
+          ),
         ],
       ),
     );
@@ -556,6 +724,13 @@ class _AppRow extends StatelessWidget {
                     ),
                   ),
                 ),
+              ),
+            ),
+            Expanded(
+              flex: 2,
+              child: Text(
+                app.installLocation.isEmpty ? '-' : app.installLocation,
+                overflow: TextOverflow.ellipsis,
               ),
             ),
           ],

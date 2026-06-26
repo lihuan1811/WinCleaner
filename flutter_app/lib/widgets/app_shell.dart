@@ -1,8 +1,11 @@
 import 'package:flutter/material.dart';
 
 import '../screens/dashboard_screen.dart';
+import '../screens/system_repair_screen.dart';
 import '../screens/uninstaller_screen.dart';
+import '../services/global_restore_service.dart';
 import '../services/installed_apps_service.dart';
+import '../services/operation_log_service.dart';
 import '../theme/app_theme.dart';
 
 class AppShell extends StatefulWidget {
@@ -19,6 +22,8 @@ class AppShell extends StatefulWidget {
 
 class _AppShellState extends State<AppShell> {
   int _selectedIndex = 0;
+  final GlobalRestoreService _globalRestoreService = GlobalRestoreService();
+  final OperationLogService _operationLogService = OperationLogService();
 
   static const _items = [
     _ShellItem(
@@ -31,7 +36,7 @@ class _AppShellState extends State<AppShell> {
       icon: Icons.speed_outlined,
       label: '系统优化',
       title: '系统优化中心',
-      subtitle: '广告 hosts 屏蔽、磁盘分析和碎片整理集中处理。',
+      subtitle: 'Windows 设置、广告屏蔽、右键菜单和计划任务集中处理。',
     ),
     _ShellItem(
       icon: Icons.delete_outline,
@@ -45,6 +50,12 @@ class _AppShellState extends State<AppShell> {
       title: '文件管理中心',
       subtitle: '查找重复文件和超大文件，辅助释放磁盘空间。',
     ),
+    _ShellItem(
+      icon: Icons.construction_outlined,
+      label: '系统修复',
+      title: 'CMD 系统修复工具箱',
+      subtitle: 'SFC、DISM、CHKDSK、网络和更新组件修复。',
+    ),
   ];
 
   @override
@@ -55,6 +66,7 @@ class _AppShellState extends State<AppShell> {
       1 => const SystemOptimizationScreen(),
       2 => UninstallerScreen(installedAppsService: widget.installedAppsService),
       3 => const FileManagementScreen(),
+      4 => const SystemRepairScreen(),
       _ => const DashboardScreen(),
     };
 
@@ -84,31 +96,50 @@ class _AppShellState extends State<AppShell> {
                     width: shellWidth,
                     height: constraints.maxHeight,
                     child: Padding(
-                      padding: const EdgeInsets.fromLTRB(18, 16, 18, 0),
-                      child: Column(
+                      padding: const EdgeInsets.fromLTRB(18, 16, 18, 16),
+                      child: Row(
                         children: [
-                          _CommerceStyleHeader(
+                          _DesktopSidebar(
                             selectedIndex: _selectedIndex,
-                            selected: selected,
                             items: _items,
                             onSelect: (index) =>
                                 setState(() => _selectedIndex = index),
                             onAbout: _showAboutDialog,
-                            onSettings: _showSettingsDialog,
-                            onSearch: _showSearchDialog,
-                            onAccount: _showAccountDialog,
-                            onNotifications: _showNotifications,
+                            onStats: _showStatsDialog,
+                            onRestore: _showGlobalRestoreDialog,
+                            onLogs: _showOperationLogDialog,
                           ),
-                          const SizedBox(height: 14),
+                          const SizedBox(width: 18),
                           Expanded(
-                            child: AnimatedSwitcher(
-                              duration: const Duration(milliseconds: 220),
-                              switchInCurve: Curves.easeOutCubic,
-                              switchOutCurve: Curves.easeInCubic,
-                              child: KeyedSubtree(
-                                key: ValueKey(selected.label),
-                                child: content,
-                              ),
+                            child: Column(
+                              children: [
+                                _DesktopHeader(
+                                  selected: selected,
+                                  onSettings: _showSettingsDialog,
+                                  onSearch: _showSearchDialog,
+                                  onAccount: _showAccountDialog,
+                                  onNotifications: _showNotifications,
+                                ),
+                                const SizedBox(height: 14),
+                                Expanded(
+                                  child: AnimatedSwitcher(
+                                    duration: const Duration(milliseconds: 220),
+                                    switchInCurve: Curves.easeOutCubic,
+                                    switchOutCurve: Curves.easeInCubic,
+                                    child: KeyedSubtree(
+                                      key: ValueKey(selected.label),
+                                      child: content,
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(height: 12),
+                                _BottomCommandBar(
+                                  onStats: _showStatsDialog,
+                                  onRestore: _showGlobalRestoreDialog,
+                                  onLogs: _showOperationLogDialog,
+                                  onAbout: _showAboutDialog,
+                                ),
+                              ],
                             ),
                           ),
                         ],
@@ -149,6 +180,125 @@ class _AppShellState extends State<AppShell> {
             _DialogLine(
                 icon: Icons.folder_copy_outlined, text: '下载目录默认只扫描不自动清理'),
           ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('关闭'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _showStatsDialog() {
+    return showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('本次操作数据统计'),
+        content: const SizedBox(
+          width: 420,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _DialogLine(
+                  icon: Icons.cleaning_services_outlined, text: '清理任务：等待扫描'),
+              SizedBox(height: 12),
+              _DialogLine(icon: Icons.tune_outlined, text: '优化任务：按需执行，支持单项回退'),
+              SizedBox(height: 12),
+              _DialogLine(
+                  icon: Icons.restore_outlined, text: '迁移/注册表类操作：保留确认与还原入口'),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('关闭'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _showGlobalRestoreDialog() {
+    return showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('全局一键还原所有修改'),
+        content: const Text(
+          '将尝试恢复 hosts 广告屏蔽、所有带恢复命令的 Windows 优化项，'
+          '并按 AppData 迁移历史执行还原。该操作会真实调用系统命令。',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('关闭'),
+          ),
+          FilledButton(
+            onPressed: () async {
+              Navigator.of(dialogContext).pop();
+              await _runGlobalRestore();
+            },
+            child: const Text('执行全局还原'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _runGlobalRestore() async {
+    final result = await _globalRestoreService.restoreAll();
+    if (!mounted) {
+      return;
+    }
+    await showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(result.success ? '全局还原完成' : '全局还原完成但存在失败项'),
+        content: SizedBox(
+          width: 640,
+          child: SingleChildScrollView(child: SelectableText(result.output)),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('关闭'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _showOperationLogDialog() async {
+    final entries = await _operationLogService.read(limit: 50);
+    if (!mounted) {
+      return;
+    }
+    return showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('查看全部操作日志'),
+        content: SizedBox(
+          width: 460,
+          child: entries.isEmpty
+              ? const Text('暂无操作日志', style: TextStyle(color: AppColors.muted))
+              : Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    for (final entry in entries)
+                      ListTile(
+                        leading: const Icon(Icons.receipt_long_outlined),
+                        title: Text('${entry.module} · ${entry.action}'),
+                        subtitle: Text(
+                          '${entry.timestamp}\n${entry.detail}',
+                          maxLines: 3,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                  ],
+                ),
         ),
         actions: [
           TextButton(
@@ -226,7 +376,7 @@ class _AppShellState extends State<AppShell> {
       builder: (context) => AlertDialog(
         title: const Text('关于 WinCleaner'),
         content: const Text(
-          'WinCleaner 集成系统清理、系统优化、软件卸载和文件管理功能。'
+          'WinCleaner 集成系统清理、系统优化、软件卸载、文件管理和系统修复功能。'
           '所有会修改系统或删除文件的操作都会保留确认步骤。',
         ),
         actions: [
@@ -240,24 +390,95 @@ class _AppShellState extends State<AppShell> {
   }
 }
 
-class _CommerceStyleHeader extends StatelessWidget {
-  const _CommerceStyleHeader({
+class _DesktopSidebar extends StatelessWidget {
+  const _DesktopSidebar({
     required this.selectedIndex,
-    required this.selected,
     required this.items,
     required this.onSelect,
     required this.onAbout,
+    required this.onStats,
+    required this.onRestore,
+    required this.onLogs,
+  });
+
+  final int selectedIndex;
+  final List<_ShellItem> items;
+  final ValueChanged<int> onSelect;
+  final VoidCallback onAbout;
+  final VoidCallback onStats;
+  final VoidCallback onRestore;
+  final VoidCallback onLogs;
+
+  @override
+  Widget build(BuildContext context) {
+    return GlassPanel(
+      width: 286,
+      height: double.infinity,
+      radius: 24,
+      padding: const EdgeInsets.all(18),
+      color: AppColors.sidebar,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const _BrandMark(),
+          const SizedBox(height: 28),
+          const Text(
+            '功能导航',
+            style: TextStyle(
+              color: AppColors.muted,
+              fontSize: 12,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+          const SizedBox(height: 10),
+          for (var index = 0; index < items.length; index++) ...[
+            _SidebarNavButton(
+              item: items[index],
+              selected: selectedIndex == index,
+              onTap: () => onSelect(index),
+            ),
+            const SizedBox(height: 8),
+          ],
+          const Spacer(),
+          const Divider(color: AppColors.hairline),
+          const SizedBox(height: 10),
+          _QuickActionTile(
+            icon: Icons.insights_outlined,
+            title: '本次操作数据统计',
+            onTap: onStats,
+          ),
+          _QuickActionTile(
+            icon: Icons.restore_outlined,
+            title: '全局一键还原所有修改',
+            onTap: onRestore,
+          ),
+          _QuickActionTile(
+            icon: Icons.receipt_long_outlined,
+            title: '查看全部操作日志',
+            onTap: onLogs,
+          ),
+          const SizedBox(height: 10),
+          TextButton.icon(
+            onPressed: onAbout,
+            icon: const Icon(Icons.info_outline),
+            label: const Text('关于我们'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _DesktopHeader extends StatelessWidget {
+  const _DesktopHeader({
+    required this.selected,
     required this.onSettings,
     required this.onSearch,
     required this.onAccount,
     required this.onNotifications,
   });
 
-  final int selectedIndex;
   final _ShellItem selected;
-  final List<_ShellItem> items;
-  final ValueChanged<int> onSelect;
-  final VoidCallback onAbout;
   final VoidCallback onSettings;
   final VoidCallback onSearch;
   final VoidCallback onAccount;
@@ -267,44 +488,34 @@ class _CommerceStyleHeader extends StatelessWidget {
   Widget build(BuildContext context) {
     return GlassPanel(
       radius: 20,
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
       color: AppColors.glass,
       child: Row(
         children: [
-          const _BrandMark(),
-          const SizedBox(width: 18),
-          Container(width: 1, height: 34, color: AppColors.hairline),
+          FeatureIcon(
+            icon: selected.icon,
+            size: 48,
+            iconSize: 23,
+            selected: true,
+          ),
           const SizedBox(width: 14),
-          for (var i = 0; i < items.length; i++) ...[
-            _NavPill(
-              item: items[i],
-              selected: selectedIndex == i,
-              onTap: () => onSelect(i),
-            ),
-            if (i != items.length - 1) const SizedBox(width: 6),
-          ],
-          const SizedBox(width: 18),
           Expanded(
             child: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  '当前模块: ${selected.label}',
+                  '当前模块：${selected.label}',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: AppColors.text,
-                    fontSize: 14,
-                    fontWeight: FontWeight.w900,
-                  ),
+                  style: Theme.of(context).textTheme.titleLarge,
                 ),
-                const SizedBox(height: 2),
+                const SizedBox(height: 3),
                 Text(
                   selected.subtitle,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(color: AppColors.muted, fontSize: 12),
+                  style: const TextStyle(color: AppColors.muted, fontSize: 13),
                 ),
               ],
             ),
@@ -326,44 +537,8 @@ class _CommerceStyleHeader extends StatelessWidget {
             onPressed: onSettings,
             icon: Icons.settings_outlined,
           ),
-          const SizedBox(width: 10),
-          TextButton(onPressed: onAbout, child: const Text('关于我们')),
-          const SizedBox(width: 10),
-          Material(
-            color: Colors.transparent,
-            borderRadius: BorderRadius.circular(999),
-            child: InkWell(
-              borderRadius: BorderRadius.circular(999),
-              onTap: onAccount,
-              child: Container(
-                height: 44,
-                padding: const EdgeInsets.only(left: 14, right: 4),
-                decoration: BoxDecoration(
-                  color: AppColors.glassStrong,
-                  border: Border.all(color: AppColors.border),
-                  borderRadius: BorderRadius.circular(999),
-                ),
-                child: const Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      'Administrator',
-                      style: TextStyle(
-                        color: AppColors.text,
-                        fontWeight: FontWeight.w800,
-                      ),
-                    ),
-                    SizedBox(width: 10),
-                    CircleAvatar(
-                      radius: 18,
-                      backgroundColor: AppColors.paleBlue,
-                      child: Icon(Icons.person_outline, size: 18),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
+          const SizedBox(width: 12),
+          _UserChip(onTap: onAccount),
         ],
       ),
     );
@@ -436,21 +611,36 @@ class _BrandMark extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return const Row(
-      mainAxisSize: MainAxisSize.min,
       children: [
         FeatureIcon(
           icon: Icons.cleaning_services,
-          size: 44,
-          iconSize: 21,
+          size: 48,
+          iconSize: 22,
           selected: true,
         ),
         SizedBox(width: 12),
-        Text(
-          'WinCleaner',
-          style: TextStyle(
-            fontSize: 20,
-            fontWeight: FontWeight.w900,
-            color: AppColors.text,
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'WinCleaner',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 21,
+                  fontWeight: FontWeight.w900,
+                  color: AppColors.text,
+                ),
+              ),
+              SizedBox(height: 2),
+              Text(
+                'Windows 系统清理管家',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(color: AppColors.muted, fontSize: 12),
+              ),
+            ],
           ),
         ),
       ],
@@ -458,8 +648,8 @@ class _BrandMark extends StatelessWidget {
   }
 }
 
-class _NavPill extends StatelessWidget {
-  const _NavPill({
+class _SidebarNavButton extends StatelessWidget {
+  const _SidebarNavButton({
     required this.item,
     required this.selected,
     required this.onTap,
@@ -472,39 +662,236 @@ class _NavPill extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Material(
-      color: selected ? AppColors.primary : Colors.transparent,
-      borderRadius: BorderRadius.circular(12),
+      color: selected ? AppColors.primaryDark : Colors.transparent,
+      borderRadius: BorderRadius.circular(14),
       child: InkWell(
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(14),
         onTap: onTap,
         child: Container(
-          height: 44,
-          padding: const EdgeInsets.symmetric(horizontal: 13),
+          height: 58,
+          padding: const EdgeInsets.symmetric(horizontal: 12),
           decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(12),
+            color: selected ? null : AppColors.glassMuted,
+            borderRadius: BorderRadius.circular(14),
             border: Border.all(
-              color: selected ? const Color(0x66FFFFFF) : Colors.transparent,
+              color: selected ? const Color(0x66FFFFFF) : AppColors.border,
             ),
           ),
           child: Row(
             children: [
               FeatureIcon(
                 icon: item.icon,
-                size: 28,
-                iconSize: 15,
+                size: 34,
+                iconSize: 17,
                 primary: selected ? AppColors.primaryDark : AppColors.primary,
                 secondary: selected ? AppColors.primary : AppColors.accent,
+                selected: selected,
               ),
-              const SizedBox(width: 8),
-              Text(
-                item.label,
-                style: TextStyle(
-                  color: selected ? Colors.white : AppColors.text,
-                  fontWeight: selected ? FontWeight.w900 : FontWeight.w700,
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      item.label,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: selected ? Colors.white : AppColors.text,
+                        fontWeight:
+                            selected ? FontWeight.w900 : FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      item.subtitle,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: selected
+                            ? const Color(0xDDEAF2FF)
+                            : AppColors.muted,
+                        fontSize: 11,
+                      ),
+                    ),
+                  ],
                 ),
               ),
             ],
           ),
+        ),
+      ),
+    );
+  }
+}
+
+class _QuickActionTile extends StatelessWidget {
+  const _QuickActionTile({
+    required this.icon,
+    required this.title,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String title;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Material(
+        color: AppColors.glassMuted,
+        borderRadius: BorderRadius.circular(13),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(13),
+          onTap: onTap,
+          child: Container(
+            height: 44,
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            decoration: BoxDecoration(
+              border: Border.all(color: AppColors.border),
+              borderRadius: BorderRadius.circular(13),
+            ),
+            child: Row(
+              children: [
+                Icon(icon, color: AppColors.primary, size: 19),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: AppColors.text,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _UserChip extends StatelessWidget {
+  const _UserChip({required this.onTap});
+
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      borderRadius: BorderRadius.circular(999),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(999),
+        onTap: onTap,
+        child: Container(
+          height: 44,
+          padding: const EdgeInsets.only(left: 14, right: 4),
+          decoration: BoxDecoration(
+            color: AppColors.glassStrong,
+            border: Border.all(color: AppColors.border),
+            borderRadius: BorderRadius.circular(999),
+          ),
+          child: const Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                'Administrator',
+                style: TextStyle(
+                  color: AppColors.text,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+              SizedBox(width: 10),
+              CircleAvatar(
+                radius: 18,
+                backgroundColor: AppColors.paleBlue,
+                child: Icon(Icons.person_outline, size: 18),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _BottomCommandBar extends StatelessWidget {
+  const _BottomCommandBar({
+    required this.onStats,
+    required this.onRestore,
+    required this.onLogs,
+    required this.onAbout,
+  });
+
+  final VoidCallback onStats;
+  final VoidCallback onRestore;
+  final VoidCallback onLogs;
+  final VoidCallback onAbout;
+
+  @override
+  Widget build(BuildContext context) {
+    return GlassPanel(
+      radius: 16,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      shadow: false,
+      child: Row(
+        children: [
+          _BottomAction(
+            icon: Icons.insights_outlined,
+            label: '本次操作数据统计',
+            onTap: onStats,
+          ),
+          _BottomAction(
+            icon: Icons.restore_outlined,
+            label: '全局一键还原所有修改',
+            onTap: onRestore,
+          ),
+          _BottomAction(
+            icon: Icons.receipt_long_outlined,
+            label: '查看全部操作日志',
+            onTap: onLogs,
+          ),
+          _BottomAction(
+            icon: Icons.info_outline,
+            label: '关于软件',
+            onTap: onAbout,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _BottomAction extends StatelessWidget {
+  const _BottomAction({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Expanded(
+      child: TextButton.icon(
+        onPressed: onTap,
+        icon: Icon(icon, size: 18),
+        label: Text(
+          label,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
         ),
       ),
     );

@@ -1,5 +1,12 @@
 import 'dart:io';
 
+import '../models/installed_app.dart';
+
+typedef UninstallProcessRunner = Future<ProcessResult> Function(
+  String executable,
+  List<String> arguments,
+);
+
 class UninstallCommand {
   const UninstallCommand({required this.executable, required this.arguments});
 
@@ -74,14 +81,106 @@ class UninstallCommand {
   }
 }
 
+class ForceUninstallResult {
+  const ForceUninstallResult({
+    required this.deletedPaths,
+    required this.registryDeleted,
+    required this.output,
+    required this.unsupported,
+  });
+
+  final List<String> deletedPaths;
+  final bool registryDeleted;
+  final String output;
+  final bool unsupported;
+
+  bool get success => !unsupported;
+}
+
 class UninstallService {
+  UninstallService({
+    bool? isWindowsOverride,
+    UninstallProcessRunner? processRunner,
+  })  : _isWindowsOverride = isWindowsOverride,
+        _processRunner = processRunner ?? Process.run;
+
+  final bool? _isWindowsOverride;
+  final UninstallProcessRunner _processRunner;
+
+  bool get _isWindows => _isWindowsOverride ?? Platform.isWindows;
+
   Future<Process> launch(String rawCommand) {
-    if (!Platform.isWindows) {
+    if (!_isWindows) {
       throw UnsupportedError('卸载执行仅支持 Windows');
     }
 
     final command = UninstallCommand.parse(rawCommand);
     return Process.start(command.executable, command.arguments,
         mode: ProcessStartMode.detached);
+  }
+
+  Future<ForceUninstallResult> forceCleanup(InstalledApp app) async {
+    if (!_isWindows) {
+      return const ForceUninstallResult(
+        deletedPaths: [],
+        registryDeleted: false,
+        output: '强力粉碎卸载仅支持 Windows。',
+        unsupported: true,
+      );
+    }
+
+    final deletedPaths = <String>[];
+    final output = <String>[];
+    var registryDeleted = false;
+
+    if (app.isUwp && app.uninstallCommand.trim().isNotEmpty) {
+      final command = UninstallCommand.parse(app.uninstallCommand);
+      final result =
+          await _processRunner(command.executable, command.arguments);
+      output.add(_formatProcessOutput('UWP 卸载', result));
+    }
+
+    if (app.installLocation.trim().isNotEmpty) {
+      final directory = Directory(app.installLocation);
+      final file = File(app.installLocation);
+      try {
+        if (await directory.exists()) {
+          await directory.delete(recursive: true);
+          deletedPaths.add(directory.path);
+        } else if (await file.exists()) {
+          await file.delete();
+          deletedPaths.add(file.path);
+        }
+      } on FileSystemException catch (error) {
+        output.add('${app.installLocation}: ${error.message}');
+      }
+    }
+
+    if (app.registryKey.trim().isNotEmpty) {
+      final result = await _processRunner('reg', [
+        'delete',
+        app.registryKey,
+        '/f',
+      ]);
+      registryDeleted = result.exitCode == 0;
+      output.add(_formatProcessOutput('删除卸载注册表', result));
+    }
+
+    return ForceUninstallResult(
+      deletedPaths: deletedPaths,
+      registryDeleted: registryDeleted,
+      output: output.isEmpty ? '没有发现可清理的安装目录或注册表项' : output.join('\n\n'),
+      unsupported: false,
+    );
+  }
+
+  static String _formatProcessOutput(String label, ProcessResult result) {
+    final body = [
+      if (result.stdout.toString().trim().isNotEmpty)
+        result.stdout.toString().trim(),
+      if (result.stderr.toString().trim().isNotEmpty)
+        result.stderr.toString().trim(),
+    ].join('\n');
+    return '$label\n退出码 ${result.exitCode}\n${body.isEmpty ? '命令无输出' : body}';
   }
 }

@@ -22,10 +22,7 @@ class AdBlockService {
     Future<ProcessResult> Function(String executable, List<String> arguments)?
         processRunner,
   })  : hostsFile = hostsFile ?? File(r'C:\Windows\System32\drivers\etc\hosts'),
-        backupDirectory = backupDirectory ??
-            Directory(
-              '${Directory.systemTemp.path}${Platform.pathSeparator}WinCleaner_Hosts_Backup',
-            ),
+        backupDirectory = backupDirectory ?? _defaultBackupDirectory(),
         _processRunner = processRunner ?? Process.run;
 
   static const beginMarker = '# WinCleaner ad block begin';
@@ -63,29 +60,42 @@ class AdBlockService {
       String executable, List<String> arguments) _processRunner;
 
   Future<bool> isEnabled() async {
-    if (!await hostsFile.exists()) {
+    try {
+      if (!await hostsFile.exists()) {
+        return false;
+      }
+      final content = await hostsFile.readAsString();
+      return content.contains(beginMarker) && content.contains(endMarker);
+    } on UnsupportedError {
       return false;
     }
-    final content = await hostsFile.readAsString();
-    return content.contains(beginMarker) && content.contains(endMarker);
   }
 
   Future<AdBlockStatus> status() async {
-    if (!await hostsFile.exists()) {
+    try {
+      if (!await hostsFile.exists()) {
+        return AdBlockStatus(
+          enabled: false,
+          blockedDomains: 0,
+          hostsPath: hostsFile.path,
+          message: 'hosts 文件不存在',
+        );
+      }
+
+      final content = await hostsFile.readAsString();
+      return AdBlockStatus(
+        enabled: content.contains(beginMarker) && content.contains(endMarker),
+        blockedDomains: _countManagedDomains(content),
+        hostsPath: hostsFile.path,
+      );
+    } on UnsupportedError {
       return AdBlockStatus(
         enabled: false,
         blockedDomains: 0,
         hostsPath: hostsFile.path,
-        message: 'hosts 文件不存在',
+        message: '广告清理仅支持 Windows 桌面运行。',
       );
     }
-
-    final content = await hostsFile.readAsString();
-    return AdBlockStatus(
-      enabled: content.contains(beginMarker) && content.contains(endMarker),
-      blockedDomains: _countManagedDomains(content),
-      hostsPath: hostsFile.path,
-    );
   }
 
   Future<AdBlockStatus> enable({List<String> domains = defaultDomains}) async {
@@ -201,5 +211,15 @@ class AdBlockService {
         .split(RegExp(r'\r?\n'))
         .where((line) => line.trimLeft().startsWith('0.0.0.0 '))
         .length;
+  }
+}
+
+Directory _defaultBackupDirectory() {
+  try {
+    return Directory(
+      '${Directory.systemTemp.path}${Platform.pathSeparator}WinCleaner_Hosts_Backup',
+    );
+  } on UnsupportedError {
+    return Directory('/WinCleaner_Hosts_Backup');
   }
 }

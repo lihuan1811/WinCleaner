@@ -25,6 +25,19 @@ void main() {
         'optimize_visual_effects',
         'repair_explorer_associations',
         'clear_icon_cache',
+        'office_default_optimize',
+        'esports_deep_optimize',
+        'nvidia_performance_tuning',
+        'amd_performance_tuning',
+        'gpu_restore_defaults',
+        'disable_windows_update',
+        'enable_windows_update',
+        'defender_temp_disable',
+        'defender_policy_disable',
+        'defender_restore',
+        'edge_silent_install',
+        'edge_force_remove',
+        'repair_browser_hijack',
       ]),
     );
     expect(actions.length, greaterThanOrEqualTo(14));
@@ -130,6 +143,54 @@ void main() {
     expect(arguments, ['/hibernate', 'on']);
     expect(result.success, isTrue);
     expect(result.output, contains('hibernation restored'));
+  });
+
+  test('advanced control actions expose concrete Windows commands', () {
+    final actions = WindowsOptimizationService.defaultActions();
+    final byId = {for (final action in actions) action.id: action};
+
+    expect(byId['disable_windows_update']!.commands.single.commandLine,
+        contains('sc config wuauserv start= disabled'));
+    expect(byId['disable_windows_update']!.requiresAdmin, isTrue);
+    expect(byId['disable_windows_update']!.canRevert, isTrue);
+    expect(byId['defender_temp_disable']!.commands.single.commandLine,
+        contains('Set-MpPreference'));
+    expect(byId['defender_policy_disable']!.commands.first.commandLine,
+        contains(r'HKLM\SOFTWARE\Policies\Microsoft\Windows Defender'));
+    expect(byId['edge_silent_install']!.commands.single.commandLine,
+        contains('winget install --id Microsoft.Edge'));
+    expect(byId['edge_force_remove']!.riskLabel, '高风险');
+    expect(
+        byId['repair_browser_hijack']!
+            .commands
+            .map((command) => command.commandLine)
+            .join('\n'),
+        contains('winsock reset'));
+  });
+
+  test('gpu and optimization presets contain expected command groups', () {
+    final actions = WindowsOptimizationService.defaultActions();
+    final byId = {for (final action in actions) action.id: action};
+
+    expect(byId['office_default_optimize']!.category, '基础优化');
+    expect(
+        byId['office_default_optimize']!
+            .commands
+            .map((command) => command.commandLine)
+            .join('\n'),
+        contains('StorageSense'));
+    expect(
+        byId['esports_deep_optimize']!
+            .commands
+            .map((command) => command.commandLine)
+            .join('\n'),
+        contains('powercfg /setactive SCHEME_MIN'));
+    expect(byId['nvidia_performance_tuning']!.commands.last.commandLine,
+        contains(r'NVIDIA\DXCache'));
+    expect(byId['amd_performance_tuning']!.commands.last.commandLine,
+        contains(r'AMD\DxCache'));
+    expect(byId['gpu_restore_defaults']!.commands.single.commandLine,
+        contains('SCHEME_BALANCED'));
   });
 
   test('reports unsupported outside Windows without running commands',

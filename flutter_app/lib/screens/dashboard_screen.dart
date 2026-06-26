@@ -7,6 +7,7 @@ import '../services/app_data_migration_service.dart';
 import '../services/disk_optimization_service.dart';
 import '../services/drive_status_service.dart';
 import '../services/duplicate_files_service.dart';
+import '../services/disk_file_management_service.dart';
 import '../services/empty_folder_service.dart';
 import '../services/large_files_service.dart';
 import '../services/rule_store_service.dart';
@@ -55,6 +56,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   bool _loadingDriveStatus = true;
   bool _scanningSystem = false;
   bool _cleaningSystem = false;
+  bool _includeRiskyCleanup = false;
   String? _dashboardMessage;
   final List<int> _scanTrendBytes = [];
   final List<_ActivityLogEntry> _activities = [
@@ -142,6 +144,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
       }
       setState(() {
         _scanResult = result;
+        _includeRiskyCleanup = false;
         _scanningSystem = false;
         _dashboardMessage = '发现 ${result.itemCount} 个可清理项目';
         _scanTrendBytes
@@ -195,8 +198,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
       builder: (context) => AlertDialog(
         title: const Text('确认清理'),
         content: Text(
-          '将清理已扫描到的临时文件、缓存、日志等安全目标，'
-          '下载目录会保持只扫描不自动删除。\n\n预计可清理 ${_formatBytes(scanResult.totalBytes)}。',
+          _includeRiskyCleanup
+              ? '当前选择了全选/深度清理，会包含谨慎项。聊天记录、本地备份等风险项可能被删除。\n\n预计可清理 ${_formatBytes(scanResult.totalBytes)}。'
+              : '将只清理推荐安全项。下载目录、聊天记录备份和高危目标会跳过。\n\n预计可清理 ${_formatBytes(scanResult.totalBytes)}。',
         ),
         actions: [
           TextButton(
@@ -217,11 +221,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
     setState(() {
       _cleaningSystem = true;
-      _dashboardMessage = '正在清理安全目标...';
+      _dashboardMessage =
+          _includeRiskyCleanup ? '正在清理全部选中目标...' : '正在清理推荐安全目标...';
     });
 
     try {
-      final result = await _cleanupScanService.clean();
+      final result =
+          await _cleanupScanService.clean(includeRisky: _includeRiskyCleanup);
       if (!mounted) {
         return;
       }
@@ -229,7 +235,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
         _cleaningSystem = false;
         _scanResult = null;
         _dashboardMessage =
-            '已清理 ${result.deletedCount} 个文件，释放 ${_formatBytes(result.freedBytes)}';
+            '已清理 ${result.deletedCount} 个文件，释放 ${_formatBytes(result.freedBytes)}，备份 ${result.backedUpCount} 个文件';
         _scanTrendBytes
           ..add(result.freedBytes)
           ..removeRange(
@@ -243,7 +249,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
               color: const Color(0xFFD8FBE4),
               title: '清理完成 ${_formatBytes(result.freedBytes)}',
               subtitle:
-                  '${result.deletedCount} 个文件 · 跳过 ${result.skippedCategories.length} 类保护目标',
+                  '${result.deletedCount} 个文件 · 备份 ${result.backedUpCount} 个 · 跳过 ${result.skippedCategories.length} 类目标',
             ),
           );
       });
@@ -386,6 +392,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   scanning: _scanningSystem,
                   cleaning: _cleaningSystem,
                   message: _dashboardMessage,
+                  includeRisky: _includeRiskyCleanup,
+                  onSelectRecommended: () =>
+                      setState(() => _includeRiskyCleanup = false),
+                  onSelectAll: () =>
+                      setState(() => _includeRiskyCleanup = true),
                   onScan: _startSystemScan,
                   onClean: _startSystemClean,
                   onReport: _openScanReport,
@@ -650,12 +661,14 @@ class FileManagementScreen extends StatelessWidget {
     this.largeFilesService,
     this.emptyFolderService,
     this.appDataMigrationService,
+    this.diskFileManagementService,
   });
 
   final DuplicateFilesService? duplicateFilesService;
   final LargeFilesService? largeFilesService;
   final EmptyFolderService? emptyFolderService;
   final AppDataMigrationService? appDataMigrationService;
+  final DiskFileManagementService? diskFileManagementService;
 
   Future<void> _openDuplicateTool(BuildContext context) {
     return showDialog<void>(
@@ -696,12 +709,37 @@ class FileManagementScreen extends StatelessWidget {
     );
   }
 
+  Future<void> _openDiskFileManager(BuildContext context) {
+    return showDialog<void>(
+      context: context,
+      builder: (context) => _DiskFileManagerDialog(
+        service: diskFileManagementService ?? DiskFileManagementService(),
+        initialPath: _defaultUserScanPath(),
+      ),
+    );
+  }
+
+  Future<void> _openSystemDirectoryMigration(BuildContext context) {
+    return showDialog<void>(
+      context: context,
+      builder: (context) => _SystemDirectoryMigrationDialog(
+        service: diskFileManagementService ?? DiskFileManagementService(),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return _FeatureCenterScaffold(
       title: '文件管理中心',
-      subtitle: '发现重复文件和大体积文件，先定位再处理。',
+      subtitle: '发现重复文件和大体积文件，支持批量操作、文件粉碎和系统目录迁移。',
       children: [
+        _ToolCard(
+          icon: Icons.pie_chart_outline,
+          title: '磁盘文件管理器',
+          subtitle: '文件筛选、Top20 文件夹、复制/移动/重命名/删除/粉碎',
+          onTap: () => _openDiskFileManager(context),
+        ),
         _ToolCard(
           icon: Icons.copy_outlined,
           title: '重复文件',
@@ -725,6 +763,12 @@ class FileManagementScreen extends StatelessWidget {
           title: 'C盘瘦身',
           subtitle: '迁移 AppData 大目录到其他盘并保留原路径',
           onTap: () => _openAppDataMigrationTool(context),
+        ),
+        _ToolCard(
+          icon: Icons.move_down_outlined,
+          title: '系统目录迁移',
+          subtitle: '迁移桌面/下载/文档/图片/视频和 Temp 临时目录',
+          onTap: () => _openSystemDirectoryMigration(context),
         ),
       ],
     );
@@ -849,6 +893,9 @@ class _StorageCard extends StatelessWidget {
     required this.scanning,
     required this.cleaning,
     required this.message,
+    required this.includeRisky,
+    required this.onSelectRecommended,
+    required this.onSelectAll,
     required this.onScan,
     required this.onClean,
     required this.onReport,
@@ -860,6 +907,9 @@ class _StorageCard extends StatelessWidget {
   final bool scanning;
   final bool cleaning;
   final String? message;
+  final bool includeRisky;
+  final VoidCallback onSelectRecommended;
+  final VoidCallback onSelectAll;
   final VoidCallback onScan;
   final VoidCallback onClean;
   final VoidCallback onReport;
@@ -927,6 +977,32 @@ class _StorageCard extends StatelessWidget {
                   const SizedBox(height: 16),
                   const LinearProgressIndicator(minHeight: 4),
                 ],
+                const SizedBox(height: 18),
+                Material(
+                  color: Colors.transparent,
+                  child: Wrap(
+                    spacing: 10,
+                    runSpacing: 10,
+                    children: [
+                      ChoiceChip(
+                        selected: !includeRisky,
+                        label: const Text('推荐选项'),
+                        avatar: const Icon(Icons.verified_outlined, size: 18),
+                        onSelected: scanning || cleaning
+                            ? null
+                            : (_) => onSelectRecommended(),
+                      ),
+                      ChoiceChip(
+                        selected: includeRisky,
+                        label: const Text('全选 / 深度'),
+                        avatar:
+                            const Icon(Icons.warning_amber_outlined, size: 18),
+                        onSelected:
+                            scanning || cleaning ? null : (_) => onSelectAll(),
+                      ),
+                    ],
+                  ),
+                ),
                 const SizedBox(height: 28),
                 Wrap(
                   spacing: 18,
@@ -1215,59 +1291,63 @@ class _ToolCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return GlassPanel(
-      radius: 16,
-      padding: EdgeInsets.zero,
-      color: AppColors.glassMuted,
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          borderRadius: BorderRadius.circular(16),
-          onTap: onTap,
-          child: SizedBox(
-            height: 156,
-            child: Padding(
-              padding: const EdgeInsets.all(22),
-              child: Row(
-                children: [
-                  FeatureIcon(icon: icon),
-                  const SizedBox(width: 18),
-                  Expanded(
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          title,
-                          style: Theme.of(context).textTheme.titleMedium,
-                        ),
-                        const SizedBox(height: 6),
-                        Text(
-                          subtitle,
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            color: AppColors.muted,
-                            fontSize: 13,
+    return Tooltip(
+      message: '$title\n功能说明：$subtitle\n适用场景：需要处理对应清理/优化任务时\n风险等级：按弹窗确认和模块标识执行',
+      waitDuration: const Duration(milliseconds: 450),
+      child: GlassPanel(
+        radius: 16,
+        padding: EdgeInsets.zero,
+        color: AppColors.glassMuted,
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            borderRadius: BorderRadius.circular(16),
+            onTap: onTap,
+            child: SizedBox(
+              height: 156,
+              child: Padding(
+                padding: const EdgeInsets.all(22),
+                child: Row(
+                  children: [
+                    FeatureIcon(icon: icon),
+                    const SizedBox(width: 18),
+                    Expanded(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            title,
+                            style: Theme.of(context).textTheme.titleMedium,
                           ),
-                        ),
-                      ],
+                          const SizedBox(height: 6),
+                          Text(
+                            subtitle,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: AppColors.muted,
+                              fontSize: 13,
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
-                  ),
-                  Container(
-                    width: 38,
-                    height: 38,
-                    decoration: BoxDecoration(
-                      color: AppColors.primary,
-                      borderRadius: BorderRadius.circular(10),
+                    Container(
+                      width: 38,
+                      height: 38,
+                      decoration: BoxDecoration(
+                        color: AppColors.primary,
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: const Icon(
+                        Icons.north_east,
+                        color: Colors.white,
+                        size: 18,
+                      ),
                     ),
-                    child: const Icon(
-                      Icons.north_east,
-                      color: Colors.white,
-                      size: 18,
-                    ),
-                  ),
-                ],
+                  ],
+                ),
               ),
             ),
           ),
@@ -2829,6 +2909,408 @@ class _RuleStoreDialogState extends State<_RuleStoreDialog> {
   }
 }
 
+class _DiskFileManagerDialog extends StatefulWidget {
+  const _DiskFileManagerDialog({
+    required this.service,
+    required this.initialPath,
+  });
+
+  final DiskFileManagementService service;
+  final String initialPath;
+
+  @override
+  State<_DiskFileManagerDialog> createState() => _DiskFileManagerDialogState();
+}
+
+class _DiskFileManagerDialogState extends State<_DiskFileManagerDialog> {
+  late final TextEditingController _pathController;
+  late final TextEditingController _targetController;
+  ManagedFileType _filter = ManagedFileType.all;
+  List<ManagedFileEntry> _files = const [];
+  List<FolderUsageEntry> _folders = const [];
+  final Set<String> _selectedPaths = {};
+  bool _busy = false;
+  String? _message;
+
+  @override
+  void initState() {
+    super.initState();
+    _pathController = TextEditingController(text: widget.initialPath);
+    _targetController = TextEditingController(text: _defaultUserScanPath());
+  }
+
+  @override
+  void dispose() {
+    _pathController.dispose();
+    _targetController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _scan() async {
+    setState(() {
+      _busy = true;
+      _message = null;
+      _selectedPaths.clear();
+    });
+    final files =
+        await widget.service.listFiles(_pathController.text, type: _filter);
+    final folders = await widget.service.topFolders(_pathController.text);
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _busy = false;
+      _files = files;
+      _folders = folders;
+      _message = '发现 ${files.length} 个文件，Top 文件夹 ${folders.length} 个';
+    });
+  }
+
+  Future<void> _runOperation(
+    Future<FileOperationResult> Function(List<String> paths) runner,
+  ) async {
+    final paths = _selectedPaths.toList();
+    if (paths.isEmpty) {
+      setState(() => _message = '请先勾选文件');
+      return;
+    }
+    setState(() {
+      _busy = true;
+      _message = null;
+    });
+    final result = await runner(paths);
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _busy = false;
+      _message =
+          '操作完成 ${result.affectedPaths.length} 项，错误 ${result.errors.length} 项'
+          '${result.output.isEmpty ? '' : '\n${result.output}'}';
+    });
+    await _scan();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return _ToolDialogFrame(
+      title: '磁盘文件管理器',
+      icon: Icons.pie_chart_outline,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          TextField(
+            controller: _pathController,
+            decoration: const InputDecoration(
+              labelText: '扫描目录',
+              prefixIcon: Icon(Icons.folder_outlined),
+            ),
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Expanded(
+                child: DropdownButtonFormField<ManagedFileType>(
+                  initialValue: _filter,
+                  decoration: const InputDecoration(
+                    labelText: '文件筛选',
+                    prefixIcon: Icon(Icons.filter_alt_outlined),
+                  ),
+                  items: [
+                    for (final type in ManagedFileType.values)
+                      DropdownMenuItem(value: type, child: Text(type.label)),
+                  ],
+                  onChanged: _busy
+                      ? null
+                      : (value) => setState(() => _filter = value!),
+                ),
+              ),
+              const SizedBox(width: 12),
+              FilledButton.icon(
+                onPressed: _busy ? null : _scan,
+                icon: const Icon(Icons.search),
+                label: const Text('扫描磁盘'),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _targetController,
+            decoration: const InputDecoration(
+              labelText: '复制/移动目标目录',
+              prefixIcon: Icon(Icons.drive_folder_upload_outlined),
+            ),
+          ),
+          const SizedBox(height: 12),
+          Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            children: [
+              OutlinedButton.icon(
+                onPressed: _busy
+                    ? null
+                    : () => _runOperation(
+                          (paths) => widget.service.copyFiles(
+                            paths,
+                            _targetController.text,
+                          ),
+                        ),
+                icon: const Icon(Icons.copy_outlined),
+                label: const Text('批量复制'),
+              ),
+              OutlinedButton.icon(
+                onPressed: _busy
+                    ? null
+                    : () => _runOperation(
+                          (paths) => widget.service.moveFiles(
+                            paths,
+                            _targetController.text,
+                          ),
+                        ),
+                icon: const Icon(Icons.drive_file_move_outline),
+                label: const Text('批量移动'),
+              ),
+              OutlinedButton.icon(
+                onPressed: _busy
+                    ? null
+                    : () => _runOperation(widget.service.deleteFiles),
+                icon: const Icon(Icons.delete_outline),
+                label: const Text('批量删除'),
+              ),
+              OutlinedButton.icon(
+                onPressed: _busy
+                    ? null
+                    : () => _runOperation(widget.service.shredFiles),
+                icon: const Icon(Icons.security_outlined),
+                label: const Text('文件粉碎'),
+              ),
+              OutlinedButton.icon(
+                onPressed: _busy
+                    ? null
+                    : () async {
+                        final result = await widget.service
+                            .repairFolderPermission(_pathController.text);
+                        if (!mounted) {
+                          return;
+                        }
+                        setState(() => _message = result.output);
+                      },
+                icon: const Icon(Icons.lock_reset_outlined),
+                label: const Text('权限修复'),
+              ),
+            ],
+          ),
+          if (_busy) ...[
+            const SizedBox(height: 14),
+            const LinearProgressIndicator(minHeight: 4),
+          ],
+          if (_message != null) ...[
+            const SizedBox(height: 12),
+            _CommandOutput(output: _message!),
+          ],
+          const SizedBox(height: 14),
+          _StatusLine(label: '文件夹占用排行榜', value: 'Top ${_folders.length}'),
+          const SizedBox(height: 8),
+          SizedBox(
+            height: 120,
+            child: _folders.isEmpty
+                ? const Text('暂无文件夹排行',
+                    style: TextStyle(color: AppColors.muted))
+                : ListView.separated(
+                    itemCount: _folders.length,
+                    separatorBuilder: (_, __) =>
+                        const Divider(color: AppColors.border),
+                    itemBuilder: (context, index) {
+                      final folder = _folders[index];
+                      return ListTile(
+                        dense: true,
+                        title:
+                            Text(folder.path, overflow: TextOverflow.ellipsis),
+                        trailing: Text(_formatBytes(folder.sizeBytes)),
+                      );
+                    },
+                  ),
+          ),
+          const SizedBox(height: 12),
+          _StatusLine(label: '文件列表', value: '${_files.length} 项'),
+          SizedBox(
+            height: 260,
+            child: _files.isEmpty
+                ? const Text('暂无文件', style: TextStyle(color: AppColors.muted))
+                : ListView.separated(
+                    itemCount: _files.length,
+                    separatorBuilder: (_, __) =>
+                        const Divider(color: AppColors.border),
+                    itemBuilder: (context, index) {
+                      final file = _files[index];
+                      return CheckboxListTile(
+                        dense: true,
+                        value: _selectedPaths.contains(file.path),
+                        onChanged: _busy
+                            ? null
+                            : (value) {
+                                setState(() {
+                                  if (value == true) {
+                                    _selectedPaths.add(file.path);
+                                  } else {
+                                    _selectedPaths.remove(file.path);
+                                  }
+                                });
+                              },
+                        title: Text(file.name, overflow: TextOverflow.ellipsis),
+                        subtitle:
+                            Text(file.path, overflow: TextOverflow.ellipsis),
+                        secondary: Text(_formatBytes(file.sizeBytes)),
+                      );
+                    },
+                  ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SystemDirectoryMigrationDialog extends StatefulWidget {
+  const _SystemDirectoryMigrationDialog({required this.service});
+
+  final DiskFileManagementService service;
+
+  @override
+  State<_SystemDirectoryMigrationDialog> createState() =>
+      _SystemDirectoryMigrationDialogState();
+}
+
+class _SystemDirectoryMigrationDialogState
+    extends State<_SystemDirectoryMigrationDialog> {
+  late final TextEditingController _targetController;
+  bool _busy = false;
+  String? _message;
+
+  @override
+  void initState() {
+    super.initState();
+    _targetController = TextEditingController(text: r'D:\WinCleaner-Migrated');
+  }
+
+  @override
+  void dispose() {
+    _targetController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _run(String label, Future<FileOperationResult> future) async {
+    setState(() {
+      _busy = true;
+      _message = '正在执行 $label...';
+    });
+    final result = await future;
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _busy = false;
+      _message = result.output;
+    });
+  }
+
+  Future<void> _migrateKnownFolders() async {
+    final base = _targetController.text.trim();
+    const folders = {
+      'Desktop': 'Desktop',
+      '{374DE290-123F-4565-9164-39C4925E467B}': 'Downloads',
+      'Personal': 'Documents',
+      'My Pictures': 'Pictures',
+      'My Video': 'Videos',
+    };
+    final outputs = <String>[];
+    setState(() {
+      _busy = true;
+      _message = '正在迁移系统个人目录...';
+    });
+    for (final entry in folders.entries) {
+      final result = await widget.service.migratePersonalFolder(
+        folderKey: entry.key,
+        targetPath: '$base\\${entry.value}',
+      );
+      outputs.add('${entry.value}: ${result.output}');
+    }
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _busy = false;
+      _message = outputs.join('\n\n');
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return _ToolDialogFrame(
+      title: '系统目录一键迁移专区',
+      icon: Icons.move_down_outlined,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          TextField(
+            controller: _targetController,
+            decoration: const InputDecoration(
+              labelText: '目标根目录',
+              prefixIcon: Icon(Icons.drive_folder_upload_outlined),
+              helperText: '建议选择 D/E 盘，迁移后部分项目需要重新登录或重启生效',
+            ),
+          ),
+          const SizedBox(height: 14),
+          Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            children: [
+              FilledButton.icon(
+                onPressed: _busy ? null : _migrateKnownFolders,
+                icon: const Icon(Icons.folder_special_outlined),
+                label: const Text('迁移桌面/下载/文档/图片/视频'),
+              ),
+              OutlinedButton.icon(
+                onPressed: _busy
+                    ? null
+                    : () => _run(
+                          '迁移 Temp',
+                          widget.service.migrateTemp(
+                            '${_targetController.text}\\Temp',
+                          ),
+                        ),
+                icon: const Icon(Icons.thermostat_outlined),
+                label: const Text('迁移 Temp 临时文件夹'),
+              ),
+              OutlinedButton.icon(
+                onPressed: _busy
+                    ? null
+                    : () => _run(
+                          '还原桌面目录',
+                          widget.service.migratePersonalFolder(
+                            folderKey: 'Desktop',
+                            targetPath: r'%USERPROFILE%\Desktop',
+                          ),
+                        ),
+                icon: const Icon(Icons.restore_outlined),
+                label: const Text('还原桌面默认路径'),
+              ),
+            ],
+          ),
+          if (_busy) ...[
+            const SizedBox(height: 14),
+            const LinearProgressIndicator(minHeight: 4),
+          ],
+          if (_message != null) ...[
+            const SizedBox(height: 14),
+            _CommandOutput(output: _message!),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
 class _DiskOptimizationDialog extends StatefulWidget {
   const _DiskOptimizationDialog({required this.service});
 
@@ -3172,6 +3654,7 @@ class _ScanReportDialog extends StatelessWidget {
                           style: const TextStyle(fontWeight: FontWeight.w800),
                         ),
                         subtitle: Text(
+                          '${category.group} · ${category.risk.label} · ${category.recommended ? '推荐项' : '深度项'} · ${category.canClean ? '可清理' : '仅扫描'}\n'
                           '${category.description}\n'
                           '扫描路径 ${category.scannedPathCount} 个'
                           '${category.errors.isEmpty ? '' : ' · 错误 ${category.errors.length} 个'}',
@@ -3511,16 +3994,27 @@ String _formatBytes(int bytes) {
 }
 
 String _defaultUserScanPath() {
-  final userProfile = Platform.environment['USERPROFILE'];
-  if (Platform.isWindows && userProfile != null && userProfile.isNotEmpty) {
-    return '$userProfile\\Downloads';
+  try {
+    final userProfile = Platform.environment['USERPROFILE'];
+    if (Platform.isWindows && userProfile != null && userProfile.isNotEmpty) {
+      return '$userProfile\\Downloads';
+    }
+    return Platform.environment['HOME'] ?? Directory.current.path;
+  } on UnsupportedError {
+    return r'C:\Users\Administrator\Downloads';
   }
-  return Platform.environment['HOME'] ?? Directory.current.path;
 }
 
 List<String> _defaultShortcutRoots() {
-  final userProfile = Platform.environment['USERPROFILE'] ?? '';
-  final appData = Platform.environment['APPDATA'] ?? '';
+  String userProfile = '';
+  String appData = '';
+  try {
+    userProfile = Platform.environment['USERPROFILE'] ?? '';
+    appData = Platform.environment['APPDATA'] ?? '';
+  } on UnsupportedError {
+    userProfile = r'C:\Users\Administrator';
+    appData = r'C:\Users\Administrator\AppData\Roaming';
+  }
   final roots = <String>[
     if (userProfile.isNotEmpty) '$userProfile\\Desktop',
     r'C:\Users\Public\Desktop',
@@ -3533,12 +4027,16 @@ List<String> _defaultShortcutRoots() {
 }
 
 Directory _defaultRulePackDirectory() {
-  final appData = Platform.environment['APPDATA'];
-  if (Platform.isWindows && appData != null && appData.isNotEmpty) {
-    return Directory('$appData\\WinCleaner\\rules');
+  try {
+    final appData = Platform.environment['APPDATA'];
+    if (Platform.isWindows && appData != null && appData.isNotEmpty) {
+      return Directory('$appData\\WinCleaner\\rules');
+    }
+    final home = Platform.environment['HOME'] ?? Directory.current.path;
+    return Directory('$home/.wincleaner/rules');
+  } on UnsupportedError {
+    return Directory('/wincleaner/rules');
   }
-  final home = Platform.environment['HOME'] ?? Directory.current.path;
-  return Directory('$home/.wincleaner/rules');
 }
 
 String _formatClock(DateTime value) {

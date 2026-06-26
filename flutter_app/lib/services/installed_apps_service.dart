@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:convert';
 
 import '../models/installed_app.dart';
 
@@ -24,8 +25,26 @@ class InstalledAppsService {
       }
     }
 
-    final apps = parseRegistryOutput(buffer.toString());
+    final apps = [
+      ...parseRegistryOutput(buffer.toString()),
+      ...await _loadUwpApps(),
+    ];
+    apps.sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
     return apps;
+  }
+
+  Future<List<InstalledApp>> _loadUwpApps() async {
+    final result = await Process.run('powershell', [
+      '-NoProfile',
+      '-ExecutionPolicy',
+      'Bypass',
+      '-Command',
+      r'Get-AppxPackage | Select-Object Name,Publisher,Version,InstallLocation,PackageFullName | ConvertTo-Json -Compress',
+    ]);
+    if (result.exitCode != 0) {
+      return const [];
+    }
+    return parseUwpJson(result.stdout.toString());
   }
 
   static List<InstalledApp> parseRegistryOutput(String output) {
@@ -89,9 +108,11 @@ class InstalledAppsService {
               ? entry.values['DisplayVersion']!.trim()
               : '-',
           sizeLabel: _formatEstimatedSize(entry.values['EstimatedSize']),
+          sizeBytes: _estimatedSizeBytes(entry.values['EstimatedSize']),
           installDate: _formatInstallDate(entry.values['InstallDate']),
           source: _sourceFor(entry.keyPath, uninstallCommand),
           uninstallCommand: uninstallCommand,
+          installLocation: entry.values['InstallLocation']?.trim() ?? '',
           registryKey: entry.keyPath,
         ),
       );
@@ -101,9 +122,47 @@ class InstalledAppsService {
     return apps;
   }
 
-  static String _formatEstimatedSize(String? value) {
+  static List<InstalledApp> parseUwpJson(String output) {
+    final trimmed = output.trim();
+    if (trimmed.isEmpty) {
+      return const [];
+    }
+
+    final decoded = jsonDecode(trimmed);
+    final rows = decoded is List ? decoded : [decoded];
+    return rows
+        .whereType<Map>()
+        .map((row) {
+          final name = row['Name']?.toString().trim() ?? '';
+          final packageFullName =
+              row['PackageFullName']?.toString().trim() ?? '';
+          final installLocation =
+              row['InstallLocation']?.toString().trim() ?? '';
+          return InstalledApp(
+            name: name.isEmpty ? packageFullName : name,
+            publisher: row['Publisher']?.toString().trim().isNotEmpty == true
+                ? row['Publisher']!.toString().trim()
+                : 'Microsoft Store',
+            version: row['Version']?.toString().trim().isNotEmpty == true
+                ? row['Version']!.toString().trim()
+                : '-',
+            sizeLabel: '-',
+            installDate: '-',
+            source: 'UWP',
+            uninstallCommand:
+                'powershell -NoProfile -ExecutionPolicy Bypass -Command Remove-AppxPackage -Package $packageFullName',
+            installLocation: installLocation,
+            isUwp: true,
+          );
+        })
+        .where((app) => app.name.isNotEmpty)
+        .toList()
+      ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+  }
+
+  static int _estimatedSizeBytes(String? value) {
     if (value == null || value.trim().isEmpty) {
-      return '-';
+      return 0;
     }
 
     final raw = value.trim();
@@ -111,10 +170,18 @@ class InstalledAppsService {
         ? int.tryParse(raw.substring(2), radix: 16)
         : int.tryParse(raw);
     if (sizeKb == null || sizeKb <= 0) {
+      return 0;
+    }
+    return sizeKb * 1024;
+  }
+
+  static String _formatEstimatedSize(String? value) {
+    final bytes = _estimatedSizeBytes(value);
+    if (bytes <= 0) {
       return '-';
     }
 
-    final sizeMb = sizeKb / 1024;
+    final sizeMb = bytes / (1024 * 1024);
     if (sizeMb >= 1024) {
       return '${(sizeMb / 1024).toStringAsFixed(1)} GB';
     }
