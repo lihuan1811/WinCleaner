@@ -4,7 +4,7 @@
 
 ## 已验证完成
 
-- Windows EXE manifest 已设置 `requireAdministrator`，打包后会请求管理员权限。
+- GitHub 打包的 `WinCleaner-Setup.exe` manifest 已设置 `requireAdministrator`，运行安装启动器会请求管理员权限。
 - 全局导航包含 C盘清理、软件卸载、系统优化、磁盘文件管理、系统修复工具箱。
 - 全局底部固定栏包含本次操作数据统计、全局一键还原所有修改、查看全部操作日志、关于软件。
 - Liquid Glass 样式已接入复用组件 `GlassPanel`，包含背景模糊、边缘高光、内层高光、鼠标跟随高光和玻璃图标。
@@ -14,7 +14,7 @@
 - 磁盘文件管理已支持文件类型筛选、文件夹占用 Top20、复制/移动/重命名/删除/文件粉碎、文件夹权限修复、个人目录迁移、Temp 迁移、AppData 迁移。
 - CMD 系统修复工具箱已支持推荐安全修复、深度系统修复、独立勾选执行、查看命令、单项执行。
 - 全局日志服务和全局还原服务已接入，支持恢复 hosts、可回退 Windows 优化项、AppData 迁移历史。
-- GitHub Actions 打包的 Windows manifest 会继承管理员权限设置。
+- GitHub Actions 打包的 `WinCleaner-Setup.exe` 会继承管理员权限设置。
 
 ## 部分完成，后续仍可增强
 
@@ -29,4 +29,3 @@
 
 - `flutter test`：64 tests passed
 - `python3 -m unittest discover -s tests -p 'test*.py'`：7 tests passed
-
