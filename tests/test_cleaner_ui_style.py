@@ -70,3 +70,40 @@ def test_qt_feature_pages_have_native_actions_not_only_shortcuts():
     assert "show_installed_apps" in source
     assert "scan_large_files" in source
     assert "scan_duplicate_files" in source
+
+
+def test_qt_scan_results_use_target_icons():
+    source = Path("cleaner_ui.py").read_text(encoding="utf-8")
+
+    assert "QFileIconProvider" in source
+    assert "category_icon_for_name" in source
+    assert "target_icon_for_item" in source
+    assert "file_item.setIcon(0, self.target_icon_for_item(item))" in source
+
+
+def test_qt_system_optimizer_matches_tabbed_internal_tooling():
+    source = Path("cleaner_ui.py").read_text(encoding="utf-8")
+
+    assert "self.optimizer_tabs" in source
+    assert "开机加速" in source
+    assert "运行内存" in source
+    assert "系统优化" in source
+    assert "隐私清理" in source
+    assert "注册表清理" in source
+    assert "populate_startup_items" in source
+    assert "populate_memory_items" in source
+    assert "populate_optimization_items" in source
+    assert "populate_privacy_items" in source
+    assert "populate_registry_items" in source
+    assert "一键优化" in source
+
+
+def test_qt_uninstaller_is_in_app_table():
+    source = Path("cleaner_ui.py").read_text(encoding="utf-8")
+
+    assert "self.uninstall_table" in source
+    assert "load_installed_apps" in source
+    assert "uninstall_selected_app" in source
+    assert "QuietUninstallString" in source
+    assert "UninstallString" in source
+    assert "QTableWidget" in source

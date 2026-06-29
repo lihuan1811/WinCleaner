@@ -9,12 +9,19 @@ import os
 import sys
 import subprocess
 import hashlib
+try:
+    import psutil
+except ImportError:  # pragma: no cover - optional runtime dependency
+    psutil = None
+
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                             QPushButton, QLabel, QProgressBar, QCheckBox,
                             QTreeWidget, QTreeWidgetItem, QMessageBox,
                             QFrame, QGridLayout, QStackedWidget, QScrollArea,
-                            QFileDialog)
-from PyQt5.QtCore import Qt, QThread, pyqtSignal, QSize
+                            QFileDialog, QTabWidget, QTableWidget,
+                            QTableWidgetItem, QHeaderView, QAbstractItemView,
+                            QFileIconProvider)
+from PyQt5.QtCore import Qt, QThread, pyqtSignal, QSize, QFileInfo
 from PyQt5.QtGui import QIcon, QFont, QPixmap
 
 from cleaner_logic import CleanerLogic
@@ -207,6 +214,54 @@ QTreeWidget#resultTree::item {
     padding: 4px 2px;
 }
 
+QTableWidget#optimizerTable,
+QTableWidget#uninstallTable {
+    background: #FFFFFF;
+    border: 1px solid #D6E8E4;
+    border-radius: 8px;
+    color: #1C2C26;
+    gridline-color: #E3EFEC;
+    outline: 0;
+    selection-background-color: #CCEFE8;
+    selection-color: #15241C;
+}
+
+QTableWidget#optimizerTable::item,
+QTableWidget#uninstallTable::item {
+    min-height: 30px;
+    padding: 4px 6px;
+}
+
+QTabWidget#optimizerTabs::pane {
+    background: #FFFFFF;
+    border: 1px solid #D6E8E4;
+    border-radius: 8px;
+    top: -1px;
+}
+
+QTabBar::tab {
+    background: #FFFFFF;
+    border: 1px solid #D6E8E4;
+    border-bottom: none;
+    border-top-left-radius: 6px;
+    border-top-right-radius: 6px;
+    color: #0E6F66;
+    font-weight: 700;
+    min-height: 28px;
+    min-width: 82px;
+    padding: 5px 12px;
+}
+
+QTabBar::tab:selected {
+    background: #14B8A6;
+    color: #FFFFFF;
+    border-color: #14B8A6;
+}
+
+QTabBar::tab:hover:!selected {
+    background: #E7F7F4;
+}
+
 QHeaderView::section {
     background: #F1F8F6;
     border: none;
@@ -251,6 +306,21 @@ QPushButton#featureButton {
 
 QPushButton#featureButton:hover {
     background: #0D9488;
+}
+
+QPushButton#miniActionButton {
+    background: #FFFFFF;
+    border: 1px solid #14B8A6;
+    border-radius: 12px;
+    color: #0D7E72;
+    font-size: 12px;
+    font-weight: 700;
+    min-height: 24px;
+    padding: 0 12px;
+}
+
+QPushButton#miniActionButton:hover {
+    background: #E7F7F4;
 }
 
 QScrollArea#pageScroll {
@@ -322,7 +392,10 @@ class CleanerMainWindow(QMainWindow):
         self.selected_items = []
         self.cleanable_items = []
         self.app_icon = self._load_app_icon()
+        self.icon_provider = QFileIconProvider()
         self.nav_buttons = []
+        self.optimizer_tables = {}
+        self.uninstall_apps = []
 
         self.init_ui()
 
@@ -711,36 +784,548 @@ class CleanerMainWindow(QMainWindow):
         return card
 
     def _build_optimize_page(self):
-        return self._build_feature_page(
-            "系统优化",
-            "调用 Windows 内置工具优化启动项、服务、磁盘和电源策略（在 Windows 系统上生效）。",
-            [
-                ("启动项管理", "打开任务管理器，禁用拖慢开机的自启动程序。",
-                 "打开任务管理器", lambda: self.run_system_action("任务管理器", "taskmgr")),
-                ("系统服务", "打开服务管理器，按需调整后台服务启动类型。",
-                 "打开服务", lambda: self.run_system_action("服务管理器", "services.msc")),
-                ("磁盘碎片整理", "调用 Windows 磁盘优化工具整理/优化驱动器。",
-                 "打开磁盘优化", lambda: self.run_system_action("磁盘优化", "dfrgui")),
-                ("电源选项", "切换高性能/节能电源计划。",
-                 "打开电源选项", lambda: self.run_system_action("电源选项", "powercfg.cpl")),
-            ],
-        )
+        page = QWidget()
+        page.setObjectName("contentArea")
+        outer = QVBoxLayout(page)
+        outer.setContentsMargins(20, 18, 20, 18)
+        outer.setSpacing(12)
+
+        header = QVBoxLayout()
+        header.setSpacing(5)
+        page_title = QLabel("系统优化")
+        page_title.setObjectName("pageTitle")
+        page_subtitle = QLabel("开机启动、运行内存、系统优化、隐私清理、注册表清理都在软件内查看和处理。")
+        page_subtitle.setObjectName("pageSubtitle")
+        page_subtitle.setWordWrap(True)
+        header.addWidget(page_title)
+        header.addWidget(page_subtitle)
+        outer.addLayout(header)
+
+        self.optimizer_tabs = QTabWidget()
+        self.optimizer_tabs.setObjectName("optimizerTabs")
+        self.optimizer_tables = {}
+
+        tab_specs = [
+            ("开机加速", ["启动项", "启动位置", "操作"], self.populate_startup_items()),
+            ("运行内存", ["进程名称", "内存使用率", "CPU使用率", "操作"], self.populate_memory_items()),
+            ("系统优化", ["系统优化项", "操作"], self.populate_optimization_items()),
+            ("隐私清理", ["电脑隐私记录", "操作"], self.populate_privacy_items()),
+            ("注册表清理", ["注册表清理项", "操作"], self.populate_registry_items()),
+        ]
+
+        for tab_name, headers, rows in tab_specs:
+            table = self._make_optimizer_table(headers)
+            self.optimizer_tables[tab_name] = table
+            self._populate_optimizer_table(table, rows)
+            self.optimizer_tabs.addTab(table, tab_name)
+
+        outer.addWidget(self.optimizer_tabs, 1)
+
+        action_bar = QHBoxLayout()
+        action_bar.setSpacing(12)
+        self.optimizer_select_all = QCheckBox("全选")
+        self.optimizer_select_all.stateChanged.connect(self.set_current_optimizer_checked)
+        self.optimizer_recommended_checkbox = QCheckBox("推荐")
+        self.optimizer_recommended_checkbox.setChecked(True)
+        self.optimizer_recommended_checkbox.stateChanged.connect(self.apply_optimizer_recommended_filter)
+
+        refresh_button = QPushButton("刷新")
+        refresh_button.setObjectName("cleanSecondaryButton")
+        refresh_button.clicked.connect(self.refresh_optimizer_tab)
+
+        optimize_button = QPushButton("一键优化")
+        optimize_button.setObjectName("scanPrimaryButton")
+        optimize_button.clicked.connect(self.apply_current_optimization_tab)
+
+        action_bar.addWidget(self.optimizer_select_all)
+        action_bar.addWidget(self.optimizer_recommended_checkbox)
+        action_bar.addStretch(1)
+        action_bar.addWidget(refresh_button)
+        action_bar.addWidget(optimize_button)
+        outer.addLayout(action_bar)
+
+        return page
 
     def _build_uninstall_page(self):
-        return self._build_feature_page(
-            "软件卸载",
-            "通过 Windows 程序和功能管理已安装软件，彻底卸载不需要的程序。",
-            [
-                ("已安装软件", "读取注册表卸载项并列出当前检测到的软件。",
-                 "查看软件列表", self.show_installed_apps),
-                ("应用和功能", "打开 Windows 设置中的应用管理页。",
-                 "打开应用设置", lambda: self.run_system_action("应用和功能", "ms-settings:appsfeatures")),
-                ("已安装更新", "查看并卸载已安装的系统/软件更新。",
-                 "查看更新", lambda: self.run_system_action("已安装更新", "appwiz.cpl")),
-                ("存储感知", "打开存储设置，按使用情况清理应用。",
-                 "打开存储设置", lambda: self.run_system_action("存储感知", "ms-settings:storagesense")),
-            ],
+        page = QWidget()
+        page.setObjectName("contentArea")
+        outer = QVBoxLayout(page)
+        outer.setContentsMargins(20, 18, 20, 18)
+        outer.setSpacing(12)
+
+        header = QVBoxLayout()
+        header.setSpacing(5)
+        page_title = QLabel("软件卸载")
+        page_title.setObjectName("pageTitle")
+        page_subtitle = QLabel("读取 Windows 卸载注册表，在软件内查看、选择并调用目标程序的卸载命令。")
+        page_subtitle.setObjectName("pageSubtitle")
+        page_subtitle.setWordWrap(True)
+        header.addWidget(page_title)
+        header.addWidget(page_subtitle)
+        outer.addLayout(header)
+
+        toolbar = QHBoxLayout()
+        toolbar.setSpacing(10)
+        reload_button = QPushButton("刷新列表")
+        reload_button.setObjectName("cleanSecondaryButton")
+        reload_button.clicked.connect(lambda: self.load_installed_apps(show_message=True))
+        uninstall_button = QPushButton("卸载选中")
+        uninstall_button.setObjectName("scanPrimaryButton")
+        uninstall_button.clicked.connect(self.uninstall_selected_app)
+        toolbar.addStretch(1)
+        toolbar.addWidget(reload_button)
+        toolbar.addWidget(uninstall_button)
+        outer.addLayout(toolbar)
+
+        self.uninstall_table = QTableWidget()
+        self.uninstall_table.setObjectName("uninstallTable")
+        self.uninstall_table.setColumnCount(5)
+        self.uninstall_table.setHorizontalHeaderLabels(["软件名称", "发布者", "版本", "安装位置", "操作"])
+        self.uninstall_table.verticalHeader().setVisible(False)
+        self.uninstall_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.uninstall_table.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.uninstall_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.uninstall_table.setAlternatingRowColors(True)
+        self.uninstall_table.setIconSize(QSize(20, 20))
+        header_view = self.uninstall_table.horizontalHeader()
+        header_view.setSectionResizeMode(0, QHeaderView.Stretch)
+        header_view.setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        header_view.setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        header_view.setSectionResizeMode(3, QHeaderView.Stretch)
+        header_view.setSectionResizeMode(4, QHeaderView.ResizeToContents)
+        outer.addWidget(self.uninstall_table, 1)
+
+        self.uninstall_status_label = QLabel("正在读取软件列表...")
+        self.uninstall_status_label.setObjectName("statusLabel")
+        outer.addWidget(self.uninstall_status_label)
+
+        self.load_installed_apps(show_message=False)
+        return page
+
+    def _make_optimizer_table(self, headers):
+        table = QTableWidget()
+        table.setObjectName("optimizerTable")
+        table.setColumnCount(len(headers))
+        table.setHorizontalHeaderLabels(headers)
+        table.verticalHeader().setVisible(False)
+        table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        table.setSelectionMode(QAbstractItemView.SingleSelection)
+        table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        table.setAlternatingRowColors(True)
+        table.setIconSize(QSize(20, 20))
+        table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        table.horizontalHeader().setSectionResizeMode(len(headers) - 1, QHeaderView.ResizeToContents)
+        return table
+
+    def _populate_optimizer_table(self, table, rows):
+        table.setRowCount(0)
+        for row_index, payload in enumerate(rows):
+            table.insertRow(row_index)
+            columns = payload.get("columns", [])
+            for column_index in range(table.columnCount() - 1):
+                text = columns[column_index] if column_index < len(columns) else ""
+                item = QTableWidgetItem(text)
+                item.setFlags(item.flags() & ~Qt.ItemIsEditable)
+                if column_index == 0:
+                    item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+                    item.setCheckState(Qt.Checked if payload.get("recommended", True) else Qt.Unchecked)
+                    item.setData(Qt.UserRole, payload)
+                    icon = self.category_icon_for_name(payload.get("icon_hint") or text)
+                    if not icon.isNull():
+                        item.setIcon(icon)
+                table.setItem(row_index, column_index, item)
+
+            action_button = QPushButton(payload.get("action", "处理"))
+            action_button.setObjectName("miniActionButton")
+            action_button.setCursor(Qt.PointingHandCursor)
+            action_button.clicked.connect(
+                lambda _checked=False, row=dict(payload): self.run_optimizer_row_action(row)
+            )
+            table.setCellWidget(row_index, table.columnCount() - 1, action_button)
+            table.setRowHeight(row_index, 34)
+
+    def _fallback_startup_rows(self):
+        return [
+            {
+                "columns": ["Windows Security notification icon", "系统通知启动项"],
+                "icon_hint": "defender",
+                "action": "查看",
+                "command": "taskmgr",
+                "action_type": "command",
+            },
+            {
+                "columns": ["Microsoft OneDrive", "用户启动项"],
+                "icon_hint": "onedrive",
+                "action": "查看",
+                "command": "taskmgr",
+                "action_type": "command",
+            },
+            {
+                "columns": ["Microsoft Edge", "更新/浏览器启动项"],
+                "icon_hint": "edge",
+                "action": "查看",
+                "command": "taskmgr",
+                "action_type": "command",
+            },
+        ]
+
+    def populate_startup_items(self):
+        if not sys.platform.startswith("win"):
+            return self._fallback_startup_rows()
+
+        try:
+            import winreg
+        except ImportError:
+            return self._fallback_startup_rows()
+
+        locations = [
+            (winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Run", "HKCU"),
+            (winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\RunOnce", "HKCU"),
+            (winreg.HKEY_LOCAL_MACHINE, r"Software\Microsoft\Windows\CurrentVersion\Run", "HKLM"),
+            (winreg.HKEY_LOCAL_MACHINE, r"Software\Microsoft\Windows\CurrentVersion\RunOnce", "HKLM"),
+            (winreg.HKEY_LOCAL_MACHINE, r"Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Run", "HKLM"),
+        ]
+
+        rows = []
+        for root, subkey, root_name in locations:
+            try:
+                with winreg.OpenKey(root, subkey) as key:
+                    index = 0
+                    while True:
+                        try:
+                            value_name, value_data, _value_type = winreg.EnumValue(key, index)
+                        except OSError:
+                            break
+                        rows.append({
+                            "columns": [value_name, f"{root_name}\\{subkey}"],
+                            "icon_hint": value_name,
+                            "action": "禁用",
+                            "action_type": "disable_startup",
+                            "root_name": root_name,
+                            "subkey": subkey,
+                            "value_name": value_name,
+                            "command": str(value_data),
+                        })
+                        index += 1
+            except OSError:
+                continue
+
+        return rows or self._fallback_startup_rows()
+
+    def populate_memory_items(self):
+        rows = []
+        if psutil is not None:
+            try:
+                total_memory = max(psutil.virtual_memory().total, 1)
+                processes = []
+                for process in psutil.process_iter(["pid", "name", "memory_info", "cpu_percent"]):
+                    try:
+                        info = process.info
+                        memory_info = info.get("memory_info")
+                        rss = memory_info.rss if memory_info else 0
+                        processes.append((rss, info))
+                    except (psutil.Error, AttributeError):
+                        continue
+
+                for rss, info in sorted(processes, reverse=True)[:60]:
+                    pid = info.get("pid")
+                    name = info.get("name") or f"PID {pid}"
+                    memory_percent = rss / total_memory * 100
+                    cpu_percent = info.get("cpu_percent") or 0.0
+                    current_process = pid == os.getpid()
+                    rows.append({
+                        "columns": [
+                            f"{name}  (PID {pid})",
+                            f"{self.format_size(rss)} / {memory_percent:.2f}%",
+                            f"{cpu_percent:.2f}%",
+                        ],
+                        "icon_hint": name,
+                        "action": "保留" if current_process else "结束",
+                        "action_type": None if current_process else "kill_process",
+                        "pid": pid,
+                        "recommended": not current_process,
+                    })
+            except Exception:
+                rows = []
+
+        if rows:
+            return rows
+
+        return [
+            {
+                "columns": ["C盘清理精灵.exe", "--", "--"],
+                "icon_hint": "cleaner",
+                "action": "刷新",
+                "action_type": "command",
+                "command": "taskmgr",
+                "recommended": False,
+            }
+        ]
+
+    def populate_optimization_items(self):
+        return [
+            {
+                "columns": ["刷新 DNS 解析缓存"],
+                "icon_hint": "windows",
+                "action": "执行",
+                "action_type": "command",
+                "command": "ipconfig /flushdns",
+            },
+            {
+                "columns": ["执行系统空闲任务整理"],
+                "icon_hint": "windows",
+                "action": "执行",
+                "action_type": "command",
+                "command": "rundll32.exe advapi32.dll,ProcessIdleTasks",
+            },
+            {
+                "columns": ["关闭“使用 Windows 时获取技巧和建议”"],
+                "icon_hint": "windows",
+                "action": "优化",
+                "action_type": "command",
+                "command": r'reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" /v SubscribedContent-338389Enabled /t REG_DWORD /d 0 /f',
+            },
+            {
+                "columns": ["关闭开始菜单建议广告"],
+                "icon_hint": "windows",
+                "action": "优化",
+                "action_type": "command",
+                "command": r'reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" /v SystemPaneSuggestionsEnabled /t REG_DWORD /d 0 /f',
+            },
+            {
+                "columns": ["关闭锁屏界面内容广告"],
+                "icon_hint": "windows",
+                "action": "优化",
+                "action_type": "command",
+                "command": r'reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" /v RotatingLockScreenOverlayEnabled /t REG_DWORD /d 0 /f',
+            },
+            {
+                "columns": ["禁用自动更新地图"],
+                "icon_hint": "windows",
+                "action": "优化",
+                "action_type": "command",
+                "command": r'reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows\Maps" /v AutoDownloadAndUpdateMapData /t REG_DWORD /d 0 /f',
+                "recommended": False,
+            },
+        ]
+
+    def populate_privacy_items(self):
+        return [
+            {
+                "columns": ["最近打开文件记录"],
+                "icon_hint": "windows",
+                "action": "清理",
+                "action_type": "command",
+                "command": r'cmd /c del /f /q "%APPDATA%\Microsoft\Windows\Recent\*"',
+            },
+            {
+                "columns": ["开始菜单运行记录"],
+                "icon_hint": "windows",
+                "action": "清理",
+                "action_type": "command",
+                "command": r'reg delete "HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\RunMRU" /f',
+            },
+            {
+                "columns": ["Internet Explorer 上网痕迹"],
+                "icon_hint": "ie",
+                "action": "清理",
+                "action_type": "command",
+                "command": "RunDll32.exe InetCpl.cpl,ClearMyTracksByProcess 255",
+            },
+            {
+                "columns": ["系统通知区及图标缓存"],
+                "icon_hint": "windows",
+                "action": "检查",
+                "action_type": None,
+                "recommended": False,
+            },
+            {
+                "columns": ["快速访问的缓存数据存储"],
+                "icon_hint": "windows",
+                "action": "检查",
+                "action_type": None,
+                "recommended": False,
+            },
+            {
+                "columns": ["IE 浏览器自动完成"],
+                "icon_hint": "ie",
+                "action": "检查",
+                "action_type": None,
+            },
+        ]
+
+    def populate_registry_items(self):
+        return [
+            {"columns": ["缺失的共享 DLL"], "icon_hint": "registry", "action": "检查", "action_type": None, "recommended": False},
+            {"columns": ["未使用的文件扩展名"], "icon_hint": "registry", "action": "检查", "action_type": None, "recommended": False},
+            {"columns": ["无效的默认图标"], "icon_hint": "registry", "action": "检查", "action_type": None, "recommended": False},
+            {"columns": ["应用程序打开方式文件问题"], "icon_hint": "registry", "action": "检查", "action_type": None, "recommended": False},
+            {"columns": ["CLSID 问题"], "icon_hint": "registry", "action": "检查", "action_type": None, "recommended": False},
+            {"columns": ["应用程序卸载残留"], "icon_hint": "registry", "action": "检查", "action_type": None, "recommended": False},
+            {"columns": ["无效的防火墙规则"], "icon_hint": "registry", "action": "检查", "action_type": None, "recommended": False},
+            {"columns": ["Windows 兼容性助手功能的记忆库"], "icon_hint": "registry", "action": "检查", "action_type": None, "recommended": False},
+            {"columns": ["统计和管理用户界面交互行为"], "icon_hint": "registry", "action": "检查", "action_type": None, "recommended": False},
+        ]
+
+    def set_current_optimizer_checked(self, state):
+        table = self.optimizer_tabs.currentWidget()
+        if not table:
+            return
+        check_state = Qt.Checked if state == Qt.Checked else Qt.Unchecked
+        for row in range(table.rowCount()):
+            item = table.item(row, 0)
+            if item:
+                item.setCheckState(check_state)
+
+    def apply_optimizer_recommended_filter(self, state):
+        table = self.optimizer_tabs.currentWidget()
+        if not table or state != Qt.Checked:
+            return
+        for row in range(table.rowCount()):
+            item = table.item(row, 0)
+            payload = item.data(Qt.UserRole) if item else {}
+            if item:
+                item.setCheckState(Qt.Checked if payload.get("recommended", True) else Qt.Unchecked)
+
+    def selected_optimizer_rows(self):
+        table = self.optimizer_tabs.currentWidget()
+        if not table:
+            return []
+        rows = []
+        for row_index in range(table.rowCount()):
+            item = table.item(row_index, 0)
+            if item and item.checkState() == Qt.Checked:
+                payload = item.data(Qt.UserRole)
+                if payload:
+                    rows.append(payload)
+        return rows
+
+    def refresh_optimizer_tab(self):
+        tab_name = self.optimizer_tabs.tabText(self.optimizer_tabs.currentIndex())
+        loaders = {
+            "开机加速": self.populate_startup_items,
+            "运行内存": self.populate_memory_items,
+            "系统优化": self.populate_optimization_items,
+            "隐私清理": self.populate_privacy_items,
+            "注册表清理": self.populate_registry_items,
+        }
+        table = self.optimizer_tables.get(tab_name)
+        loader = loaders.get(tab_name)
+        if table and loader:
+            self._populate_optimizer_table(table, loader())
+
+    def apply_current_optimization_tab(self):
+        rows = self.selected_optimizer_rows()
+        tab_name = self.optimizer_tabs.tabText(self.optimizer_tabs.currentIndex())
+        if not rows:
+            QMessageBox.information(self, "一键优化", "请先勾选需要处理的项目。")
+            return
+
+        risky_tabs = {"开机加速", "运行内存"}
+        if tab_name in risky_tabs:
+            answer = QMessageBox.question(
+                self,
+                "一键优化",
+                f"将处理 {len(rows)} 个“{tab_name}”项目，是否继续？",
+                QMessageBox.Yes | QMessageBox.No,
+            )
+            if answer != QMessageBox.Yes:
+                return
+
+        executed = 0
+        skipped = 0
+        for row in rows:
+            if self.run_optimizer_row_action(row, confirm=False, quiet=True):
+                executed += 1
+            else:
+                skipped += 1
+
+        QMessageBox.information(
+            self,
+            "一键优化",
+            f"{tab_name} 已处理 {executed} 项，保留/需人工复核 {skipped} 项。",
         )
+        self.refresh_optimizer_tab()
+
+    def run_optimizer_row_action(self, row, confirm=True, quiet=False):
+        action_type = row.get("action_type")
+        if action_type == "disable_startup":
+            return self.disable_startup_item(row, confirm=confirm)
+        if action_type == "kill_process":
+            return self.kill_process_item(row, confirm=confirm)
+        if action_type == "command" and row.get("command"):
+            self._run_shell_command(row.get("columns", ["系统优化"])[0], row["command"], quiet=quiet)
+            return True
+
+        if not quiet:
+            QMessageBox.information(
+                self,
+                "系统优化",
+                "此项目属于高风险或需人工确认项，已保留在列表中供检查，不会静默修改系统。",
+            )
+        return False
+
+    def _run_shell_command(self, label, command, quiet=False):
+        if sys.platform.startswith("win"):
+            try:
+                subprocess.Popen(command, shell=True)
+                return
+            except Exception as exc:  # pragma: no cover - Windows shell dependent
+                QMessageBox.warning(self, label, f"执行失败: {exc}")
+                return
+        if not quiet:
+            QMessageBox.information(self, label, f"该操作将在 Windows 上执行:\n{command}")
+
+    def disable_startup_item(self, row, confirm=True):
+        if not sys.platform.startswith("win"):
+            QMessageBox.information(self, "开机加速", "禁用启动项功能将在 Windows 上写入启动项注册表。")
+            return False
+        if confirm:
+            answer = QMessageBox.question(
+                self,
+                "禁用启动项",
+                f"确定禁用“{row.get('value_name')}”吗？",
+                QMessageBox.Yes | QMessageBox.No,
+            )
+            if answer != QMessageBox.Yes:
+                return False
+
+        try:
+            import winreg
+            root = winreg.HKEY_CURRENT_USER if row.get("root_name") == "HKCU" else winreg.HKEY_LOCAL_MACHINE
+            with winreg.OpenKey(root, row["subkey"], 0, winreg.KEY_SET_VALUE) as key:
+                winreg.DeleteValue(key, row["value_name"])
+            return True
+        except Exception as exc:  # pragma: no cover - Windows registry dependent
+            QMessageBox.warning(self, "禁用启动项", f"禁用失败: {exc}")
+            return False
+
+    def kill_process_item(self, row, confirm=True):
+        pid = row.get("pid")
+        process_name = row.get("columns", ["进程"])[0]
+        if not pid:
+            return False
+        if confirm:
+            answer = QMessageBox.question(
+                self,
+                "结束进程",
+                f"确定结束“{process_name}”吗？未保存的数据可能丢失。",
+                QMessageBox.Yes | QMessageBox.No,
+            )
+            if answer != QMessageBox.Yes:
+                return False
+
+        try:
+            if psutil is not None:
+                psutil.Process(pid).terminate()
+            elif sys.platform.startswith("win"):
+                subprocess.Popen(f"taskkill /PID {pid} /F", shell=True)
+            else:
+                return False
+            return True
+        except Exception as exc:  # pragma: no cover - process state dependent
+            QMessageBox.warning(self, "结束进程", f"结束失败: {exc}")
+            return False
 
     def _build_file_page(self):
         return self._build_feature_page(
@@ -798,37 +1383,172 @@ class CleanerMainWindow(QMainWindow):
         dialog.exec_()
 
     def show_installed_apps(self):
-        """读取 Windows 卸载注册表，展示已安装软件摘要。"""
-        if not sys.platform.startswith("win"):
-            QMessageBox.information(self, "已安装软件", "此功能将在 Windows 上读取卸载注册表。")
+        """切到软件卸载页并刷新内置软件列表。"""
+        self._select_page(2)
+        self.load_installed_apps(show_message=True)
+
+    def load_installed_apps(self, show_message=False):
+        apps = self.installed_apps_from_registry()
+        self.uninstall_apps = apps
+        if not hasattr(self, "uninstall_table"):
             return
 
-        script = r"""
-$paths = @(
-  'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*',
-  'HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*',
-  'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*'
-)
-Get-ItemProperty $paths -ErrorAction SilentlyContinue |
-  Where-Object { $_.DisplayName } |
-  Sort-Object DisplayName -Unique |
-  Select-Object -First 80 -ExpandProperty DisplayName
-"""
-        try:
-            result = subprocess.run(
-                ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script],
-                capture_output=True,
-                text=True,
-                timeout=25,
+        self.uninstall_table.setRowCount(0)
+        for row_index, app in enumerate(apps):
+            self.uninstall_table.insertRow(row_index)
+
+            name_item = QTableWidgetItem(app.get("name", ""))
+            icon = self.icon_for_installed_app(app)
+            if not icon.isNull():
+                name_item.setIcon(icon)
+            name_item.setData(Qt.UserRole, app)
+            self.uninstall_table.setItem(row_index, 0, name_item)
+            self.uninstall_table.setItem(row_index, 1, QTableWidgetItem(app.get("publisher", "")))
+            self.uninstall_table.setItem(row_index, 2, QTableWidgetItem(app.get("version", "")))
+            self.uninstall_table.setItem(row_index, 3, QTableWidgetItem(app.get("install_location", "")))
+
+            uninstall_button = QPushButton("卸载")
+            uninstall_button.setObjectName("miniActionButton")
+            uninstall_button.setCursor(Qt.PointingHandCursor)
+            uninstall_button.clicked.connect(
+                lambda _checked=False, target=dict(app): self.run_uninstall_command(target)
             )
-        except Exception as exc:
-            QMessageBox.warning(self, "已安装软件", f"读取软件列表失败: {exc}")
+            self.uninstall_table.setCellWidget(row_index, 4, uninstall_button)
+            self.uninstall_table.setRowHeight(row_index, 34)
+
+        if apps:
+            self.uninstall_status_label.setText(f"已读取 {len(apps)} 个已安装软件。")
+        else:
+            message = "当前环境未读取到软件列表；Windows 上会读取卸载注册表。"
+            self.uninstall_status_label.setText(message)
+            if show_message:
+                QMessageBox.information(self, "软件卸载", message)
+
+    def installed_apps_from_registry(self):
+        if not sys.platform.startswith("win"):
+            return []
+
+        try:
+            import winreg
+        except ImportError:
+            return []
+
+        locations = [
+            (winreg.HKEY_LOCAL_MACHINE, r"Software\Microsoft\Windows\CurrentVersion\Uninstall"),
+            (winreg.HKEY_LOCAL_MACHINE, r"Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall"),
+            (winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Uninstall"),
+        ]
+
+        apps = []
+        seen = set()
+        for root, subkey in locations:
+            try:
+                with winreg.OpenKey(root, subkey) as parent:
+                    subkey_count, _value_count, _modified = winreg.QueryInfoKey(parent)
+                    for index in range(subkey_count):
+                        try:
+                            child_name = winreg.EnumKey(parent, index)
+                            with winreg.OpenKey(parent, child_name) as app_key:
+                                app = self._installed_app_from_key(app_key)
+                        except OSError:
+                            continue
+                        if not app.get("name"):
+                            continue
+                        dedupe_key = (
+                            app.get("name", "").lower(),
+                            app.get("publisher", "").lower(),
+                            app.get("version", ""),
+                        )
+                        if dedupe_key in seen:
+                            continue
+                        seen.add(dedupe_key)
+                        apps.append(app)
+            except OSError:
+                continue
+
+        apps.sort(key=lambda app: app.get("name", "").lower())
+        return apps
+
+    def _installed_app_from_key(self, key):
+        return {
+            "name": self._registry_value(key, "DisplayName"),
+            "publisher": self._registry_value(key, "Publisher"),
+            "version": self._registry_value(key, "DisplayVersion"),
+            "install_location": self._registry_value(key, "InstallLocation"),
+            "uninstall": self._registry_value(key, "UninstallString"),
+            "quiet_uninstall": self._registry_value(key, "QuietUninstallString"),
+        }
+
+    @staticmethod
+    def _registry_value(key, name):
+        try:
+            import winreg
+            value, _value_type = winreg.QueryValueEx(key, name)
+            return str(value)
+        except OSError:
+            return ""
+
+    def icon_for_installed_app(self, app):
+        for candidate in (
+            app.get("install_location", ""),
+            self.executable_path_from_command(app.get("uninstall", "")),
+            self.executable_path_from_command(app.get("quiet_uninstall", "")),
+        ):
+            if candidate and os.path.exists(candidate):
+                return self.icon_provider.icon(QFileInfo(candidate))
+        return self.app_icon
+
+    @staticmethod
+    def executable_path_from_command(command):
+        command = (command or "").strip()
+        if not command:
+            return ""
+        if command.startswith('"'):
+            return command.split('"', 2)[1] if '"' in command[1:] else command.strip('"')
+        return command.split(" ", 1)[0]
+
+    def uninstall_selected_app(self):
+        row = self.uninstall_table.currentRow()
+        if row < 0:
+            QMessageBox.information(self, "软件卸载", "请先在列表中选择一个软件。")
+            return
+        item = self.uninstall_table.item(row, 0)
+        app = item.data(Qt.UserRole) if item else None
+        if app:
+            self.run_uninstall_command(app)
+
+    def run_uninstall_command(self, app):
+        command = app.get("quiet_uninstall") or app.get("uninstall")
+        if not command:
+            QMessageBox.warning(self, "软件卸载", f"“{app.get('name', '')}”没有可用卸载命令。")
             return
 
-        output = result.stdout.strip()
-        if not output:
-            output = result.stderr.strip() or "未读取到已安装软件。"
-        QMessageBox.information(self, "已安装软件", output[:5000])
+        command = self.normalize_uninstall_command(command)
+        answer = QMessageBox.question(
+            self,
+            "软件卸载",
+            f"确定卸载“{app.get('name', '')}”吗？\n\n将执行：\n{command}",
+            QMessageBox.Yes | QMessageBox.No,
+        )
+        if answer != QMessageBox.Yes:
+            return
+
+        if not sys.platform.startswith("win"):
+            QMessageBox.information(self, "软件卸载", f"此命令将在 Windows 上执行:\n{command}")
+            return
+
+        try:
+            subprocess.Popen(command, shell=True)
+            self.uninstall_status_label.setText(f"已启动卸载程序: {app.get('name', '')}")
+        except Exception as exc:  # pragma: no cover - Windows shell dependent
+            QMessageBox.warning(self, "软件卸载", f"启动卸载失败: {exc}")
+
+    @staticmethod
+    def normalize_uninstall_command(command):
+        lowered = command.lower()
+        if "msiexec" in lowered and " /i" in lowered:
+            command = command.replace(" /I", " /X").replace(" /i", " /X")
+        return command
 
     def scan_large_files(self):
         """切回 C 盘清理并执行包含大文件项的一键扫描。"""
@@ -1023,6 +1743,64 @@ Get-ItemProperty $paths -ErrorAction SilentlyContinue |
     def is_cleanable_item(cls, item):
         return not cls.is_scan_only_item(item)
 
+    def category_icon_for_name(self, name):
+        """按目标名称/路径尽量取系统真实图标，失败时回退到应用图标。"""
+        value = (name or "").lower()
+        candidates = []
+        if name and os.path.exists(str(name)):
+            candidates.append(str(name))
+        if "edgecore" in value or "edge" in value or "msedge" in value:
+            candidates.extend([
+                r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+                r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
+            ])
+        if "chrome" in value or "chromium" in value:
+            candidates.extend([
+                r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+                r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+            ])
+        if "internet explorer" in value or value == "ie" or "inetcpl" in value:
+            candidates.append(r"C:\Program Files\Internet Explorer\iexplore.exe")
+        if "defender" in value or "mpcmd" in value or "security" in value:
+            candidates.extend([
+                r"C:\Program Files\Windows Defender\MSASCui.exe",
+                r"C:\ProgramData\Microsoft\Windows Defender",
+            ])
+        if "onedrive" in value:
+            candidates.append(r"C:\Program Files\Microsoft OneDrive\OneDrive.exe")
+        if "todesk" in value:
+            candidates.extend([
+                r"C:\Program Files\ToDesk\ToDesk.exe",
+                r"C:\Program Files (x86)\ToDesk\ToDesk.exe",
+            ])
+        if "uu" in value:
+            candidates.append(r"C:\Program Files (x86)\Netease\UU\uu.exe")
+        if "nvidia" in value:
+            candidates.append(r"C:\Program Files\NVIDIA Corporation")
+        if "intel" in value:
+            candidates.append(r"C:\Intel")
+        if "drvpath" in value or "driver" in value:
+            candidates.append(r"C:\DrvPath")
+        if "win" in value or "system" in value or "registry" in value or "update" in value:
+            candidates.extend([
+                r"C:\Windows\explorer.exe",
+                r"C:\Windows\System32\shell32.dll",
+                r"C:\Windows",
+            ])
+
+        for candidate in candidates:
+            if candidate and os.path.exists(candidate):
+                return self.icon_provider.icon(QFileInfo(candidate))
+        return self.app_icon
+
+    def target_icon_for_item(self, item):
+        path = item.get("path", "")
+        if path and os.path.exists(path):
+            return self.icon_provider.icon(QFileInfo(path))
+        return self.category_icon_for_name(
+            item.get("type") or item.get("category") or path
+        )
+
     def populate_results_tree(self, results):
         """填充结果树"""
         self.results_tree.clear()
@@ -1050,8 +1828,9 @@ Get-ItemProperty $paths -ErrorAction SilentlyContinue |
                 category_item.setText(2, f"{len(items)} 项路径 / 仅统计")
             category_item.setFont(0, category_font)
             category_item.setFont(1, category_font)
-            if not self.app_icon.isNull():
-                category_item.setIcon(0, self.app_icon)
+            category_icon = self.category_icon_for_name(category_name)
+            if not category_icon.isNull():
+                category_item.setIcon(0, category_icon)
             category_item.setFlags(category_item.flags() | Qt.ItemIsUserCheckable)
             category_item.setCheckState(0, Qt.Unchecked)
             if not category_cleanable:
@@ -1069,6 +1848,7 @@ Get-ItemProperty $paths -ErrorAction SilentlyContinue |
                 file_item.setText(0, f"{item_name} [仅统计]" if scan_only else item_name)
                 file_item.setText(1, self.format_size(item['size']))
                 file_item.setText(2, item_path)
+                file_item.setIcon(0, self.target_icon_for_item(item))
                 if scan_only:
                     file_item.setToolTip(0, "仅统计路径，不会直接清理")
                 file_item.setToolTip(2, item_path)
