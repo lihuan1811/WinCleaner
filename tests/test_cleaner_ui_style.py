@@ -73,6 +73,17 @@ def test_qt_cleanup_mode_switch_updates_existing_tree_without_rebuilding():
     assert "setUpdatesEnabled(False)" in source
 
 
+def test_qt_bulk_selection_pauses_tree_repaints():
+    source = Path("cleaner_ui.py").read_text(encoding="utf-8")
+    select_all_handler = source.split("def on_select_all_changed", 1)[1].split("def on_item_changed", 1)[0]
+    item_changed_handler = source.split("def on_item_changed", 1)[1].split("def update_selected_items", 1)[0]
+
+    assert "setUpdatesEnabled(False)" in select_all_handler
+    assert "setUpdatesEnabled(True)" in select_all_handler
+    assert "setUpdatesEnabled(False)" in item_changed_handler
+    assert "setUpdatesEnabled(True)" in item_changed_handler
+
+
 def test_qt_ui_has_backup_management_and_thread_error_recovery():
     source = Path("cleaner_ui.py").read_text(encoding="utf-8")
 

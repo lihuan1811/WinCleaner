@@ -2014,21 +2014,25 @@ class CleanerMainWindow(QMainWindow):
     def on_select_all_changed(self, state):
         """顶部“全选”勾选框：勾选/取消所有类别。"""
         check_state = Qt.Checked if state == Qt.Checked else Qt.Unchecked
+        self.results_tree.setUpdatesEnabled(False)
         self.results_tree.blockSignals(True)
-        for i in range(self.results_tree.topLevelItemCount()):
-            category_item = self.results_tree.topLevelItem(i)
-            if category_item.isDisabled():
-                category_item.setCheckState(0, Qt.Unchecked)
-                continue
-            category_item.setCheckState(0, check_state)
-            for j in range(category_item.childCount()):
-                child_item = category_item.child(j)
-                item_data = child_item.data(0, Qt.UserRole) or {}
-                if child_item.isDisabled() or not self.is_cleanable_item(item_data):
-                    child_item.setCheckState(0, Qt.Unchecked)
+        try:
+            for i in range(self.results_tree.topLevelItemCount()):
+                category_item = self.results_tree.topLevelItem(i)
+                if category_item.isDisabled():
+                    category_item.setCheckState(0, Qt.Unchecked)
                     continue
-                child_item.setCheckState(0, check_state)
-        self.results_tree.blockSignals(False)
+                category_item.setCheckState(0, check_state)
+                for j in range(category_item.childCount()):
+                    child_item = category_item.child(j)
+                    item_data = child_item.data(0, Qt.UserRole) or {}
+                    if child_item.isDisabled() or not self.is_cleanable_item(item_data):
+                        child_item.setCheckState(0, Qt.Unchecked)
+                        continue
+                    child_item.setCheckState(0, check_state)
+        finally:
+            self.results_tree.blockSignals(False)
+            self.results_tree.setUpdatesEnabled(True)
         self.update_selected_items()
 
     def on_item_changed(self, item, column):
@@ -2039,15 +2043,19 @@ class CleanerMainWindow(QMainWindow):
         # 如果是类别项，同步所有子项
         if item.parent() is None:
             check_state = item.checkState(0)
+            self.results_tree.setUpdatesEnabled(False)
             self.results_tree.blockSignals(True)
-            for i in range(item.childCount()):
-                child_item = item.child(i)
-                item_data = child_item.data(0, Qt.UserRole) or {}
-                if child_item.isDisabled() or not self.is_cleanable_item(item_data):
-                    child_item.setCheckState(0, Qt.Unchecked)
-                    continue
-                child_item.setCheckState(0, check_state)
-            self.results_tree.blockSignals(False)
+            try:
+                for i in range(item.childCount()):
+                    child_item = item.child(i)
+                    item_data = child_item.data(0, Qt.UserRole) or {}
+                    if child_item.isDisabled() or not self.is_cleanable_item(item_data):
+                        child_item.setCheckState(0, Qt.Unchecked)
+                        continue
+                    child_item.setCheckState(0, check_state)
+            finally:
+                self.results_tree.blockSignals(False)
+                self.results_tree.setUpdatesEnabled(True)
 
         # 更新选中项列表
         self.update_selected_items()
