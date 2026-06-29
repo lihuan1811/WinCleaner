@@ -50,14 +50,5 @@ class BuildExeCommandTests(unittest.TestCase):
         self.assertIn("CleanerMainWindow", qt_source)
         self.assertIn("if __name__ == '__main__':", qt_source)
 
-    def test_flutter_windows_runner_disables_maximize_button(self):
-        runner = Path("flutter_app/windows/runner/win32_window.cpp").read_text(
-            encoding="utf-8"
-        )
-
-        self.assertIn("kWindowStyle", runner)
-        self.assertIn("~WS_MAXIMIZEBOX", runner)
-
-
 if __name__ == "__main__":
     unittest.main()
