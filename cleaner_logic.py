@@ -14,7 +14,6 @@ import fnmatch
 import logging
 import datetime
 import concurrent.futures
-import threading
 from dismpp_rules import DismRuleScanner
 
 # 配置日志
@@ -33,27 +32,6 @@ def emit_scan_progress(progress_callback, path, count):
         progress_callback.emit(path, count)
     else:
         progress_callback(path, count)
-
-
-class ProgressAwareList(list):
-    """列表被扫描任务写入时，同步发出当前发现路径。"""
-
-    def __init__(self, category, progress_callback=None):
-        super().__init__()
-        self.category = category
-        self.progress_callback = progress_callback
-        self._lock = threading.Lock()
-
-    def append(self, item):
-        with self._lock:
-            super().append(item)
-            count = len(self)
-        if isinstance(item, dict):
-            emit_scan_progress(self.progress_callback, item.get('path'), count)
-
-    def extend(self, items):
-        for item in items:
-            self.append(item)
 
 
 class CleanerLogic:
@@ -635,12 +613,6 @@ class CleanerLogic:
             # 大文件扫描
             'large_files': []    # 大文件
         }
-        if progress_callback:
-            results = {
-                category: ProgressAwareList(category, progress_callback)
-                for category in results
-            }
-
         # 定义扫描任务
         scan_tasks = [
             self._scan_temp_files,
@@ -688,15 +660,26 @@ class CleanerLogic:
                 executor.submit(self._run_scan_task, task, results, progress_callback): task
                 for task in scan_tasks
             }
+            pending = set(future_to_task)
+            seen_progress_counts = {category: 0 for category in results}
 
             # 等待所有任务完成并处理潜在的异常
-            for future in concurrent.futures.as_completed(future_to_task):
-                task_func = future_to_task[future]
-                try:
-                    future.result()  # 任务期间发生的任何异常
-                    logger.info(f"Task {task_func.__name__} completed successfully.")
-                except Exception as exc:
-                    logger.error(f'Task {task_func.__name__} generated an exception: {exc}')
+            while pending:
+                done, pending = concurrent.futures.wait(
+                    pending,
+                    timeout=0.1 if progress_callback else None,
+                    return_when=concurrent.futures.FIRST_COMPLETED,
+                )
+                self._emit_scan_progress_since(results, progress_callback, seen_progress_counts)
+                for future in done:
+                    task_func = future_to_task[future]
+                    try:
+                        future.result()  # 任务期间发生的任何异常
+                        logger.info(f"Task {task_func.__name__} completed successfully.")
+                    except Exception as exc:
+                        logger.error(f'Task {task_func.__name__} generated an exception: {exc}')
+
+            self._emit_scan_progress_since(results, progress_callback, seen_progress_counts)
 
         # 结果字典由任务直接填充
 
@@ -707,6 +690,22 @@ class CleanerLogic:
         task_label = task.__name__.replace('_scan_', '扫描 ').replace('_', ' ')
         emit_scan_progress(progress_callback, task_label, 0)
         return task(results)
+
+    @staticmethod
+    def _emit_scan_progress_since(results, progress_callback, seen_counts):
+        if not progress_callback:
+            return
+
+        for category, items in results.items():
+            start = seen_counts.get(category, 0)
+            current = len(items)
+            if current <= start:
+                continue
+
+            for item in list(items[start:current]):
+                if isinstance(item, dict):
+                    emit_scan_progress(progress_callback, item.get('path'), current)
+            seen_counts[category] = current
 
     def _scan_temp_files(self, results):
         """扫描临时文件"""
