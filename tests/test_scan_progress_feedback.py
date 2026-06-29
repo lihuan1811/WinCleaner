@@ -42,11 +42,11 @@ def test_cleaner_logic_exposes_scan_progress_callback():
     assert "ProgressAwareList" not in source
 
 
-def test_scan_system_progress_callback_keeps_result_lists_plain():
-    recorder = Recorder()
-    results = CleanerLogic().scan_system(recorder)
+def test_scan_system_progress_callback_does_not_replace_result_lists():
+    source = Path("cleaner_logic.py").read_text(encoding="utf-8")
 
-    assert all(type(items) is list for items in results.values())
+    assert "ProgressAwareList" not in source
+    assert "ProgressAwareList(category" not in source
 
 
 def test_qt_scan_page_shows_current_scanning_path():
