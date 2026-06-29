@@ -64,6 +64,15 @@ def test_qt_ui_has_recommended_professional_and_select_all_modes():
     assert "def allow_item_cleaning" in source
 
 
+def test_qt_cleanup_mode_switch_updates_existing_tree_without_rebuilding():
+    source = Path("cleaner_ui.py").read_text(encoding="utf-8")
+    mode_handler = source.split("def on_clean_mode_changed", 1)[1].split("def refresh_cleanable_totals", 1)[0]
+
+    assert "update_result_tree_cleanability" in source
+    assert "populate_results_tree" not in mode_handler
+    assert "setUpdatesEnabled(False)" in source
+
+
 def test_qt_ui_has_backup_management_and_thread_error_recovery():
     source = Path("cleaner_ui.py").read_text(encoding="utf-8")
 

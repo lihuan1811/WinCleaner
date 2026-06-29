@@ -1802,7 +1802,7 @@ class CleanerMainWindow(QMainWindow):
 
         if self.scan_results:
             self.refresh_cleanable_totals()
-            self.populate_results_tree(self.scan_results)
+            self.update_result_tree_cleanability()
             self.select_all_checkbox.setEnabled(bool(self.cleanable_items))
             self.clean_all_button.setEnabled(bool(self.cleanable_items))
             if self.select_all_checkbox.isChecked():
@@ -1890,8 +1890,72 @@ class CleanerMainWindow(QMainWindow):
             item.get("type") or item.get("category") or path
         )
 
+    def item_display_text(self, item):
+        item_name = self.display_name_from_path(item.get('path', ''))
+        if self.is_scan_only_item(item) and self.is_cleanable_item(item):
+            return f"{item_name} [专业]"
+        if self.is_scan_only_item(item):
+            return f"{item_name} [仅统计]"
+        return item_name
+
+    def update_result_child_cleanability(self, child_item):
+        item = child_item.data(0, Qt.UserRole) or {}
+        cleanable = self.is_cleanable_item(item)
+        scan_only = self.is_scan_only_item(item)
+
+        child_item.setText(0, self.item_display_text(item))
+        child_item.setDisabled(not cleanable)
+        if not cleanable:
+            child_item.setCheckState(0, Qt.Unchecked)
+            child_item.setToolTip(0, "仅统计路径，不会直接清理")
+        elif scan_only:
+            child_item.setToolTip(0, "专业清理项，确认后可清理")
+        else:
+            child_item.setToolTip(0, "")
+        return cleanable
+
+    def update_result_tree_cleanability(self):
+        self.results_tree.setUpdatesEnabled(False)
+        self.results_tree.blockSignals(True)
+        try:
+            for i in range(self.results_tree.topLevelItemCount()):
+                category_item = self.results_tree.topLevelItem(i)
+                cleanable_count = 0
+                category_size = 0
+                category_cleanable_size = 0
+
+                for j in range(category_item.childCount()):
+                    child_item = category_item.child(j)
+                    item = child_item.data(0, Qt.UserRole) or {}
+                    item_size = item.get('size', 0)
+                    category_size += item_size
+                    if self.update_result_child_cleanability(child_item):
+                        cleanable_count += 1
+                        category_cleanable_size += item_size
+
+                total_count = category_item.childCount()
+                if cleanable_count:
+                    category_item.setDisabled(False)
+                    category_item.setText(
+                        2,
+                        f"{cleanable_count} 项可清理 / {total_count - cleanable_count} 项仅统计",
+                    )
+                else:
+                    category_item.setDisabled(True)
+                    category_item.setCheckState(0, Qt.Unchecked)
+                    category_item.setText(2, f"{total_count} 项路径 / 仅统计")
+                category_item.setToolTip(
+                    1,
+                    f"统计 {self.format_size(category_size)}，可清理 {self.format_size(category_cleanable_size)}",
+                )
+        finally:
+            self.results_tree.blockSignals(False)
+            self.results_tree.setUpdatesEnabled(True)
+
     def populate_results_tree(self, results):
         """填充结果树"""
+        self.results_tree.setUpdatesEnabled(False)
+        self.results_tree.blockSignals(True)
         self.results_tree.clear()
         category_font = QFont()
         category_font.setBold(True)
@@ -1931,31 +1995,21 @@ class CleanerMainWindow(QMainWindow):
 
             for item in items:
                 item_path = item['path']
-                scan_only = self.is_scan_only_item(item)
                 cleanable = self.is_cleanable_item(item)
                 file_item = QTreeWidgetItem(category_item)
-                item_name = self.display_name_from_path(item_path)
-                if scan_only and cleanable:
-                    file_item.setText(0, f"{item_name} [专业]")
-                elif scan_only:
-                    file_item.setText(0, f"{item_name} [仅统计]")
-                else:
-                    file_item.setText(0, item_name)
+                file_item.setText(0, self.item_display_text(item))
                 file_item.setText(1, self.format_size(item['size']))
                 file_item.setText(2, item_path)
                 file_item.setIcon(0, self.target_icon_for_item(item))
-                if scan_only and cleanable:
-                    file_item.setToolTip(0, "专业清理项，确认后可清理")
-                elif scan_only:
-                    file_item.setToolTip(0, "仅统计路径，不会直接清理")
                 file_item.setToolTip(2, item_path)
                 file_item.setFlags(file_item.flags() | Qt.ItemIsUserCheckable)
                 file_item.setCheckState(0, Qt.Unchecked)
                 file_item.setData(0, Qt.UserRole, item)
-                if not cleanable:
-                    file_item.setDisabled(True)
+                self.update_result_child_cleanability(file_item)
 
         self.results_tree.expandAll()
+        self.results_tree.blockSignals(False)
+        self.results_tree.setUpdatesEnabled(True)
 
     def on_select_all_changed(self, state):
         """顶部“全选”勾选框：勾选/取消所有类别。"""
