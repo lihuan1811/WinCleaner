@@ -41,7 +41,8 @@ class CleanerLogic:
         """初始化清理器"""
         self.options = {
             'simulate': True,  # 默认为模拟模式
-            'backup': True     # 默认备份文件
+            'backup': True,    # 默认备份文件
+            'allow_scan_only_clean': False
         }
 
         # 安全路径列表 - 这些路径不会被扫描或清理
@@ -2193,7 +2194,10 @@ class CleanerLogic:
                 if progress_callback:
                     progress_callback.emit(path, i + 1)
 
-                if item.get('scan_only'):
+                scan_only_item = bool(item.get('scan_only'))
+                allow_scan_only_clean = bool(self.options.get('allow_scan_only_clean'))
+
+                if scan_only_item and not allow_scan_only_clean:
                     logger.info(f"跳过仅扫描项目: {path}")
                     results['errors'].append({
                         'path': path,
@@ -2202,7 +2206,7 @@ class CleanerLogic:
                     continue
 
                 # 检查路径安全性
-                if not self._is_safe_path(path):
+                if not self._is_safe_path(path) and not (scan_only_item and allow_scan_only_clean):
                     logger.warning(f"跳过不安全路径: {path}")
                     results['errors'].append({
                         'path': path,

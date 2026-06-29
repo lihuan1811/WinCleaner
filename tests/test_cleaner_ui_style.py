@@ -52,6 +52,18 @@ def test_qt_ui_marks_statistics_only_items_as_not_cleanable():
     assert "scan_only" in source
 
 
+def test_qt_ui_has_recommended_professional_and_select_all_modes():
+    source = Path("cleaner_ui.py").read_text(encoding="utf-8")
+
+    assert "self.recommended_checkbox = QCheckBox(\"推荐\")" in source
+    assert "self.professional_checkbox = QCheckBox(\"专业\")" in source
+    assert "self.select_all_checkbox = QCheckBox(\"全选\")" in source
+    assert "allow_scan_only_clean" in source
+    assert "def professional_mode_enabled" in source
+    assert "def on_clean_mode_changed" in source
+    assert "def allow_item_cleaning" in source
+
+
 def test_qt_ui_has_backup_management_and_thread_error_recovery():
     source = Path("cleaner_ui.py").read_text(encoding="utf-8")
 

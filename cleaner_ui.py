@@ -657,8 +657,17 @@ class CleanerMainWindow(QMainWindow):
         result_header.addWidget(result_title)
         result_header.addWidget(self.result_summary_label, 1)
 
+        self.recommended_checkbox = QCheckBox("推荐")
+        self.recommended_checkbox.setToolTip("推荐模式只清理相对安全的缓存、日志、更新残留")
+        self.recommended_checkbox.setChecked(True)
+        self.recommended_checkbox.stateChanged.connect(self.on_clean_mode_changed)
+
+        self.professional_checkbox = QCheckBox("专业")
+        self.professional_checkbox.setToolTip("专业模式允许清理 WinSxS、WindowsApps、Defender、EdgeCore 等高风险扫描项")
+        self.professional_checkbox.stateChanged.connect(self.on_clean_mode_changed)
+
         self.select_all_checkbox = QCheckBox("全选")
-        self.select_all_checkbox.setToolTip("勾选/取消勾选全部扫描结果")
+        self.select_all_checkbox.setToolTip("勾选/取消勾选当前模式下的全部可清理项")
         self.select_all_checkbox.setEnabled(False)
         self.select_all_checkbox.stateChanged.connect(self.on_select_all_changed)
 
@@ -679,6 +688,8 @@ class CleanerMainWindow(QMainWindow):
         backup_manager_button.setToolTip("查看、恢复、删除和清理旧备份")
         backup_manager_button.clicked.connect(self.open_backup_manager)
 
+        result_header.addWidget(self.recommended_checkbox)
+        result_header.addWidget(self.professional_checkbox)
         result_header.addWidget(self.select_all_checkbox)
         result_header.addWidget(self.simulate_checkbox)
         result_header.addWidget(self.backup_checkbox)
@@ -1715,29 +1726,12 @@ class CleanerMainWindow(QMainWindow):
         self.current_scan_path_label.setVisible(True)
         self.current_scan_path_label.setText("当前扫描: 扫描完成，正在整理结果")
 
-        total_items = sum(len(items) for items in results.values())
-        total_size = sum(item['size'] for category in results.values() for item in category)
-        self.cleanable_items = [
-            item
-            for category in results.values()
-            for item in category
-            if self.is_cleanable_item(item)
-        ]
-        cleanable_size = sum(item['size'] for item in self.cleanable_items)
-        category_count = sum(1 for items in results.values() if items)
-        self.cleanable_value_label.setText(self.format_size(cleanable_size))
-        self.result_summary_label.setText(
-            f"{category_count} 类 / {total_items} 项 / 统计 {self.format_size(total_size)} / 可清理 {self.format_size(cleanable_size)}"
-        )
+        total_items = self.refresh_cleanable_totals()
 
         if not results or total_items == 0:
             self.status_label.setText("扫描完成，未发现可清理项目")
             self.update_selected_items()
             return
-
-        self.status_label.setText(
-            f"扫描完成，统计空间 {self.format_size(total_size)}，可释放 {self.format_size(cleanable_size)}"
-        )
 
         # 填充结果树
         self.populate_results_tree(results)
@@ -1776,14 +1770,67 @@ class CleanerMainWindow(QMainWindow):
         keep = max(24, (max_length - 5) // 2)
         return f"{path[:keep]} ... {path[-keep:]}"
 
+    def professional_mode_enabled(self):
+        return hasattr(self, "professional_checkbox") and self.professional_checkbox.isChecked()
+
     @staticmethod
     def is_scan_only_item(item):
         """截图补充路径中不少条目只能统计，不能直接清理。"""
         return bool(item.get("scan_only"))
 
-    @classmethod
-    def is_cleanable_item(cls, item):
-        return not cls.is_scan_only_item(item)
+    def allow_item_cleaning(self, item):
+        return not self.is_scan_only_item(item) or self.professional_mode_enabled()
+
+    def is_cleanable_item(self, item):
+        return self.allow_item_cleaning(item)
+
+    def on_clean_mode_changed(self, _state):
+        """推荐/专业模式切换后，重新计算可清理项和勾选状态。"""
+        sender = self.sender()
+        if sender is self.professional_checkbox and self.professional_checkbox.isChecked():
+            self.recommended_checkbox.blockSignals(True)
+            self.recommended_checkbox.setChecked(False)
+            self.recommended_checkbox.blockSignals(False)
+        elif sender is self.recommended_checkbox and self.recommended_checkbox.isChecked():
+            self.professional_checkbox.blockSignals(True)
+            self.professional_checkbox.setChecked(False)
+            self.professional_checkbox.blockSignals(False)
+        elif not self.recommended_checkbox.isChecked() and not self.professional_checkbox.isChecked():
+            self.recommended_checkbox.blockSignals(True)
+            self.recommended_checkbox.setChecked(True)
+            self.recommended_checkbox.blockSignals(False)
+
+        if self.scan_results:
+            self.refresh_cleanable_totals()
+            self.populate_results_tree(self.scan_results)
+            self.select_all_checkbox.setEnabled(bool(self.cleanable_items))
+            self.clean_all_button.setEnabled(bool(self.cleanable_items))
+            if self.select_all_checkbox.isChecked():
+                self.on_select_all_changed(Qt.Checked)
+            else:
+                self.update_selected_items()
+
+    def refresh_cleanable_totals(self):
+        total_items = sum(len(items) for items in self.scan_results.values())
+        total_size = sum(item['size'] for category in self.scan_results.values() for item in category)
+        self.cleanable_items = [
+            item
+            for category in self.scan_results.values()
+            for item in category
+            if self.is_cleanable_item(item)
+        ]
+        cleanable_size = sum(item['size'] for item in self.cleanable_items)
+        category_count = sum(1 for items in self.scan_results.values() if items)
+        mode_name = "专业" if self.professional_mode_enabled() else "推荐"
+        self.cleanable_value_label.setText(self.format_size(cleanable_size))
+        self.result_summary_label.setText(
+            f"{mode_name}模式 / {category_count} 类 / {total_items} 项 / 统计 {self.format_size(total_size)} / 可清理 {self.format_size(cleanable_size)}"
+        )
+        if total_items:
+            self.status_label.setText(
+                f"扫描完成，统计空间 {self.format_size(total_size)}，{mode_name}可释放 {self.format_size(cleanable_size)}"
+            )
+        return total_items
 
     def category_icon_for_name(self, name):
         """按目标名称/路径尽量取系统真实图标，失败时回退到应用图标。"""
@@ -1885,19 +1932,27 @@ class CleanerMainWindow(QMainWindow):
             for item in items:
                 item_path = item['path']
                 scan_only = self.is_scan_only_item(item)
+                cleanable = self.is_cleanable_item(item)
                 file_item = QTreeWidgetItem(category_item)
                 item_name = self.display_name_from_path(item_path)
-                file_item.setText(0, f"{item_name} [仅统计]" if scan_only else item_name)
+                if scan_only and cleanable:
+                    file_item.setText(0, f"{item_name} [专业]")
+                elif scan_only:
+                    file_item.setText(0, f"{item_name} [仅统计]")
+                else:
+                    file_item.setText(0, item_name)
                 file_item.setText(1, self.format_size(item['size']))
                 file_item.setText(2, item_path)
                 file_item.setIcon(0, self.target_icon_for_item(item))
-                if scan_only:
+                if scan_only and cleanable:
+                    file_item.setToolTip(0, "专业清理项，确认后可清理")
+                elif scan_only:
                     file_item.setToolTip(0, "仅统计路径，不会直接清理")
                 file_item.setToolTip(2, item_path)
                 file_item.setFlags(file_item.flags() | Qt.ItemIsUserCheckable)
                 file_item.setCheckState(0, Qt.Unchecked)
                 file_item.setData(0, Qt.UserRole, item)
-                if scan_only:
+                if not cleanable:
                     file_item.setDisabled(True)
 
         self.results_tree.expandAll()
@@ -1915,7 +1970,7 @@ class CleanerMainWindow(QMainWindow):
             for j in range(category_item.childCount()):
                 child_item = category_item.child(j)
                 item_data = child_item.data(0, Qt.UserRole) or {}
-                if child_item.isDisabled() or self.is_scan_only_item(item_data):
+                if child_item.isDisabled() or not self.is_cleanable_item(item_data):
                     child_item.setCheckState(0, Qt.Unchecked)
                     continue
                 child_item.setCheckState(0, check_state)
@@ -1934,7 +1989,7 @@ class CleanerMainWindow(QMainWindow):
             for i in range(item.childCount()):
                 child_item = item.child(i)
                 item_data = child_item.data(0, Qt.UserRole) or {}
-                if child_item.isDisabled() or self.is_scan_only_item(item_data):
+                if child_item.isDisabled() or not self.is_cleanable_item(item_data):
                     child_item.setCheckState(0, Qt.Unchecked)
                     continue
                 child_item.setCheckState(0, check_state)
@@ -1971,20 +2026,21 @@ class CleanerMainWindow(QMainWindow):
         self.start_clean_items(self.selected_items, "清理选中")
 
     def start_clean_all(self):
-        """一键清理全部可清理项目，自动跳过仅统计路径。"""
+        """一键清理当前模式下的全部可清理项目。"""
         if not self.cleanable_items:
-            QMessageBox.information(self, "一键清理", "当前没有可清理项目，仅统计路径不会被清理。")
+            QMessageBox.information(self, "一键清理", "当前模式没有可清理项目。")
             return
         self.start_clean_items(self.cleanable_items, "一键清理")
 
     def start_clean_items(self, items, action_label):
-        """启动清理线程，items 必须已经过滤为可清理项。"""
+        """启动清理线程，items 必须已经过滤为当前模式可清理项。"""
         clean_items = [item for item in items if self.is_cleanable_item(item)]
         if not clean_items:
             QMessageBox.information(self, action_label, "没有可清理项目")
             return
 
         total_size = sum(item['size'] for item in clean_items)
+        professional_items = [item for item in clean_items if self.is_scan_only_item(item)]
         msg = QMessageBox()
         msg.setIcon(QMessageBox.Warning)
         msg.setWindowTitle(f"确认{action_label}")
@@ -1999,7 +2055,14 @@ class CleanerMainWindow(QMainWindow):
                 f"您确定要{action_label} {len(clean_items)} 个项目，"
                 f"总计 {self.format_size(total_size)} 吗？"
             )
-            msg.setInformativeText("此操作无法撤销！")
+            if professional_items:
+                msg.setInformativeText(
+                    f"其中包含 {len(professional_items)} 个专业清理项。"
+                    "这些路径可能属于 WinSxS、WindowsApps、Defender、EdgeCore 或系统组件缓存，"
+                    "删除后可能影响系统更新、应用恢复或安全记录。此操作无法撤销！"
+                )
+            else:
+                msg.setInformativeText("此操作无法撤销！")
 
         msg.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
         if msg.exec_() != QMessageBox.Yes:
@@ -2010,6 +2073,7 @@ class CleanerMainWindow(QMainWindow):
             'simulate': self.simulate_checkbox.isChecked(),
             'backup': self.backup_checkbox.isChecked(),
             'backup_dir': self.cleaner.backup_dir,
+            'allow_scan_only_clean': self.professional_mode_enabled(),
         })
 
         # 开始清理

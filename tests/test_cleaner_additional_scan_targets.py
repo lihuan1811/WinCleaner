@@ -53,6 +53,33 @@ class CleanerAdditionalScanTargetsTests(unittest.TestCase):
             self.assertEqual(result["freed_space"], 0)
             self.assertEqual(result["errors"][0]["error"], "仅扫描项，未清理")
 
+    def test_clean_selected_allows_scan_only_items_in_professional_mode(self):
+        cleaner = CleanerLogic()
+        cleaner.set_options({
+            "simulate": True,
+            "backup": False,
+            "allow_scan_only_clean": True,
+        })
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            file_path = Path(temp_dir) / "professional-cache.log"
+            file_path.write_text("professional", encoding="utf-8")
+
+            result = cleaner.clean_selected(
+                [
+                    {
+                        "path": str(file_path),
+                        "size": file_path.stat().st_size,
+                        "type": "winsxs_component_store",
+                        "scan_only": True,
+                    }
+                ]
+            )
+
+            self.assertEqual(result["errors"], [])
+            self.assertEqual(result["cleaned_items"], [str(file_path)])
+            self.assertGreater(result["freed_space"], 0)
+
 
 if __name__ == "__main__":
     unittest.main()
