@@ -10,6 +10,7 @@ import shutil
 import tempfile
 import time
 import glob
+import fnmatch
 import logging
 import datetime
 import concurrent.futures
@@ -104,6 +105,252 @@ class CleanerLogic:
             self.max_backups = options['max_backups']
         if 'max_backup_size' in options:
             self.max_backup_size = options['max_backup_size']
+
+    @staticmethod
+    def _win_join(*parts):
+        """拼接 Windows 路径，避免在非 Windows 测试环境中混入 / 分隔符。"""
+        cleaned = []
+        for index, part in enumerate(parts):
+            if not part:
+                continue
+            value = str(part)
+            if index == 0:
+                cleaned.append(value.rstrip('\\/'))
+            else:
+                cleaned.append(value.strip('\\/'))
+        return '\\'.join(cleaned)
+
+    @classmethod
+    def additional_scan_targets(cls):
+        """从实际扫描截图补充的 C 盘专项扫描目标。
+
+        这些目标默认只统计、不直接清理。很多路径属于 WinSxS、WindowsApps、
+        Defender、Edge 用户数据等系统或应用关键区域，直接删除风险高。
+        """
+        user_profile = os.environ.get('USERPROFILE') or r'C:\Users\Administrator'
+        local_app_data = os.environ.get('LOCALAPPDATA') or cls._win_join(
+            user_profile, 'AppData', 'Local'
+        )
+        local_low_app_data = cls._win_join(user_profile, 'AppData', 'LocalLow')
+        program_data = os.environ.get('ProgramData') or r'C:\ProgramData'
+        program_files = os.environ.get('ProgramFiles') or r'C:\Program Files'
+        program_files_x86 = (
+            os.environ.get('ProgramFiles(x86)') or r'C:\Program Files (x86)'
+        )
+        system_root = os.environ.get('SystemRoot') or r'C:\Windows'
+        system_drive = os.environ.get('SystemDrive') or 'C:'
+        network_service_local = cls._win_join(
+            system_root, 'ServiceProfiles', 'NetworkService', 'AppData', 'Local'
+        )
+        local_service_local = cls._win_join(
+            system_root, 'ServiceProfiles', 'LocalService', 'AppData', 'Local'
+        )
+        system_profile_local = cls._win_join(
+            system_root, 'System32', 'config', 'systemprofile', 'AppData', 'Local'
+        )
+
+        def target(category, paths, **extra):
+            spec = {
+                'category': category,
+                'paths': paths,
+                'scan_only': True,
+                'aggregate': True,
+                'patterns': [],
+                'path_contains': [],
+            }
+            spec.update(extra)
+            return spec
+
+        return [
+            target(
+                'edge_webview_cache',
+                [
+                    cls._win_join(local_app_data, 'GameViewer', 'webviewcache', 'EBWebView'),
+                    cls._win_join(local_app_data, 'Microsoft', 'Edge', 'User Data', 'Default', 'DawnGraphiteCache'),
+                    cls._win_join(local_app_data, 'Microsoft', 'Edge', 'User Data', 'Default', 'DawnWebGPUCache'),
+                    cls._win_join(local_app_data, 'Microsoft', 'Edge', 'User Data', 'Default', 'GrShaderCache'),
+                    cls._win_join(local_app_data, 'Microsoft', 'Edge', 'User Data', 'Default', 'ShaderCache'),
+                    cls._win_join(local_app_data, 'Microsoft', 'Edge', 'User Data', 'Default', 'Service Worker'),
+                    cls._win_join(local_app_data, 'Microsoft', 'Edge', 'User Data', 'Default', 'Shared Dictionary'),
+                ],
+            ),
+            target(
+                'edge_profile_state',
+                [
+                    cls._win_join(local_app_data, 'Microsoft', 'Edge', 'User Data', 'BrowserMetrics'),
+                    cls._win_join(local_app_data, 'Microsoft', 'Edge', 'User Data', 'Crashpad'),
+                    cls._win_join(local_app_data, 'Microsoft', 'Edge', 'User Data', 'Default', 'History'),
+                    cls._win_join(local_app_data, 'Microsoft', 'Edge', 'User Data', 'Default', 'Login Data'),
+                    cls._win_join(local_app_data, 'Microsoft', 'Edge', 'User Data', 'Default', 'Network'),
+                    cls._win_join(local_app_data, 'Microsoft', 'Edge', 'User Data', 'Default', 'Preferences'),
+                    cls._win_join(local_app_data, 'Microsoft', 'Edge', 'User Data', 'Default', 'Secure Preferences'),
+                    cls._win_join(local_app_data, 'Microsoft', 'Edge', 'User Data', 'Default', 'Sessions'),
+                    cls._win_join(local_app_data, 'Microsoft', 'Edge', 'User Data', 'Default', 'Session Storage'),
+                    cls._win_join(local_app_data, 'Microsoft', 'Edge', 'User Data', 'Default', 'Shortcuts'),
+                    cls._win_join(local_app_data, 'Microsoft', 'Edge', 'User Data', 'Default', 'Sync Data'),
+                    cls._win_join(local_app_data, 'Microsoft', 'Edge', 'User Data', 'Default', 'Visited Links'),
+                    cls._win_join(local_app_data, 'Microsoft', 'Edge', 'User Data', 'Default', 'Web Data'),
+                ],
+            ),
+            target(
+                'edge_component_updates',
+                [
+                    cls._win_join(local_app_data, 'Microsoft', 'Edge', 'User Data', 'EADPData Component'),
+                    cls._win_join(local_app_data, 'Microsoft', 'Edge', 'User Data', 'Typosquatting'),
+                ],
+            ),
+            target(
+                'edgecore_old_versions',
+                [cls._win_join(program_files_x86, 'Microsoft', 'EdgeCore')],
+            ),
+            target(
+                'panther_setup_logs',
+                [cls._win_join(system_root, 'Panther')],
+                aggregate=False,
+                patterns=['*.dir', '*.etl', '*.log', '*.que', '*.uaq', '*.xml', 'setupinfo'],
+            ),
+            target(
+                'service_profile_temp',
+                [
+                    cls._win_join(system_root, 'SystemTemp'),
+                    cls._win_join(network_service_local, 'Temp'),
+                    cls._win_join(local_service_local, 'Temp'),
+                ],
+            ),
+            target(
+                'drvpath_driver_packages',
+                [cls._win_join(system_drive, 'DrvPath')],
+                aggregate=False,
+                patterns=['*.7z', '*.zip', '*.rar', '*.cab', '*.log'],
+            ),
+            target(
+                'intel_logs',
+                [cls._win_join(system_drive, 'Intel', 'Logs')],
+                aggregate=False,
+                patterns=['*.log'],
+            ),
+            target(
+                'explorer_runtime_cache',
+                [
+                    cls._win_join(program_data, 'Microsoft', 'Windows', 'Caches'),
+                    cls._win_join(local_app_data, 'IconCache.db'),
+                    cls._win_join(local_app_data, 'Microsoft', 'Windows', 'Caches'),
+                    cls._win_join(local_app_data, 'Microsoft', 'Windows', 'Explorer'),
+                    cls._win_join(local_service_local, 'FontCache'),
+                ],
+            ),
+            target(
+                'legacy_ie_cache',
+                [
+                    cls._win_join(local_low_app_data, 'Microsoft', 'CryptnetUrlCache', 'Content'),
+                    cls._win_join(local_app_data, 'Microsoft', 'Internet Explorer', 'DOMStore'),
+                    cls._win_join(local_app_data, 'Microsoft', 'Internet Explorer', 'CacheStorage'),
+                    cls._win_join(local_app_data, 'Microsoft', 'Windows', 'AppCache'),
+                    cls._win_join(local_app_data, 'Microsoft', 'Windows', 'INetCache'),
+                    cls._win_join(local_app_data, 'Microsoft', 'Windows', 'INetCookies'),
+                    cls._win_join(local_app_data, 'Microsoft', 'Windows', 'WebCache'),
+                    cls._win_join(system_profile_local, 'Microsoft', 'Windows', 'INetCache'),
+                    cls._win_join(system_profile_local, 'Microsoft', 'Windows', 'WebCache'),
+                    cls._win_join(system_profile_local, 'Low', 'Microsoft', 'CryptnetUrlCache'),
+                ],
+            ),
+            target(
+                'appx_package_cache',
+                [cls._win_join(local_app_data, 'Packages')],
+                path_contains=[
+                    r'\microsoft.microsoftofficehub_',
+                    r'\microsoft.microsoftpcmanager_',
+                    r'\microsoft.windows.search_',
+                    r'\microsoft.windowsstore_',
+                    r'\microsoft.windows.client.cbs_',
+                    r'\microsoft.windowscommunicationsapps_',
+                    r'\microsoft.windows.contentdeliverymanager_',
+                    r'\microsoft.windows.photos_',
+                    r'\microsoft.skypeapp_',
+                ],
+            ),
+            target(
+                'third_party_app_logs',
+                [
+                    cls._win_join(program_data, 'NVIDIA Corporation'),
+                    cls._win_join(program_data, 'NVIDIA'),
+                    cls._win_join(program_data, 'Windows Master Store'),
+                    cls._win_join(local_app_data, 'GameViewer', 'webviewcache', 'EBWebView'),
+                ],
+                aggregate=False,
+                patterns=['*.log'],
+            ),
+            target(
+                'windows_extra_logs',
+                [
+                    cls._win_join(system_root, 'DtcInstall.log'),
+                    cls._win_join(system_root, 'PFRO.log'),
+                    cls._win_join(system_root, 'setupact.log'),
+                    cls._win_join(system_root, 'setuperr.log'),
+                    cls._win_join(system_root, 'Microsoft.NET', 'Framework64', 'v4.0.30319', 'ngen.log'),
+                    cls._win_join(system_root, 'Microsoft.NET', 'Framework', 'v4.0.30319', 'ngen.log'),
+                    cls._win_join(system_root, 'Performance', 'WinSAT'),
+                    cls._win_join(system_root, 'System32', 'MsDtc', 'MSDTC.LOG'),
+                    cls._win_join(system_root, 'System32', 'config', 'BCD-Template.LOG'),
+                    cls._win_join(system_root, 'System32', 'sru'),
+                    cls._win_join(system_profile_local, 'DataSharing', 'Storage'),
+                ],
+                aggregate=False,
+                patterns=['*.log', '*.LOG'],
+            ),
+            target(
+                'sleepstudy_wdi_traces',
+                [
+                    cls._win_join(system_root, 'System32', 'SleepStudy'),
+                    cls._win_join(system_root, 'System32', 'WDI', 'LogFiles'),
+                ],
+                aggregate=False,
+                patterns=['*.etl'],
+            ),
+            target(
+                'windowsapps_cleanup_candidates',
+                [cls._win_join(program_files, 'WindowsApps')],
+                path_contains=[
+                    '\\deleted\\',
+                    '\\deletedalluserpackages\\',
+                    r'\microsoft.gethelp_',
+                ],
+            ),
+            target('windows_update_lcu_backup', [cls._win_join(system_root, 'servicing', 'LCU')]),
+            target('windows_update_signature_cache', [cls._win_join(system_root, 'System32', 'catroot2')]),
+            target(
+                'windows_search_index_cache',
+                [cls._win_join(program_data, 'Microsoft', 'Search', 'Data', 'Applications', 'Windows')],
+            ),
+            target(
+                'defender_definition_backup',
+                [cls._win_join(program_data, 'Microsoft', 'Windows Defender', 'Definition Updates', 'Backup')],
+            ),
+            target(
+                'defender_support_logs',
+                [cls._win_join(program_data, 'Microsoft', 'Windows Defender', 'Support')],
+            ),
+            target(
+                'defender_history',
+                [cls._win_join(program_data, 'Microsoft', 'Windows Defender', 'Scans', 'History')],
+            ),
+            target(
+                'defender_quarantine',
+                [cls._win_join(program_data, 'Microsoft', 'Windows Defender', 'Quarantine')],
+            ),
+            target('winsxs_backup', [cls._win_join(system_root, 'WinSxS', 'Backup')]),
+            target('winsxs_catalogs', [cls._win_join(system_root, 'WinSxS', 'Catalogs')]),
+            target(
+                'winsxs_onedrive_setup',
+                [cls._win_join(system_root, 'WinSxS')],
+                path_contains=[r'onedrive-setup'],
+            ),
+            target(
+                'winsxs_component_store',
+                [cls._win_join(system_root, 'WinSxS')],
+                path_contains=[r'\amd64_', r'\wow64_', r'\x86_'],
+            ),
+        ]
 
     def get_disk_info(self):
         """获取C盘信息"""
@@ -326,6 +573,32 @@ class CleanerLogic:
             'installer_cache': [], # 安装程序缓存(安全版)
             'delivery_opt': [],  # Windows传递优化缓存
             'dismpp_rules': [],  # Dism++清理规则
+            'edge_webview_cache': [], # Edge/WebView缓存
+            'edge_profile_state': [], # Edge用户状态文件
+            'edge_component_updates': [], # Edge组件旧版本
+            'edgecore_old_versions': [], # EdgeCore旧版本
+            'panther_setup_logs': [], # Panther安装日志
+            'service_profile_temp': [], # 系统服务临时文件
+            'drvpath_driver_packages': [], # DrvPath驱动残留
+            'intel_logs': [], # Intel日志
+            'explorer_runtime_cache': [], # Explorer运行缓存
+            'legacy_ie_cache': [], # IE/系统Web缓存
+            'appx_package_cache': [], # AppData Packages缓存
+            'third_party_app_logs': [], # 第三方组件日志
+            'windows_extra_logs': [], # Windows扩展日志
+            'sleepstudy_wdi_traces': [], # SleepStudy/WDI事件跟踪
+            'windowsapps_cleanup_candidates': [], # WindowsApps精简候选
+            'windows_update_lcu_backup': [], # Windows更新备份
+            'windows_update_signature_cache': [], # Windows Update签名缓存
+            'windows_search_index_cache': [], # Windows搜索索引缓存
+            'defender_definition_backup': [], # Defender定义备份
+            'defender_support_logs': [], # Defender支持日志
+            'defender_history': [], # Defender历史记录
+            'defender_quarantine': [], # Defender隔离区
+            'winsxs_backup': [], # WinSxS Backup
+            'winsxs_catalogs': [], # WinSxS Catalogs
+            'winsxs_onedrive_setup': [], # WinSxS OneDrive组件
+            'winsxs_component_store': [], # WinSxS组件存储
 
             # 大文件扫描
             'large_files': []    # 大文件
@@ -366,6 +639,7 @@ class CleanerLogic:
             self._scan_installer_cache_safe,
             self._scan_delivery_optimization, # Ensure this is the correct one
             self._scan_dismpp_rules,
+            self._scan_additional_observed_targets,
             self._scan_large_files
         ]
 
@@ -1657,6 +1931,119 @@ class CleanerLogic:
         except Exception as e:
             logger.warning(f"扫描Dism++规则失败: {e}")
 
+    def _scan_additional_observed_targets(self, results):
+        """扫描远程实机截图补充的专项路径。"""
+        for target in self.additional_scan_targets():
+            category = target['category']
+            results.setdefault(category, [])
+            seen_paths = {item.get('path') for item in results[category]}
+
+            for path in target['paths']:
+                if not path or not os.path.exists(path):
+                    continue
+
+                try:
+                    if os.path.isfile(path):
+                        if self._matches_additional_target(path, target):
+                            self._append_additional_scan_item(
+                                results,
+                                category,
+                                path,
+                                os.path.getsize(path),
+                                target,
+                                seen_paths,
+                            )
+                        continue
+
+                    if target.get('aggregate', True):
+                        total_size = 0
+                        matched_files = 0
+                        for root, _, files in os.walk(path):
+                            for file_name in files:
+                                file_path = os.path.join(root, file_name)
+                                try:
+                                    if (
+                                        os.path.isfile(file_path)
+                                        and self._matches_additional_target(file_path, target)
+                                    ):
+                                        total_size += os.path.getsize(file_path)
+                                        matched_files += 1
+                                except (PermissionError, FileNotFoundError):
+                                    pass
+
+                        if total_size > 0:
+                            self._append_additional_scan_item(
+                                results,
+                                category,
+                                path,
+                                total_size,
+                                target,
+                                seen_paths,
+                                file_count=matched_files,
+                            )
+                    else:
+                        for root, _, files in os.walk(path):
+                            for file_name in files:
+                                file_path = os.path.join(root, file_name)
+                                try:
+                                    if (
+                                        os.path.isfile(file_path)
+                                        and self._matches_additional_target(file_path, target)
+                                    ):
+                                        self._append_additional_scan_item(
+                                            results,
+                                            category,
+                                            file_path,
+                                            os.path.getsize(file_path),
+                                            target,
+                                            seen_paths,
+                                        )
+                                except (PermissionError, FileNotFoundError):
+                                    pass
+                except (PermissionError, FileNotFoundError) as e:
+                    logger.warning(f"无法访问补充扫描目标 {path}: {e}")
+
+    def _matches_additional_target(self, file_path, target):
+        normalized_path = file_path.replace('/', '\\').lower()
+        path_contains = target.get('path_contains') or []
+        if path_contains:
+            if not any(fragment.lower() in normalized_path for fragment in path_contains):
+                return False
+
+        patterns = target.get('patterns') or []
+        if not patterns:
+            return True
+
+        file_name = os.path.basename(file_path)
+        return any(
+            fnmatch.fnmatch(file_name.lower(), pattern.lower())
+            for pattern in patterns
+        )
+
+    def _append_additional_scan_item(
+        self,
+        results,
+        category,
+        path,
+        size,
+        target,
+        seen_paths,
+        file_count=None,
+    ):
+        if path in seen_paths or size <= 0:
+            return
+
+        item = {
+            'path': path,
+            'size': size,
+            'type': category,
+            'scan_only': target.get('scan_only', True),
+        }
+        if file_count is not None:
+            item['file_count'] = file_count
+        results[category].append(item)
+        seen_paths.add(path)
+
     def _scan_large_files(self, results):
         """扫描C盘中的大文件"""
         # 大文件的最小大小（100MB）
@@ -1761,6 +2148,14 @@ class CleanerLogic:
                 # 更新进度
                 if progress_callback:
                     progress_callback.emit(path, i + 1)
+
+                if item.get('scan_only'):
+                    logger.info(f"跳过仅扫描项目: {path}")
+                    results['errors'].append({
+                        'path': path,
+                        'error': '仅扫描项，未清理'
+                    })
+                    continue
 
                 # 检查路径安全性
                 if not self._is_safe_path(path):

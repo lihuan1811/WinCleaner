@@ -6,7 +6,7 @@ from setuptools import setup, find_packages
 setup(
     name="c-drive-cleaner",
     version="1.0.0",
-    description="一个安全高效的C盘文件清理软件",
+    description="一个安全高效的C盘清理精灵",
     author="Your Name",
     author_email="your.email@example.com",
     url="https://github.com/yourusername/c-drive-cleaner",
@@ -18,7 +18,7 @@ setup(
     ],
     entry_points={
         "console_scripts": [
-            "c-drive-cleaner=main:main",
+            "c-drive-cleaner=cleaner_ui:main",
         ],
     },
     classifiers=[

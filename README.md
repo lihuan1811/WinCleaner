@@ -1,12 +1,12 @@
 <div align="center">
 
-# C盘清理工具 (C Drive Cleaner)
+# C盘清理精灵 (C Drive Cleaner)
 
 <img src="https://img.shields.io/badge/platform-Windows-blue" alt="Platform">
 <img src="https://img.shields.io/badge/language-Python-yellow" alt="Language">
 <img src="https://img.shields.io/badge/license-MIT-green" alt="License">
 
-**一个安全、高效、开源的Windows C盘清理工具**
+**一个安全、高效、开源的 Windows C 盘清理精灵**
 
 [English](README_EN.md) | 简体中文
 
@@ -14,7 +14,7 @@
 
 ## 🔥 项目简介
 
-C盘清理工具是一个专为Windows系统设计的开源清理软件，无需安装，可以快速、安全地清理C盘上的各类临时文件、缓存和垃圾文件，帮助用户释放宝贵的C盘空间。
+C盘清理精灵是一个专为Windows系统设计的开源清理软件，无需安装，可以快速、安全地扫描并清理C盘上的各类临时文件、缓存和垃圾文件，帮助用户释放宝贵的C盘空间。
 
 与其他清理工具不同，本工具特别注重安全性，采用多重安全检查机制，确保不会删除系统和应用程序正常运行所需的文件。同时，它还提供了完善的备份和恢复功能，让用户可以放心清理。
 
@@ -101,7 +101,7 @@ C盘清理工具是一个专为Windows系统设计的开源清理软件，无需
 1. 前往 [Releases](https://github.com/JIEKE66633/One-click-cleaning-of-C-drive/releases) 页面
 2. 下载最新版本的压缩包
 3. 解压缩到任意位置
-4. 双击“启动C盘清理工具.bat”文件运行程序
+4. 双击“启动C盘清理工具.bat”文件运行 Qt 版程序
 
 ### 方法二：从源代码运行
 
@@ -122,7 +122,7 @@ pip install -r requirements.txt
 
 4. 运行程序：
 ```bash
-python main.py
+python cleaner_ui.py
 ```
 
 ## 📚 使用指南

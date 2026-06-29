@@ -1,5 +1,5 @@
 """
-打包C盘清理工具为EXE文件
+打包C盘清理精灵为EXE文件
 """
 
 import os
@@ -7,7 +7,8 @@ import shutil
 import subprocess
 import sys
 
-APP_NAME = 'C盘清理工具'
+APP_NAME = 'C盘清理精灵'
+ENTRY_SCRIPT = 'cleaner_ui.py'
 
 
 def build_pyinstaller_command():
@@ -24,13 +25,13 @@ def build_pyinstaller_command():
         f'--add-data=rules{add_data_separator}rules',
         '--noconfirm',
         '--clean',
-        'main.py',
+        ENTRY_SCRIPT,
     ]
 
 
 def build_exe():
     """使用PyInstaller打包应用为EXE文件"""
-    print("开始打包C盘清理工具为EXE文件...")
+    print("开始打包C盘清理精灵为EXE文件...")
     
     # 创建输出目录
     if not os.path.exists('dist'):
@@ -55,10 +56,10 @@ def build_exe():
         shutil.copy2(exe_path, os.path.join(package_dir, f'{APP_NAME}.exe'))
 
     # 创建启动批处理文件
-    with open(os.path.join(package_dir, '启动C盘清理工具.bat'), 'w', encoding='utf-8') as f:
+    with open(os.path.join(package_dir, '启动C盘清理精灵.bat'), 'w', encoding='utf-8') as f:
         f.write('@echo off\n')
-        f.write('echo 正在启动C盘清理工具...\n')
-        f.write('start "" "%~dp0C盘清理工具.exe"\n')
+        f.write('echo 正在启动C盘清理精灵...\n')
+        f.write('start "" "%~dp0C盘清理精灵.exe"\n')
     
     print("已创建启动批处理文件")
     

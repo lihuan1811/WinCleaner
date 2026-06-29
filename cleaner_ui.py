@@ -5,9 +5,9 @@
 C盘清理工具 - 用户界面
 """
 
-import os
 import sys
-from PyQt5.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
+import os
+from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
                             QPushButton, QLabel, QProgressBar, QCheckBox, 
                             QTreeWidget, QTreeWidgetItem, QMessageBox, 
                             QFileDialog, QGroupBox, QSpacerItem, QSizePolicy)
@@ -15,6 +15,8 @@ from PyQt5.QtCore import Qt, QThread, pyqtSignal, QSize
 from PyQt5.QtGui import QIcon, QFont
 
 from cleaner_logic import CleanerLogic
+from category_display import category_tree_label
+from config import APP_NAME
 
 class ScanThread(QThread):
     """扫描线程，避免UI冻结"""
@@ -55,13 +57,24 @@ class CleanerMainWindow(QMainWindow):
         self.cleaner = CleanerLogic()
         self.scan_results = {}
         self.selected_items = []
+        self.app_icon = self._load_app_icon()
         
         self.init_ui()
+
+    def _load_app_icon(self):
+        icon_path = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)),
+            "icons",
+            "cleaner.ico",
+        )
+        return QIcon(icon_path) if os.path.exists(icon_path) else QIcon()
         
     def init_ui(self):
         """初始化用户界面"""
-        self.setWindowTitle("C盘清理工具")
+        self.setWindowTitle(APP_NAME)
         self.setMinimumSize(800, 600)
+        if not self.app_icon.isNull():
+            self.setWindowIcon(self.app_icon)
         
         # 主布局
         central_widget = QWidget()
@@ -182,7 +195,33 @@ class CleanerMainWindow(QMainWindow):
             'updates': "Windows更新缓存",
             'thumbnails': "缩略图缓存",
             'downloads': "下载文件夹",
-            'dismpp_rules': "Dism++规则"
+            'dismpp_rules': "Dism++规则",
+            'edge_webview_cache': "Edge/WebView内核缓存",
+            'edge_profile_state': "Edge用户状态文件",
+            'edge_component_updates': "Edge组件旧版本",
+            'edgecore_old_versions': "EdgeCore旧版本更新",
+            'panther_setup_logs': "安装过程日志",
+            'service_profile_temp': "系统服务临时文件",
+            'drvpath_driver_packages': "DrvPath驱动残留",
+            'intel_logs': "Intel残留日志",
+            'explorer_runtime_cache': "Explorer运行缓存",
+            'legacy_ie_cache': "IE/系统Web缓存",
+            'appx_package_cache': "AppData Packages缓存",
+            'third_party_app_logs': "第三方组件日志",
+            'windows_extra_logs': "Windows扩展日志",
+            'sleepstudy_wdi_traces': "SleepStudy/WDI事件跟踪",
+            'windowsapps_cleanup_candidates': "WindowsApps精简候选",
+            'windows_update_lcu_backup': "Windows更新备份",
+            'windows_update_signature_cache': "Windows Update签名缓存",
+            'windows_search_index_cache': "Windows搜索索引缓存",
+            'defender_definition_backup': "Defender更新备份",
+            'defender_support_logs': "Defender Support",
+            'defender_history': "Defender保护历史",
+            'defender_quarantine': "Defender隔离区",
+            'winsxs_backup': "WinSxS Backup",
+            'winsxs_catalogs': "WinSxS Catalogs",
+            'winsxs_onedrive_setup': "WinSxS OneDrive安装程序",
+            'winsxs_component_store': "WinSxS组件存储"
         }
         
         for category, items in results.items():
@@ -190,11 +229,13 @@ class CleanerMainWindow(QMainWindow):
                 continue
                 
             category_size = sum(item['size'] for item in items)
-            category_name = categories.get(category, category)
+            category_name = category_tree_label(category)
             
             category_item = QTreeWidgetItem(self.results_tree)
             category_item.setText(0, category_name)
             category_item.setText(1, self.format_size(category_size))
+            if not self.app_icon.isNull():
+                category_item.setIcon(0, self.app_icon)
             category_item.setFlags(category_item.flags() | Qt.ItemIsUserCheckable)
             category_item.setCheckState(0, Qt.Unchecked)
             
@@ -330,3 +371,15 @@ class CleanerMainWindow(QMainWindow):
             return f"{size_bytes/(1024*1024):.2f} MB"
         else:
             return f"{size_bytes/(1024*1024*1024):.2f} GB"
+
+
+def main():
+    """Qt应用入口，用于源码运行和PyInstaller打包。"""
+    app = QApplication(sys.argv)
+    window = CleanerMainWindow()
+    window.show()
+    sys.exit(app.exec_())
+
+
+if __name__ == '__main__':
+    main()

@@ -6,7 +6,7 @@
 <img src="https://img.shields.io/badge/language-Python-yellow" alt="Language">
 <img src="https://img.shields.io/badge/license-MIT-green" alt="License">
 
-**A safe, efficient, and open-source Windows C drive cleaning tool**
+**A safe, efficient, Python Qt Windows C drive cleaning tool**
 
 [English](README_EN.md) | [简体中文](README.md)
 
@@ -14,7 +14,7 @@
 
 ## 🔥 Introduction
 
-C Drive Cleaner is an open-source cleaning software designed specifically for Windows systems. It requires no installation and can quickly and safely clean various temporary files, caches, and junk files on your C drive, helping users free up valuable disk space.
+C Drive Cleaner is an open-source Python Qt cleaning software designed specifically for Windows systems. It requires no installation and can quickly and safely scan and clean temporary files, caches, and junk files on your C drive, helping users free up valuable disk space.
 
 Unlike other cleaning tools, this tool places special emphasis on safety, employing multiple safety check mechanisms to ensure that files necessary for the normal operation of the system and applications are not deleted. At the same time, it also provides comprehensive backup and recovery functions, allowing users to clean with peace of mind.
 
@@ -129,7 +129,7 @@ pip install -r requirements.txt
 
 4. Run the program:
 ```bash
-python main.py
+python cleaner_ui.py
 ```
 
 ## 📚 Usage Guide
