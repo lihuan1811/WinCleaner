@@ -5,18 +5,209 @@
 C盘清理工具 - 用户界面
 """
 
-import sys
 import os
-from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
-                            QPushButton, QLabel, QProgressBar, QCheckBox, 
-                            QTreeWidget, QTreeWidgetItem, QMessageBox, 
-                            QFileDialog, QGroupBox, QSpacerItem, QSizePolicy)
+import sys
+from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
+                            QPushButton, QLabel, QProgressBar, QCheckBox,
+                            QTreeWidget, QTreeWidgetItem, QMessageBox,
+                            QFrame, QGridLayout)
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QSize
-from PyQt5.QtGui import QIcon, QFont
+from PyQt5.QtGui import QIcon, QFont, QPixmap
 
 from cleaner_logic import CleanerLogic
 from category_display import category_tree_label
 from config import APP_NAME
+
+
+APP_DISPLAY_NAME = "C盘清理精灵"
+
+
+APP_QSS = """
+QMainWindow {
+    background: #F3F7F5;
+}
+
+QWidget#appRoot {
+    background: #F3F7F5;
+    color: #1B2A22;
+    font-family: "Microsoft YaHei", "Segoe UI", "PingFang SC", Arial, sans-serif;
+    font-size: 13px;
+}
+
+QWidget#contentArea {
+    background: #F3F7F5;
+}
+
+QFrame#sidebar {
+    background: #35C878;
+    border: none;
+}
+
+QLabel#brandTitle {
+    color: #FFFFFF;
+    font-size: 18px;
+    font-weight: 700;
+}
+
+QLabel#brandSubtitle,
+QLabel#sidebarFooter {
+    color: rgba(255, 255, 255, 0.82);
+    font-size: 12px;
+}
+
+QPushButton#sidebarButton,
+QPushButton#sidebarButtonActive {
+    border: none;
+    border-radius: 6px;
+    color: #FFFFFF;
+    min-height: 36px;
+    padding: 0 14px;
+    text-align: left;
+}
+
+QPushButton#sidebarButton {
+    background: transparent;
+}
+
+QPushButton#sidebarButtonActive,
+QPushButton#sidebarButton:hover {
+    background: rgba(255, 255, 255, 0.18);
+}
+
+QFrame#heroPanel,
+QFrame#resultCard,
+QFrame#statusStrip {
+    background: #FFFFFF;
+    border: 1px solid #DDEBE3;
+    border-radius: 10px;
+}
+
+QLabel#heroTitle {
+    color: #15241C;
+    font-size: 22px;
+    font-weight: 700;
+}
+
+QLabel#heroSubtitle,
+QLabel#diskInfo,
+QLabel#resultSummary,
+QLabel#statusLabel,
+QLabel#selectedSummary {
+    color: #64766C;
+}
+
+QFrame#statBlock {
+    background: #F6FAF7;
+    border: 1px solid #E3EFE7;
+    border-radius: 8px;
+}
+
+QLabel#statTitle {
+    color: #6C7C73;
+    font-size: 12px;
+}
+
+QLabel#statValue {
+    color: #18281F;
+    font-size: 16px;
+    font-weight: 700;
+}
+
+QPushButton#scanPrimaryButton {
+    background: #35C878;
+    border: none;
+    border-radius: 6px;
+    color: #FFFFFF;
+    font-size: 15px;
+    font-weight: 700;
+    min-height: 42px;
+    padding: 0 24px;
+}
+
+QPushButton#scanPrimaryButton:hover {
+    background: #2DBA6E;
+}
+
+QPushButton#scanPrimaryButton:disabled {
+    background: #A7DDBF;
+}
+
+QPushButton#cleanSecondaryButton {
+    background: #FFFFFF;
+    border: 1px solid #35C878;
+    border-radius: 6px;
+    color: #168F4E;
+    font-size: 14px;
+    font-weight: 700;
+    min-height: 38px;
+    padding: 0 22px;
+}
+
+QPushButton#cleanSecondaryButton:hover {
+    background: #ECFAF1;
+}
+
+QPushButton#cleanSecondaryButton:disabled {
+    border-color: #CBDDD2;
+    color: #91A79A;
+    background: #F8FBF9;
+}
+
+QProgressBar#scanProgress {
+    background: #E7F2EB;
+    border: none;
+    border-radius: 7px;
+    height: 14px;
+    text-align: center;
+}
+
+QProgressBar#scanProgress::chunk {
+    background: #35C878;
+    border-radius: 7px;
+}
+
+QLabel#resultTitle {
+    color: #18281F;
+    font-size: 17px;
+    font-weight: 700;
+}
+
+QTreeWidget#resultTree {
+    background: #FFFFFF;
+    border: none;
+    color: #1F2C25;
+    alternate-background-color: #F7FBF8;
+    outline: 0;
+    selection-background-color: #CFEFDE;
+    selection-color: #17241C;
+}
+
+QTreeWidget#resultTree::item {
+    min-height: 30px;
+    padding: 4px 2px;
+}
+
+QHeaderView::section {
+    background: #F3F8F5;
+    border: none;
+    border-bottom: 1px solid #DDEBE3;
+    color: #607267;
+    font-weight: 700;
+    min-height: 32px;
+    padding-left: 8px;
+}
+
+QCheckBox {
+    color: #384A40;
+    spacing: 8px;
+}
+
+QCheckBox::indicator {
+    height: 16px;
+    width: 16px;
+}
+"""
+
 
 class ScanThread(QThread):
     """扫描线程，避免UI冻结"""
@@ -68,72 +259,243 @@ class CleanerMainWindow(QMainWindow):
             "cleaner.ico",
         )
         return QIcon(icon_path) if os.path.exists(icon_path) else QIcon()
-        
+
+    def _load_logo_pixmap(self):
+        logo_path = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)),
+            "icons",
+            "cleaner.png",
+        )
+        return QPixmap(logo_path) if os.path.exists(logo_path) else QPixmap()
+
+    def _make_sidebar_button(self, text, active=False):
+        button = QPushButton(text)
+        button.setObjectName("sidebarButtonActive" if active else "sidebarButton")
+        button.setCursor(Qt.PointingHandCursor)
+        return button
+
+    def _build_sidebar(self):
+        sidebar = QFrame()
+        sidebar.setObjectName("sidebar")
+        sidebar.setFixedWidth(154)
+
+        layout = QVBoxLayout(sidebar)
+        layout.setContentsMargins(16, 18, 16, 16)
+        layout.setSpacing(12)
+
+        logo_row = QHBoxLayout()
+        logo_row.setSpacing(10)
+
+        logo_label = QLabel()
+        logo_label.setFixedSize(44, 44)
+        logo_pixmap = self._load_logo_pixmap()
+        if not logo_pixmap.isNull():
+            logo_label.setPixmap(logo_pixmap.scaled(44, 44, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+        elif not self.app_icon.isNull():
+            logo_label.setPixmap(self.app_icon.pixmap(QSize(44, 44)))
+        else:
+            logo_label.setText("C")
+            logo_label.setAlignment(Qt.AlignCenter)
+
+        brand_col = QVBoxLayout()
+        brand_col.setSpacing(2)
+        brand_title = QLabel("C盘")
+        brand_title.setObjectName("brandTitle")
+        brand_subtitle = QLabel("清理精灵")
+        brand_subtitle.setObjectName("brandSubtitle")
+        brand_col.addWidget(brand_title)
+        brand_col.addWidget(brand_subtitle)
+
+        logo_row.addWidget(logo_label)
+        logo_row.addLayout(brand_col, 1)
+        layout.addLayout(logo_row)
+        layout.addSpacing(12)
+
+        for text, active in [
+            ("一键清理", True),
+            ("系统优化", False),
+            ("软件卸载", False),
+            ("工具管理", False),
+        ]:
+            layout.addWidget(self._make_sidebar_button(text, active))
+
+        layout.addStretch(1)
+
+        footer = QLabel("推荐模式\n路径统计")
+        footer.setObjectName("sidebarFooter")
+        footer.setAlignment(Qt.AlignLeft | Qt.AlignBottom)
+        layout.addWidget(footer)
+
+        return sidebar
+
+    def _make_stat_block(self, title, value="--"):
+        frame = QFrame()
+        frame.setObjectName("statBlock")
+        frame.setMinimumWidth(112)
+
+        layout = QVBoxLayout(frame)
+        layout.setContentsMargins(12, 10, 12, 10)
+        layout.setSpacing(4)
+
+        title_label = QLabel(title)
+        title_label.setObjectName("statTitle")
+        value_label = QLabel(value)
+        value_label.setObjectName("statValue")
+
+        layout.addWidget(title_label)
+        layout.addWidget(value_label)
+
+        return frame, value_label
+
     def init_ui(self):
         """初始化用户界面"""
-        self.setWindowTitle(APP_NAME)
-        self.setMinimumSize(800, 600)
+        self.setWindowTitle(APP_DISPLAY_NAME or APP_NAME)
+        self.setMinimumSize(920, 640)
+        self.resize(980, 680)
         if not self.app_icon.isNull():
             self.setWindowIcon(self.app_icon)
-        
-        # 主布局
+        self.setStyleSheet(APP_QSS)
+
         central_widget = QWidget()
-        main_layout = QVBoxLayout(central_widget)
-        
-        # 顶部信息区域
-        info_group = QGroupBox("系统信息")
-        info_layout = QVBoxLayout(info_group)
-        
+        central_widget.setObjectName("appRoot")
+
+        shell_layout = QHBoxLayout(central_widget)
+        shell_layout.setContentsMargins(0, 0, 0, 0)
+        shell_layout.setSpacing(0)
+
+        shell_layout.addWidget(self._build_sidebar())
+
+        content_area = QWidget()
+        content_area.setObjectName("contentArea")
+        content_layout = QVBoxLayout(content_area)
+        content_layout.setContentsMargins(20, 18, 20, 18)
+        content_layout.setSpacing(14)
+        shell_layout.addWidget(content_area, 1)
+
+        hero_panel = QFrame()
+        hero_panel.setObjectName("heroPanel")
+        hero_layout = QHBoxLayout(hero_panel)
+        hero_layout.setContentsMargins(18, 16, 18, 16)
+        hero_layout.setSpacing(18)
+
+        hero_text = QVBoxLayout()
+        hero_text.setSpacing(6)
+
+        hero_title = QLabel(APP_DISPLAY_NAME)
+        hero_title.setObjectName("heroTitle")
+        hero_subtitle = QLabel("扫描缓存、日志、更新残留、EdgeCore 和 AppData 路径")
+        hero_subtitle.setObjectName("heroSubtitle")
         self.disk_info_label = QLabel("C盘使用情况: 正在加载...")
-        info_layout.addWidget(self.disk_info_label)
-        
-        # 扫描和清理按钮区域
-        button_layout = QHBoxLayout()
-        
-        self.scan_button = QPushButton("扫描系统")
-        self.scan_button.setMinimumHeight(40)
+        self.disk_info_label.setObjectName("diskInfo")
+        self.disk_info_label.setWordWrap(True)
+
+        hero_text.addWidget(hero_title)
+        hero_text.addWidget(hero_subtitle)
+        hero_text.addWidget(self.disk_info_label)
+        hero_layout.addLayout(hero_text, 2)
+
+        stat_grid = QGridLayout()
+        stat_grid.setContentsMargins(0, 0, 0, 0)
+        stat_grid.setHorizontalSpacing(10)
+        stat_grid.setVerticalSpacing(10)
+
+        total_block, self.total_value_label = self._make_stat_block("总空间")
+        used_block, self.used_value_label = self._make_stat_block("已用空间")
+        free_block, self.free_value_label = self._make_stat_block("可用空间")
+        cleanable_block, self.cleanable_value_label = self._make_stat_block("可释放", "0 B")
+
+        stat_grid.addWidget(total_block, 0, 0)
+        stat_grid.addWidget(used_block, 0, 1)
+        stat_grid.addWidget(free_block, 1, 0)
+        stat_grid.addWidget(cleanable_block, 1, 1)
+        hero_layout.addLayout(stat_grid, 3)
+
+        action_layout = QVBoxLayout()
+        action_layout.setSpacing(10)
+
+        self.scan_button = QPushButton("一键扫描")
+        self.scan_button.setObjectName("scanPrimaryButton")
+        self.scan_button.setCursor(Qt.PointingHandCursor)
+        if not self.app_icon.isNull():
+            self.scan_button.setIcon(self.app_icon)
+            self.scan_button.setIconSize(QSize(18, 18))
         self.scan_button.clicked.connect(self.start_scan)
         
-        self.clean_button = QPushButton("清理选中项")
-        self.clean_button.setMinimumHeight(40)
+        self.clean_button = QPushButton("一键清理")
+        self.clean_button.setObjectName("cleanSecondaryButton")
+        self.clean_button.setCursor(Qt.PointingHandCursor)
+        self.clean_button.setToolTip("清理当前勾选的扫描结果")
         self.clean_button.setEnabled(False)
         self.clean_button.clicked.connect(self.start_clean)
+
+        action_layout.addWidget(self.scan_button)
+        action_layout.addWidget(self.clean_button)
+        action_layout.addStretch(1)
+        hero_layout.addLayout(action_layout)
         
-        button_layout.addWidget(self.scan_button)
-        button_layout.addWidget(self.clean_button)
-        
-        # 进度条
         self.progress_bar = QProgressBar()
+        self.progress_bar.setObjectName("scanProgress")
         self.progress_bar.setVisible(False)
-        self.status_label = QLabel("")
-        
-        # 结果树
-        self.results_tree = QTreeWidget()
-        self.results_tree.setHeaderLabels(["项目", "大小", "路径"])
-        self.results_tree.setColumnWidth(0, 250)
-        self.results_tree.setColumnWidth(1, 100)
-        self.results_tree.itemChanged.connect(self.on_item_changed)
-        
-        # 安全选项
-        safety_group = QGroupBox("安全选项")
-        safety_layout = QVBoxLayout(safety_group)
-        
-        self.simulate_checkbox = QCheckBox("模拟模式 (不实际删除文件)")
+
+        result_card = QFrame()
+        result_card.setObjectName("resultCard")
+        result_layout = QVBoxLayout(result_card)
+        result_layout.setContentsMargins(16, 14, 16, 14)
+        result_layout.setSpacing(10)
+
+        result_header = QHBoxLayout()
+        result_header.setSpacing(12)
+
+        result_title = QLabel("扫描结果")
+        result_title.setObjectName("resultTitle")
+        self.result_summary_label = QLabel("等待扫描")
+        self.result_summary_label.setObjectName("resultSummary")
+
+        result_header.addWidget(result_title)
+        result_header.addWidget(self.result_summary_label, 1)
+
+        self.simulate_checkbox = QCheckBox("模拟模式")
+        self.simulate_checkbox.setToolTip("默认不实际删除文件")
         self.simulate_checkbox.setChecked(True)
-        
-        self.backup_checkbox = QCheckBox("删除前备份文件")
+
+        self.backup_checkbox = QCheckBox("删除前备份")
         self.backup_checkbox.setChecked(True)
-        
-        safety_layout.addWidget(self.simulate_checkbox)
-        safety_layout.addWidget(self.backup_checkbox)
-        
-        # 添加所有组件到主布局
-        main_layout.addWidget(info_group)
-        main_layout.addLayout(button_layout)
-        main_layout.addWidget(self.progress_bar)
-        main_layout.addWidget(self.status_label)
-        main_layout.addWidget(self.results_tree)
-        main_layout.addWidget(safety_group)
+
+        result_header.addWidget(self.simulate_checkbox)
+        result_header.addWidget(self.backup_checkbox)
+        result_layout.addLayout(result_header)
+
+        self.results_tree = QTreeWidget()
+        self.results_tree.setObjectName("resultTree")
+        self.results_tree.setHeaderLabels(["项目", "大小", "路径"])
+        self.results_tree.setColumnWidth(0, 310)
+        self.results_tree.setColumnWidth(1, 110)
+        self.results_tree.setAlternatingRowColors(True)
+        self.results_tree.setIndentation(22)
+        self.results_tree.setUniformRowHeights(True)
+        self.results_tree.header().setStretchLastSection(True)
+        self.results_tree.itemChanged.connect(self.on_item_changed)
+        result_layout.addWidget(self.results_tree, 1)
+
+        status_strip = QFrame()
+        status_strip.setObjectName("statusStrip")
+        status_layout = QHBoxLayout(status_strip)
+        status_layout.setContentsMargins(14, 8, 14, 8)
+        status_layout.setSpacing(12)
+
+        self.status_label = QLabel("准备扫描 C 盘可清理路径")
+        self.status_label.setObjectName("statusLabel")
+        self.selected_summary_label = QLabel("已选 0 项 / 0 B")
+        self.selected_summary_label.setObjectName("selectedSummary")
+        self.selected_summary_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+
+        status_layout.addWidget(self.status_label, 1)
+        status_layout.addWidget(self.selected_summary_label)
+
+        content_layout.addWidget(hero_panel)
+        content_layout.addWidget(self.progress_bar)
+        content_layout.addWidget(result_card, 1)
+        content_layout.addWidget(status_strip)
         
         self.setCentralWidget(central_widget)
         
@@ -148,14 +510,21 @@ class CleanerMainWindow(QMainWindow):
             f"已用空间: {disk_info['used']:.2f} GB ({disk_info['percent']}%) | "
             f"可用空间: {disk_info['free']:.2f} GB"
         )
+        self.total_value_label.setText(f"{disk_info['total']:.2f} GB")
+        self.used_value_label.setText(f"{disk_info['used']:.2f} GB")
+        self.free_value_label.setText(f"{disk_info['free']:.2f} GB")
     
     def start_scan(self):
         """开始扫描系统"""
         self.scan_button.setEnabled(False)
+        self.scan_button.setText("扫描中...")
         self.clean_button.setEnabled(False)
         self.results_tree.clear()
         self.progress_bar.setVisible(True)
         self.progress_bar.setRange(0, 0)  # 不确定进度
+        self.cleanable_value_label.setText("0 B")
+        self.result_summary_label.setText("扫描进行中")
+        self.selected_summary_label.setText("已选 0 项 / 0 B")
         self.status_label.setText("正在扫描系统，请稍候...")
         
         # 启动扫描线程
@@ -168,61 +537,43 @@ class CleanerMainWindow(QMainWindow):
         self.scan_results = results
         self.progress_bar.setVisible(False)
         self.scan_button.setEnabled(True)
-        
-        if not results:
-            self.status_label.setText("扫描完成，未发现可清理项目")
-            return
-            
+        self.scan_button.setText("重新扫描")
+
+        total_items = sum(len(items) for items in results.values())
         total_size = sum(item['size'] for category in results.values() for item in category)
+        category_count = sum(1 for items in results.values() if items)
+        self.cleanable_value_label.setText(self.format_size(total_size))
+        self.result_summary_label.setText(
+            f"{category_count} 类 / {total_items} 项 / {self.format_size(total_size)}"
+        )
+
+        if not results or total_items == 0:
+            self.status_label.setText("扫描完成，未发现可清理项目")
+            self.update_selected_items()
+            return
+
         self.status_label.setText(f"扫描完成，发现可释放空间: {self.format_size(total_size)}")
         
         # 填充结果树
         self.populate_results_tree(results)
-        self.clean_button.setEnabled(True)
+        self.update_selected_items()
         
         # 更新磁盘信息
         self.update_disk_info()
+
+    @staticmethod
+    def display_name_from_path(path):
+        """从 Windows 或 POSIX 路径中提取用于树节点的短名称。"""
+        normalized = path.rstrip("\\/")
+        if not normalized:
+            return path
+        return normalized.replace("\\", "/").rsplit("/", 1)[-1] or normalized
     
     def populate_results_tree(self, results):
         """填充结果树"""
         self.results_tree.clear()
-        
-        categories = {
-            'temp': "临时文件",
-            'recycle': "回收站",
-            'cache': "浏览器缓存",
-            'logs': "系统日志",
-            'updates': "Windows更新缓存",
-            'thumbnails': "缩略图缓存",
-            'downloads': "下载文件夹",
-            'dismpp_rules': "Dism++规则",
-            'edge_webview_cache': "Edge/WebView内核缓存",
-            'edge_profile_state': "Edge用户状态文件",
-            'edge_component_updates': "Edge组件旧版本",
-            'edgecore_old_versions': "EdgeCore旧版本更新",
-            'panther_setup_logs': "安装过程日志",
-            'service_profile_temp': "系统服务临时文件",
-            'drvpath_driver_packages': "DrvPath驱动残留",
-            'intel_logs': "Intel残留日志",
-            'explorer_runtime_cache': "Explorer运行缓存",
-            'legacy_ie_cache': "IE/系统Web缓存",
-            'appx_package_cache': "AppData Packages缓存",
-            'third_party_app_logs': "第三方组件日志",
-            'windows_extra_logs': "Windows扩展日志",
-            'sleepstudy_wdi_traces': "SleepStudy/WDI事件跟踪",
-            'windowsapps_cleanup_candidates': "WindowsApps精简候选",
-            'windows_update_lcu_backup': "Windows更新备份",
-            'windows_update_signature_cache': "Windows Update签名缓存",
-            'windows_search_index_cache': "Windows搜索索引缓存",
-            'defender_definition_backup': "Defender更新备份",
-            'defender_support_logs': "Defender Support",
-            'defender_history': "Defender保护历史",
-            'defender_quarantine': "Defender隔离区",
-            'winsxs_backup': "WinSxS Backup",
-            'winsxs_catalogs': "WinSxS Catalogs",
-            'winsxs_onedrive_setup': "WinSxS OneDrive安装程序",
-            'winsxs_component_store': "WinSxS组件存储"
-        }
+        category_font = QFont()
+        category_font.setBold(True)
         
         for category, items in results.items():
             if not items:
@@ -234,16 +585,20 @@ class CleanerMainWindow(QMainWindow):
             category_item = QTreeWidgetItem(self.results_tree)
             category_item.setText(0, category_name)
             category_item.setText(1, self.format_size(category_size))
+            category_item.setText(2, f"{len(items)} 项路径")
+            category_item.setFont(0, category_font)
+            category_item.setFont(1, category_font)
             if not self.app_icon.isNull():
                 category_item.setIcon(0, self.app_icon)
             category_item.setFlags(category_item.flags() | Qt.ItemIsUserCheckable)
             category_item.setCheckState(0, Qt.Unchecked)
             
             for item in items:
+                item_path = item['path']
                 file_item = QTreeWidgetItem(category_item)
-                file_item.setText(0, os.path.basename(item['path']))
+                file_item.setText(0, self.display_name_from_path(item_path))
                 file_item.setText(1, self.format_size(item['size']))
-                file_item.setText(2, item['path'])
+                file_item.setText(2, item_path)
                 file_item.setFlags(file_item.flags() | Qt.ItemIsUserCheckable)
                 file_item.setCheckState(0, Qt.Unchecked)
                 file_item.setData(0, Qt.UserRole, item)
@@ -278,7 +633,10 @@ class CleanerMainWindow(QMainWindow):
                     if item_data:
                         self.selected_items.append(item_data)
         
-        # 更新清理按钮状态
+        selected_size = sum(item['size'] for item in self.selected_items)
+        self.selected_summary_label.setText(
+            f"已选 {len(self.selected_items)} 项 / {self.format_size(selected_size)}"
+        )
         self.clean_button.setEnabled(len(self.selected_items) > 0)
     
     def start_clean(self):
@@ -311,6 +669,7 @@ class CleanerMainWindow(QMainWindow):
         # 开始清理
         self.scan_button.setEnabled(False)
         self.clean_button.setEnabled(False)
+        self.clean_button.setText("清理中...")
         self.progress_bar.setVisible(True)
         self.progress_bar.setValue(0)
         self.progress_bar.setRange(0, len(self.selected_items))
@@ -325,12 +684,14 @@ class CleanerMainWindow(QMainWindow):
     def on_clean_progress(self, file_path, progress):
         """清理进度更新"""
         self.progress_bar.setValue(progress)
-        self.status_label.setText(f"正在清理: {os.path.basename(file_path)}")
+        self.status_label.setText(f"正在清理: {self.display_name_from_path(file_path)}")
     
     def on_clean_finished(self, results):
         """清理完成后的处理"""
         self.progress_bar.setVisible(False)
         self.scan_button.setEnabled(True)
+        self.scan_button.setText("重新扫描")
+        self.clean_button.setText("一键清理")
         
         freed_space = results.get('freed_space', 0)
         errors = results.get('errors', [])
@@ -344,6 +705,7 @@ class CleanerMainWindow(QMainWindow):
             message += f"，{len(errors)} 个错误"
         
         self.status_label.setText(message)
+        self.update_selected_items()
         
         # 如果有错误，显示错误日志
         if errors:
