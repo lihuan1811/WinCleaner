@@ -1,5 +1,7 @@
 import 'dart:io';
 
+import 'package:flutter/foundation.dart' show kIsWeb;
+
 import '../models/installed_app.dart';
 
 typedef UninstallProcessRunner = Future<ProcessResult> Function(
@@ -107,7 +109,7 @@ class UninstallService {
   final bool? _isWindowsOverride;
   final UninstallProcessRunner _processRunner;
 
-  bool get _isWindows => _isWindowsOverride ?? Platform.isWindows;
+  bool get _isWindows => _isWindowsOverride ?? (!kIsWeb && Platform.isWindows);
 
   Future<Process> launch(String rawCommand) {
     if (!_isWindows) {

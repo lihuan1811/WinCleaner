@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 
 import '../services/ad_block_service.dart';
@@ -439,7 +440,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
             children: [
               Expanded(
                 child: _ToolCard(
-                  icon: Icons.block_outlined,
+                  icon: Icons.gpp_maybe_outlined,
                   title: '广告清理',
                   subtitle: '写入 hosts 屏蔽广告域名',
                   onTap: _openAdBlockTool,
@@ -448,7 +449,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
               const SizedBox(width: 24),
               Expanded(
                 child: _ToolCard(
-                  icon: Icons.copy_outlined,
+                  icon: Icons.content_copy_outlined,
                   title: '重复文件',
                   subtitle: '按 SHA-256 识别重复文件',
                   onTap: _openDuplicateTool,
@@ -466,7 +467,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
               const SizedBox(width: 24),
               Expanded(
                 child: _ToolCard(
-                  icon: Icons.grid_view_outlined,
+                  icon: Icons.storage_outlined,
                   title: '碎片整理',
                   subtitle: '调用 Windows 磁盘优化',
                   onTap: _openDiskOptimizationTool,
@@ -608,13 +609,13 @@ class SystemOptimizationScreen extends StatelessWidget {
           onTap: () => _openWindowsOptimizationTool(context),
         ),
         _ToolCard(
-          icon: Icons.block_outlined,
+          icon: Icons.gpp_maybe_outlined,
           title: '广告清理',
           subtitle: '写入 hosts 规则，屏蔽常见广告域名',
           onTap: () => _openAdBlockTool(context),
         ),
         _ToolCard(
-          icon: Icons.grid_view_outlined,
+          icon: Icons.storage_outlined,
           title: '碎片整理',
           subtitle: '调用 Windows defrag 分析和优化磁盘',
           onTap: () => _openDiskOptimizationTool(context),
@@ -644,7 +645,7 @@ class SystemOptimizationScreen extends StatelessWidget {
           onTap: () => _openScheduledTaskTool(context),
         ),
         _ToolCard(
-          icon: Icons.storefront_outlined,
+          icon: Icons.cloud_download_outlined,
           title: '规则商店',
           subtitle: '下载 c_cleaner_plus 清理规则包 JSON',
           onTap: () => _openRuleStore(context),
@@ -741,7 +742,7 @@ class FileManagementScreen extends StatelessWidget {
           onTap: () => _openDiskFileManager(context),
         ),
         _ToolCard(
-          icon: Icons.copy_outlined,
+          icon: Icons.content_copy_outlined,
           title: '重复文件',
           subtitle: '按文件大小和 SHA-256 查找重复副本',
           onTap: () => _openDuplicateTool(context),
@@ -827,17 +828,23 @@ class _SectionHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return GlassPanel(
-      width: double.infinity,
-      padding: const EdgeInsets.all(28),
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 4),
       child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          const FeatureIcon(
+            icon: Icons.space_dashboard_outlined,
+            size: 44,
+            iconSize: 21,
+          ),
+          const SizedBox(width: 14),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(title, style: Theme.of(context).textTheme.headlineMedium),
-                const SizedBox(height: 8),
+                const SizedBox(height: 6),
                 Text(
                   subtitle,
                   style: const TextStyle(
@@ -848,12 +855,6 @@ class _SectionHeader extends StatelessWidget {
                 ),
               ],
             ),
-          ),
-          const FeatureIcon(
-            icon: Icons.north_east,
-            size: 54,
-            iconSize: 22,
-            selected: true,
           ),
         ],
       ),
@@ -936,18 +937,40 @@ class _StorageCard extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  '系统存储监控',
-                  style: Theme.of(context).textTheme.headlineMedium,
+                Row(
+                  children: [
+                    const _CleanerAppLogo(),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'C盘清理扫描',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: Theme.of(context).textTheme.headlineMedium,
+                          ),
+                          const SizedBox(height: 4),
+                          const Text(
+                            '扫描缓存、日志、更新残留和 AppData 路径',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(color: AppColors.muted),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
                 ),
-                const SizedBox(height: 10),
+                const SizedBox(height: 14),
                 Text(
                   loading
                       ? '正在读取驱动器 C: 的实时状态'
                       : currentStatus?.healthMessage ?? '等待读取驱动器 C:',
                   style: const TextStyle(color: AppColors.muted),
                 ),
-                const SizedBox(height: 34),
+                const SizedBox(height: 24),
                 Wrap(
                   spacing: 30,
                   runSpacing: 16,
@@ -976,6 +999,10 @@ class _StorageCard extends StatelessWidget {
                 if (scanning || cleaning) ...[
                   const SizedBox(height: 16),
                   const LinearProgressIndicator(minHeight: 4),
+                ],
+                if (scanResult != null) ...[
+                  const SizedBox(height: 18),
+                  _ScanResultPreview(result: scanResult!),
                 ],
                 const SizedBox(height: 18),
                 Material(
@@ -1023,31 +1050,34 @@ class _StorageCard extends StatelessWidget {
                         style: TextStyle(fontWeight: FontWeight.w800),
                       ),
                     ),
-                    const SizedBox(width: 18),
-                    FilledButton.icon(
-                      style: FilledButton.styleFrom(
-                        fixedSize: const Size(150, 62),
-                        foregroundColor: AppColors.primaryDark,
-                        backgroundColor: AppColors.paleBlue,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(16),
+                    Tooltip(
+                      message: scanResult == null || scanResult!.totalBytes == 0
+                          ? '请先扫描可清理项目'
+                          : '执行已扫描项目的清理',
+                      child: FilledButton.icon(
+                        style: FilledButton.styleFrom(
+                          fixedSize: const Size(150, 62),
+                          foregroundColor: AppColors.primaryDark,
+                          backgroundColor: AppColors.paleBlue,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(10),
+                          ),
                         ),
+                        onPressed: scanning ||
+                                cleaning ||
+                                scanResult == null ||
+                                scanResult!.totalBytes == 0
+                            ? null
+                            : onClean,
+                        icon: const Icon(Icons.cleaning_services_outlined),
+                        label: Text(cleaning ? '清理中' : '一键清理'),
                       ),
-                      onPressed: scanning ||
-                              cleaning ||
-                              scanResult == null ||
-                              scanResult!.totalBytes == 0
-                          ? null
-                          : onClean,
-                      icon: const Icon(Icons.cleaning_services_outlined),
-                      label: Text(cleaning ? '清理中' : '一键清理'),
                     ),
-                    const SizedBox(width: 18),
                     OutlinedButton(
                       style: OutlinedButton.styleFrom(
                         fixedSize: const Size(150, 62),
                         shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(16),
+                          borderRadius: BorderRadius.circular(10),
                         ),
                       ),
                       onPressed: scanning || cleaning ? null : onReport,
@@ -1071,6 +1101,356 @@ class _StorageCard extends StatelessWidget {
       ),
     );
   }
+}
+
+class _CleanerAppLogo extends StatelessWidget {
+  const _CleanerAppLogo();
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      label: 'C盘清理扫描标识',
+      child: Container(
+        width: 54,
+        height: 54,
+        decoration: BoxDecoration(
+          color: AppColors.paleBlue,
+          border: Border.all(color: AppColors.border),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: const Stack(
+          alignment: Alignment.center,
+          children: [
+            Positioned(
+              left: 12,
+              bottom: 12,
+              child: Icon(
+                Icons.storage_outlined,
+                color: AppColors.primaryDark,
+                size: 27,
+              ),
+            ),
+            Positioned(
+              right: 10,
+              top: 10,
+              child: Icon(
+                Icons.manage_search,
+                color: AppColors.primary,
+                size: 25,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ScanResultPreview extends StatelessWidget {
+  const _ScanResultPreview({required this.result});
+
+  final CleanupScanResult result;
+
+  @override
+  Widget build(BuildContext context) {
+    final categories = [...result.categories]
+      ..sort((a, b) => b.totalBytes.compareTo(a.totalBytes));
+    final visible = categories.take(4).toList();
+
+    return Container(
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: AppColors.glassStrong,
+        border: Border.all(color: AppColors.border),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Column(
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.add_box_outlined,
+                  color: AppColors.primary, size: 18),
+              const SizedBox(width: 8),
+              const Expanded(
+                child: Text(
+                  '扫描路径统计',
+                  style: TextStyle(fontWeight: FontWeight.w800),
+                ),
+              ),
+              Text(
+                '${result.categories.length} 类',
+                style: const TextStyle(color: AppColors.muted, fontSize: 12),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          for (var index = 0; index < visible.length; index++) ...[
+            _ScanPreviewRow(category: visible[index]),
+            if (index != visible.length - 1)
+              const Divider(height: 10, color: AppColors.border),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _ScanPreviewRow extends StatelessWidget {
+  const _ScanPreviewRow({required this.category});
+
+  final CleanupCategoryResult category;
+
+  @override
+  Widget build(BuildContext context) {
+    return KeyedSubtree(
+      key: ValueKey('scan-preview-${category.id}'),
+      child: Row(
+        children: [
+          _CleanupTargetLogo(category: category, size: 34),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  category.name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w800,
+                    color: AppColors.text,
+                  ),
+                ),
+                Text(
+                  category.group,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: AppColors.muted,
+                    fontSize: 12,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Text(
+                _formatBytes(category.totalBytes),
+                style: const TextStyle(fontWeight: FontWeight.w900),
+              ),
+              _ScanStatusPill(label: category.canClean ? '可清理' : '仅扫描'),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ScanStatusPill extends StatelessWidget {
+  const _ScanStatusPill({required this.label});
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+      decoration: BoxDecoration(
+        color: AppColors.paleBlue,
+        border: Border.all(color: AppColors.border),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Text(
+        label,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: const TextStyle(
+          color: AppColors.primaryDark,
+          fontSize: 11,
+          fontWeight: FontWeight.w800,
+        ),
+      ),
+    );
+  }
+}
+
+class _CleanupTargetLogo extends StatelessWidget {
+  const _CleanupTargetLogo({required this.category, this.size = 42});
+
+  final CleanupCategoryResult category;
+  final double size;
+
+  @override
+  Widget build(BuildContext context) {
+    final spec = _cleanupLogoSpec(category);
+    final fontSize = size <= 36 ? 9.0 : 11.0;
+
+    return Semantics(
+      label: '${spec.semanticLabel}标识',
+      child: Container(
+        key: ValueKey('scan-logo-${spec.key}'),
+        width: size,
+        height: size,
+        decoration: BoxDecoration(
+          color: AppColors.glassStrong,
+          border: Border.all(color: AppColors.border),
+          borderRadius: BorderRadius.circular(size >= 40 ? 10 : 8),
+        ),
+        child: Stack(
+          alignment: Alignment.center,
+          children: [
+            Icon(
+              spec.icon,
+              color: AppColors.primary.withValues(alpha: .18),
+              size: size * .62,
+            ),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 3),
+              child: FittedBox(
+                fit: BoxFit.scaleDown,
+                child: Text(
+                  spec.label,
+                  maxLines: 1,
+                  style: TextStyle(
+                    color: AppColors.primaryDark,
+                    fontSize: fontSize,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _CleanupLogoSpec {
+  const _CleanupLogoSpec({
+    required this.key,
+    required this.label,
+    required this.icon,
+    required this.semanticLabel,
+  });
+
+  final String key;
+  final String label;
+  final IconData icon;
+  final String semanticLabel;
+}
+
+_CleanupLogoSpec _cleanupLogoSpec(CleanupCategoryResult category) {
+  final probe =
+      '${category.id} ${category.name} ${category.group}'.toLowerCase();
+  if (probe.contains('edge') || probe.contains('webview')) {
+    return const _CleanupLogoSpec(
+      key: 'edge',
+      label: 'Edge',
+      icon: Icons.language,
+      semanticLabel: 'Microsoft Edge',
+    );
+  }
+  if (probe.contains('chrome')) {
+    return const _CleanupLogoSpec(
+      key: 'chrome',
+      label: 'Chrome',
+      icon: Icons.public,
+      semanticLabel: 'Chrome',
+    );
+  }
+  if (probe.contains('internet explorer')) {
+    return const _CleanupLogoSpec(
+      key: 'ie',
+      label: 'IE',
+      icon: Icons.explore_outlined,
+      semanticLabel: 'Internet Explorer',
+    );
+  }
+  if (probe.contains('defender')) {
+    return const _CleanupLogoSpec(
+      key: 'defender',
+      label: 'Def',
+      icon: Icons.security_outlined,
+      semanticLabel: 'Windows Defender',
+    );
+  }
+  if (probe.contains('winsxs')) {
+    return const _CleanupLogoSpec(
+      key: 'winsxs',
+      label: 'WinSxS',
+      icon: Icons.inventory_2_outlined,
+      semanticLabel: 'WinSxS',
+    );
+  }
+  if (probe.contains('drvpath')) {
+    return const _CleanupLogoSpec(
+      key: 'drvpath',
+      label: 'Drv',
+      icon: Icons.memory_outlined,
+      semanticLabel: 'DrvPath',
+    );
+  }
+  if (probe.contains('intel')) {
+    return const _CleanupLogoSpec(
+      key: 'intel',
+      label: 'intel',
+      icon: Icons.developer_board_outlined,
+      semanticLabel: 'Intel',
+    );
+  }
+  if (probe.contains('nvidia')) {
+    return const _CleanupLogoSpec(
+      key: 'nvidia',
+      label: 'NVIDIA',
+      icon: Icons.videogame_asset_outlined,
+      semanticLabel: 'NVIDIA',
+    );
+  }
+  if (probe.contains('windowsapps') || probe.contains('appx')) {
+    return const _CleanupLogoSpec(
+      key: 'windowsapps',
+      label: 'Apps',
+      icon: Icons.apps_outlined,
+      semanticLabel: 'WindowsApps',
+    );
+  }
+  if (probe.contains('update') || probe.contains('catroot')) {
+    return const _CleanupLogoSpec(
+      key: 'windows-update',
+      label: 'WU',
+      icon: Icons.sync_outlined,
+      semanticLabel: 'Windows Update',
+    );
+  }
+  if (probe.contains('explorer')) {
+    return const _CleanupLogoSpec(
+      key: 'explorer',
+      label: 'Exp',
+      icon: Icons.folder_outlined,
+      semanticLabel: 'Explorer',
+    );
+  }
+  if (probe.contains('windows') ||
+      probe.contains('panther') ||
+      probe.contains('prefetch')) {
+    return const _CleanupLogoSpec(
+      key: 'windows',
+      label: 'Win',
+      icon: Icons.window_outlined,
+      semanticLabel: 'Windows',
+    );
+  }
+  return const _CleanupLogoSpec(
+    key: 'generic',
+    label: 'C:',
+    icon: Icons.storage_outlined,
+    semanticLabel: 'C盘',
+  );
 }
 
 class _Metric extends StatelessWidget {
@@ -1291,62 +1671,65 @@ class _ToolCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Tooltip(
-      message: '$title\n功能说明：$subtitle\n适用场景：需要处理对应清理/优化任务时\n风险等级：按弹窗确认和模块标识执行',
-      waitDuration: const Duration(milliseconds: 450),
-      child: GlassPanel(
-        radius: 16,
-        padding: EdgeInsets.zero,
-        color: AppColors.glassMuted,
-        child: Material(
-          color: Colors.transparent,
-          child: InkWell(
-            borderRadius: BorderRadius.circular(16),
-            onTap: onTap,
-            child: SizedBox(
-              height: 156,
-              child: Padding(
-                padding: const EdgeInsets.all(22),
-                child: Row(
-                  children: [
-                    FeatureIcon(icon: icon),
-                    const SizedBox(width: 18),
-                    Expanded(
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            title,
-                            style: Theme.of(context).textTheme.titleMedium,
-                          ),
-                          const SizedBox(height: 6),
-                          Text(
-                            subtitle,
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              color: AppColors.muted,
-                              fontSize: 13,
+    return Semantics(
+      button: true,
+      label: title,
+      hint: '打开工具。$subtitle',
+      child: Tooltip(
+        message: '$title\n功能说明：$subtitle\n会在弹窗中确认操作风险',
+        waitDuration: const Duration(milliseconds: 450),
+        child: GlassPanel(
+          radius: 14,
+          padding: EdgeInsets.zero,
+          color: AppColors.glassStrong,
+          shadow: false,
+          child: Material(
+            color: Colors.transparent,
+            child: InkWell(
+              borderRadius: BorderRadius.circular(14),
+              onTap: onTap,
+              child: SizedBox(
+                height: 118,
+                child: Padding(
+                  padding: const EdgeInsets.all(18),
+                  child: Row(
+                    children: [
+                      FeatureIcon(icon: icon, size: 46, iconSize: 22),
+                      const SizedBox(width: 16),
+                      Expanded(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              title,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: Theme.of(context).textTheme.titleMedium,
                             ),
-                          ),
-                        ],
+                            const SizedBox(height: 6),
+                            Text(
+                              subtitle,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                color: AppColors.muted,
+                                fontSize: 13,
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
-                    ),
-                    Container(
-                      width: 38,
-                      height: 38,
-                      decoration: BoxDecoration(
-                        color: AppColors.primary,
-                        borderRadius: BorderRadius.circular(10),
+                      const SizedBox(width: 12),
+                      const ExcludeSemantics(
+                        child: Icon(
+                          Icons.chevron_right,
+                          color: AppColors.muted,
+                          size: 22,
+                        ),
                       ),
-                      child: const Icon(
-                        Icons.north_east,
-                        color: Colors.white,
-                        size: 18,
-                      ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
               ),
             ),
@@ -1384,13 +1767,13 @@ class _AllToolsDialog extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             _ToolListTile(
-              icon: Icons.block_outlined,
+              icon: Icons.gpp_maybe_outlined,
               title: '广告清理',
               subtitle: '写入 hosts 屏蔽广告域名',
               onTap: onOpenAdBlock,
             ),
             _ToolListTile(
-              icon: Icons.copy_outlined,
+              icon: Icons.content_copy_outlined,
               title: '重复文件',
               subtitle: '按 SHA-256 识别重复文件',
               onTap: onOpenDuplicateFiles,
@@ -1414,7 +1797,7 @@ class _AllToolsDialog extends StatelessWidget {
               onTap: onOpenWindowsOptimization,
             ),
             _ToolListTile(
-              icon: Icons.grid_view_outlined,
+              icon: Icons.storage_outlined,
               title: '碎片整理',
               subtitle: '调用 Windows 磁盘优化',
               onTap: onOpenDiskOptimization,
@@ -1447,13 +1830,18 @@ class _ToolListTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ListTile(
-      contentPadding: EdgeInsets.zero,
-      leading: FeatureIcon(icon: icon, size: 42, iconSize: 20),
-      title: Text(title, style: const TextStyle(fontWeight: FontWeight.w800)),
-      subtitle: Text(subtitle),
-      trailing: const Icon(Icons.chevron_right),
-      onTap: onTap,
+    return Semantics(
+      button: true,
+      label: title,
+      hint: '打开工具。$subtitle',
+      child: ListTile(
+        contentPadding: EdgeInsets.zero,
+        leading: FeatureIcon(icon: icon, size: 42, iconSize: 20),
+        title: Text(title, style: const TextStyle(fontWeight: FontWeight.w800)),
+        subtitle: Text(subtitle),
+        trailing: const ExcludeSemantics(child: Icon(Icons.chevron_right)),
+        onTap: onTap,
+      ),
     );
   }
 }
@@ -1541,7 +1929,7 @@ class _AdBlockDialogState extends State<_AdBlockDialog> {
     final status = _status;
     return _ToolDialogFrame(
       title: '广告清理',
-      icon: Icons.block_outlined,
+      icon: Icons.gpp_maybe_outlined,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -1672,7 +2060,7 @@ class _DuplicateFilesDialogState extends State<_DuplicateFilesDialog> {
     final result = _result;
     return _ToolDialogFrame(
       title: '重复文件',
-      icon: Icons.copy_outlined,
+      icon: Icons.content_copy_outlined,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -2719,7 +3107,7 @@ class _ScheduledCleanupDialogState extends State<_ScheduledCleanupDialog> {
     return _run(
       () => widget.service.createScheduledCleanupTask(
         taskName: _nameController.text,
-        executablePath: Platform.resolvedExecutable,
+        executablePath: kIsWeb ? 'WinCleaner.exe' : Platform.resolvedExecutable,
         schedule: MaintenanceSchedule.daily,
         time: _timeController.text,
       ),
@@ -2851,7 +3239,7 @@ class _RuleStoreDialogState extends State<_RuleStoreDialog> {
     final packs = widget.service.packs;
     return _ToolDialogFrame(
       title: '规则商店',
-      icon: Icons.storefront_outlined,
+      icon: Icons.cloud_download_outlined,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -3370,7 +3758,7 @@ class _DiskOptimizationDialogState extends State<_DiskOptimizationDialog> {
   Widget build(BuildContext context) {
     return _ToolDialogFrame(
       title: '碎片整理',
-      icon: Icons.grid_view_outlined,
+      icon: Icons.storage_outlined,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -3649,15 +4037,43 @@ class _ScanReportDialog extends StatelessWidget {
                       final category = scanResult.categories[index];
                       return ListTile(
                         contentPadding: EdgeInsets.zero,
+                        leading: _CleanupTargetLogo(category: category),
                         title: Text(
                           category.name,
                           style: const TextStyle(fontWeight: FontWeight.w800),
                         ),
-                        subtitle: Text(
-                          '${category.group} · ${category.risk.label} · ${category.recommended ? '推荐项' : '深度项'} · ${category.canClean ? '可清理' : '仅扫描'}\n'
-                          '${category.description}\n'
-                          '扫描路径 ${category.scannedPathCount} 个'
-                          '${category.errors.isEmpty ? '' : ' · 错误 ${category.errors.length} 个'}',
+                        subtitle: Padding(
+                          padding: const EdgeInsets.only(top: 6),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Wrap(
+                                spacing: 6,
+                                runSpacing: 6,
+                                children: [
+                                  _ScanStatusPill(label: category.group),
+                                  _ScanStatusPill(label: category.risk.label),
+                                  _ScanStatusPill(
+                                    label: category.recommended ? '推荐项' : '深度项',
+                                  ),
+                                  _ScanStatusPill(
+                                    label: category.canClean ? '可清理' : '仅扫描',
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 6),
+                              Text(category.description),
+                              const SizedBox(height: 2),
+                              Text(
+                                '扫描路径 ${category.scannedPathCount} 个'
+                                '${category.errors.isEmpty ? '' : ' · 错误 ${category.errors.length} 个'}',
+                                style: const TextStyle(
+                                  color: AppColors.muted,
+                                  fontSize: 12,
+                                ),
+                              ),
+                            ],
+                          ),
                         ),
                         trailing: Column(
                           crossAxisAlignment: CrossAxisAlignment.end,
@@ -3994,6 +4410,9 @@ String _formatBytes(int bytes) {
 }
 
 String _defaultUserScanPath() {
+  if (kIsWeb) {
+    return r'C:\Users\Administrator\Downloads';
+  }
   try {
     final userProfile = Platform.environment['USERPROFILE'];
     if (Platform.isWindows && userProfile != null && userProfile.isNotEmpty) {
@@ -4006,6 +4425,13 @@ String _defaultUserScanPath() {
 }
 
 List<String> _defaultShortcutRoots() {
+  if (kIsWeb) {
+    return const [
+      r'C:\Users\Administrator\Desktop',
+      r'C:\Users\Public\Desktop',
+      r'C:\ProgramData\Microsoft\Windows\Start Menu',
+    ];
+  }
   String userProfile = '';
   String appData = '';
   try {
@@ -4027,6 +4453,9 @@ List<String> _defaultShortcutRoots() {
 }
 
 Directory _defaultRulePackDirectory() {
+  if (kIsWeb) {
+    return Directory('/wincleaner/rules');
+  }
   try {
     final appData = Platform.environment['APPDATA'];
     if (Platform.isWindows && appData != null && appData.isNotEmpty) {

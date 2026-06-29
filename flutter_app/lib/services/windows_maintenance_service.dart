@@ -1,6 +1,8 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart' show kIsWeb;
+
 typedef MaintenanceProcessRunner = Future<ProcessResult> Function(
   String executable,
   List<String> arguments,
@@ -68,7 +70,7 @@ class WindowsMaintenanceService {
   final bool? _isWindowsOverride;
   final MaintenanceProcessRunner _processRunner;
 
-  bool get _isWindows => _isWindowsOverride ?? Platform.isWindows;
+  bool get _isWindows => _isWindowsOverride ?? (!kIsWeb && Platform.isWindows);
 
   Future<List<ShortcutIssue>> scanInvalidShortcuts(List<String> roots) async {
     if (!_isWindows) {

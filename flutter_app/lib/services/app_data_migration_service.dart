@@ -1,6 +1,8 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart' show kIsWeb;
+
 typedef AppDataProcessRunner = Future<ProcessResult> Function(
   String executable,
   List<String> arguments,
@@ -138,7 +140,7 @@ class AppDataMigrationService {
   final File? _historyFile;
   final AppDataProcessRunner _processRunner;
 
-  bool get _isWindows => _isWindowsOverride ?? Platform.isWindows;
+  bool get _isWindows => _isWindowsOverride ?? (!kIsWeb && Platform.isWindows);
 
   Future<AppDataMigrationScanResult> scanLargeFolders(
     List<AppDataScanSource> sources, {
@@ -490,6 +492,20 @@ class AppDataMigrationService {
   static List<AppDataScanSource> defaultScanSources({
     Map<String, String>? environment,
   }) {
+    if (kIsWeb) {
+      return const [
+        AppDataScanSource(
+          label: 'LocalAppData',
+          path: r'C:\Users\Administrator\AppData\Local',
+          targetSubdir: 'Local',
+        ),
+        AppDataScanSource(
+          label: 'RoamingAppData',
+          path: r'C:\Users\Administrator\AppData\Roaming',
+          targetSubdir: 'Roaming',
+        ),
+      ];
+    }
     final Map<String, String> env;
     try {
       env = environment ?? Platform.environment;
@@ -528,6 +544,9 @@ class AppDataMigrationService {
   }
 
   static String defaultTargetRoot({Map<String, String>? environment}) {
+    if (kIsWeb) {
+      return r'D:\Yugongyipan';
+    }
     final Map<String, String> env;
     try {
       env = environment ?? Platform.environment;
@@ -642,6 +661,9 @@ class AppDataMigrationService {
   static String _preferredSeparator(String path) {
     if (path.contains(r'\') || RegExp(r'^[A-Za-z]:').hasMatch(path)) {
       return r'\';
+    }
+    if (kIsWeb) {
+      return '/';
     }
     return Platform.pathSeparator;
   }

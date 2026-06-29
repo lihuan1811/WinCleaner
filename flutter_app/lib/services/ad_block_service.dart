@@ -1,5 +1,7 @@
 import 'dart:io';
 
+import 'package:flutter/foundation.dart' show kIsWeb;
+
 class AdBlockStatus {
   const AdBlockStatus({
     required this.enabled,
@@ -72,6 +74,14 @@ class AdBlockService {
   }
 
   Future<AdBlockStatus> status() async {
+    if (kIsWeb) {
+      return AdBlockStatus(
+        enabled: false,
+        blockedDomains: 0,
+        hostsPath: hostsFile.path,
+        message: 'Web 预览模式不读取 hosts 文件。',
+      );
+    }
     try {
       if (!await hostsFile.exists()) {
         return AdBlockStatus(
@@ -99,6 +109,14 @@ class AdBlockService {
   }
 
   Future<AdBlockStatus> enable({List<String> domains = defaultDomains}) async {
+    if (kIsWeb) {
+      return AdBlockStatus(
+        enabled: false,
+        blockedDomains: 0,
+        hostsPath: hostsFile.path,
+        message: '广告清理仅支持 Windows 桌面运行。',
+      );
+    }
     await _ensureHostsFile();
     await _backupHostsFile();
 
@@ -118,6 +136,14 @@ class AdBlockService {
   }
 
   Future<AdBlockStatus> disable() async {
+    if (kIsWeb) {
+      return AdBlockStatus(
+        enabled: false,
+        blockedDomains: 0,
+        hostsPath: hostsFile.path,
+        message: '广告清理仅支持 Windows 桌面运行。',
+      );
+    }
     if (!await hostsFile.exists()) {
       return AdBlockStatus(
         enabled: false,
@@ -165,7 +191,7 @@ class AdBlockService {
   }
 
   Future<void> _flushDnsIfNeeded() async {
-    if (!flushDns || !Platform.isWindows) {
+    if (!flushDns || kIsWeb || !Platform.isWindows) {
       return;
     }
     await _processRunner('ipconfig', ['/flushdns']);

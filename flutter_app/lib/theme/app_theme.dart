@@ -1,25 +1,23 @@
-import 'dart:ui';
-
 import 'package:flutter/material.dart';
 
 class AppColors {
-  static const background = Color(0xFFEEF4F8);
-  static const backgroundDeep = Color(0xFFDDEAF3);
-  static const surfaceTint = Color(0xC8F8FBFF);
-  static const sidebar = Color(0xB8F6FAFF);
-  static const glass = Color(0xB8FFFFFF);
-  static const glassStrong = Color(0xE8FFFFFF);
-  static const glassMuted = Color(0x73FFFFFF);
+  static const background = Color(0xFFF3F6FA);
+  static const backgroundDeep = Color(0xFFE8EEF6);
+  static const surfaceTint = Color(0xFFF7FAFD);
+  static const sidebar = Color(0xFFF6F9FD);
+  static const glass = Color(0xF5FFFFFF);
+  static const glassStrong = Color(0xFFFFFFFF);
+  static const glassMuted = Color(0xFFF7FAFE);
   static const primary = Color(0xFF2563EB);
-  static const primaryDark = Color(0xFF123E8A);
+  static const primaryDark = Color(0xFF0F3A78);
   static const accent = Color(0xFF0F766E);
   static const accentSoft = Color(0xFFDDF7F0);
-  static const text = Color(0xFF102033);
-  static const muted = Color(0xFF617083);
-  static const border = Color(0x99FFFFFF);
-  static const hairline = Color(0x7AB7C8DA);
-  static const paleBlue = Color(0xFFE8F1FF);
-  static const warmSurface = Color(0xEFFFFFFF);
+  static const text = Color(0xFF111827);
+  static const muted = Color(0xFF526274);
+  static const border = Color(0xFFD9E2EE);
+  static const hairline = Color(0xFFC9D5E4);
+  static const paleBlue = Color(0xFFEAF2FF);
+  static const warmSurface = Color(0xFFFFFFFF);
   static const success = Color(0xFF16A34A);
   static const warning = Color(0xFFF59E0B);
   static const danger = Color(0xFFDC2626);
@@ -60,14 +58,14 @@ class WinCleanerTheme {
         color: AppColors.glass,
         surfaceTintColor: Colors.transparent,
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(18),
+          borderRadius: BorderRadius.circular(14),
           side: const BorderSide(color: AppColors.border),
         ),
       ),
       dialogTheme: DialogThemeData(
         backgroundColor: AppColors.glassStrong,
         surfaceTintColor: Colors.transparent,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
       ),
       dividerTheme: const DividerThemeData(color: AppColors.hairline),
       inputDecorationTheme: InputDecorationTheme(
@@ -123,8 +121,7 @@ class GlassPanel extends StatefulWidget {
     this.width,
     this.height,
     this.padding,
-    this.radius = 18,
-    this.blur = 18,
+    this.radius = 14,
     this.color = AppColors.glass,
     this.borderColor = AppColors.border,
     this.shadow = true,
@@ -135,7 +132,6 @@ class GlassPanel extends StatefulWidget {
   final double? height;
   final EdgeInsetsGeometry? padding;
   final double radius;
-  final double blur;
   final Color color;
   final Color borderColor;
   final bool shadow;
@@ -145,116 +141,44 @@ class GlassPanel extends StatefulWidget {
 }
 
 class _GlassPanelState extends State<GlassPanel> {
-  Offset _light = const Offset(.5, 0);
-
   @override
   Widget build(BuildContext context) {
-    return MouseRegion(
-      onHover: (event) {
-        final renderBox = context.findRenderObject();
-        if (renderBox is! RenderBox || renderBox.size.isEmpty) {
-          return;
-        }
-        final local = renderBox.globalToLocal(event.position);
-        setState(() {
-          _light = Offset(
-            (local.dx / renderBox.size.width).clamp(0.0, 1.0),
-            (local.dy / renderBox.size.height).clamp(0.0, 1.0),
-          );
-        });
-      },
-      onExit: (_) => setState(() => _light = const Offset(.5, 0)),
+    return Container(
+      width: widget.width,
+      height: widget.height,
+      decoration: BoxDecoration(
+        color: widget.color,
+        borderRadius: BorderRadius.circular(widget.radius),
+        border: Border.all(color: widget.borderColor),
+        boxShadow: widget.shadow
+            ? const [
+                BoxShadow(
+                  color: Color(0x160F2A44),
+                  blurRadius: 12,
+                  offset: Offset(0, 8),
+                ),
+              ]
+            : null,
+      ),
       child: ClipRRect(
         borderRadius: BorderRadius.circular(widget.radius),
-        child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: widget.blur, sigmaY: widget.blur),
-          child: Container(
-            width: widget.width,
-            height: widget.height,
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(widget.radius),
-              border: Border.all(color: widget.borderColor),
-              boxShadow: widget.shadow
-                  ? const [
-                      BoxShadow(
-                        color: Color(0x2206182E),
-                        blurRadius: 34,
-                        offset: Offset(0, 22),
-                      ),
-                      BoxShadow(
-                        color: Color(0x12FFFFFF),
-                        blurRadius: 1,
-                        offset: Offset(0, 1),
-                      ),
-                    ]
-                  : null,
+        child: Stack(
+          children: [
+            const Positioned(
+              left: 1,
+              right: 1,
+              top: 1,
+              height: 1,
+              child: ColoredBox(color: Color(0xCCFFFFFF)),
             ),
-            child: Stack(
-              children: [
-                Positioned.fill(
-                  child: DecoratedBox(
-                    decoration: BoxDecoration(
-                      gradient: LinearGradient(
-                        begin: Alignment.topLeft,
-                        end: Alignment.bottomRight,
-                        colors: [
-                          Color.alphaBlend(
-                            Colors.white.withValues(alpha: .32),
-                            widget.color,
-                          ),
-                          Color.alphaBlend(
-                            AppColors.primary.withValues(alpha: .07),
-                            widget.color,
-                          ),
-                          Color.alphaBlend(
-                            Colors.black.withValues(alpha: .035),
-                            widget.color,
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
-                Positioned.fill(
-                  child: DecoratedBox(
-                    decoration: BoxDecoration(
-                      gradient: RadialGradient(
-                        center: Alignment(_light.dx * 2 - 1, _light.dy * 2 - 1),
-                        radius: .92,
-                        colors: const [
-                          Color(0x78FFFFFF),
-                          Color(0x20FFFFFF),
-                          Color(0x00FFFFFF),
-                        ],
-                        stops: const [0, .32, 1],
-                      ),
-                    ),
-                  ),
-                ),
-                Positioned(
-                  left: 1,
-                  right: 1,
-                  top: 1,
-                  height: 1,
-                  child: Container(color: const Color(0xAFFFFFFF)),
-                ),
-                Positioned(
-                  left: 1,
-                  right: 1,
-                  bottom: 1,
-                  height: 1,
-                  child: Container(color: const Color(0x1F0F172A)),
-                ),
-                Material(
-                  color: Colors.transparent,
-                  child: Padding(
-                    padding: widget.padding ?? EdgeInsets.zero,
-                    child: widget.child,
-                  ),
-                ),
-              ],
+            Material(
+              color: Colors.transparent,
+              child: Padding(
+                padding: widget.padding ?? EdgeInsets.zero,
+                child: widget.child,
+              ),
             ),
-          ),
+          ],
         ),
       ),
     );
@@ -286,51 +210,18 @@ class FeatureIcon extends StatelessWidget {
       width: size,
       height: size,
       decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: selected
-              ? [primary, secondary]
-              : [
-                  Color.alphaBlend(
-                      primary.withValues(alpha: 0.12), Colors.white),
-                  Color.alphaBlend(
-                      secondary.withValues(alpha: 0.08), Colors.white),
-                ],
-        ),
+        color: selected
+            ? primary
+            : Color.alphaBlend(primary.withValues(alpha: 0.08), Colors.white),
         border: Border.all(
-          color: selected ? const Color(0x8CFFFFFF) : AppColors.border,
+          color: selected ? primary : AppColors.border,
         ),
-        borderRadius: BorderRadius.circular(size * 0.28),
-        boxShadow: [
-          BoxShadow(
-            color: primary.withValues(alpha: selected ? 0.26 : 0.12),
-            blurRadius: selected ? 18 : 14,
-            offset: const Offset(0, 10),
-          ),
-          const BoxShadow(
-            color: Color(0x35FFFFFF),
-            blurRadius: 1,
-            offset: Offset(0, 1),
-          ),
-        ],
+        borderRadius: BorderRadius.circular(size >= 48 ? 14 : 10),
       ),
-      child: Stack(
-        children: [
-          Positioned.fill(
-            child: DecoratedBox(
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(size * 0.28),
-                gradient: const LinearGradient(
-                  begin: Alignment.topCenter,
-                  end: Alignment.bottomCenter,
-                  colors: [Color(0x66FFFFFF), Color(0x00FFFFFF)],
-                ),
-              ),
-            ),
-          ),
-          Center(child: Icon(icon, color: foreground, size: iconSize)),
-        ],
+      child: Center(
+        child: ExcludeSemantics(
+          child: Icon(icon, color: foreground, size: iconSize),
+        ),
       ),
     );
   }

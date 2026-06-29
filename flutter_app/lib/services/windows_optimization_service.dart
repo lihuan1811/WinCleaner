@@ -1,5 +1,7 @@
 import 'dart:io';
 
+import 'package:flutter/foundation.dart' show kIsWeb;
+
 typedef ProcessRunner = Future<ProcessResult> Function(
   String executable,
   List<String> arguments,
@@ -100,7 +102,7 @@ class WindowsOptimizationService {
   final ProcessRunner _processRunner;
   final List<WindowsOptimizationAction> _actions;
 
-  bool get _isWindows => _isWindowsOverride ?? Platform.isWindows;
+  bool get _isWindows => _isWindowsOverride ?? (!kIsWeb && Platform.isWindows);
 
   List<WindowsOptimizationAction> get actions => List.unmodifiable(_actions);
 

@@ -13,6 +13,9 @@ void main() {
         'LOCALAPPDATA': r'C:\Users\Ada\AppData\Local',
         'APPDATA': r'C:\Users\Ada\AppData\Roaming',
         'ProgramData': r'C:\ProgramData',
+        'ProgramFiles': r'C:\Program Files',
+        'ProgramFiles(x86)': r'C:\Program Files (x86)',
+        'SystemDrive': r'C:',
         'TEMP': r'C:\Users\Ada\AppData\Local\Temp',
       },
     );
@@ -29,6 +32,32 @@ void main() {
         'browser_passwords',
         'chrome_update_cache',
         'edge_update_cache',
+        'edge_webview_cache',
+        'edge_profile_state',
+        'edgecore_old_versions',
+        'panther_setup_logs',
+        'service_profile_temp',
+        'drvpath_driver_packages',
+        'intel_logs',
+        'explorer_runtime_cache',
+        'legacy_ie_cache',
+        'appx_package_cache',
+        'edge_component_updates',
+        'third_party_app_logs',
+        'windows_extra_logs',
+        'sleepstudy_wdi_traces',
+        'windowsapps_cleanup_candidates',
+        'windows_update_lcu_backup',
+        'windows_update_signature_cache',
+        'windows_search_index_cache',
+        'defender_definition_backup',
+        'defender_support_logs',
+        'defender_history',
+        'defender_quarantine',
+        'winsxs_backup',
+        'winsxs_catalogs',
+        'winsxs_onedrive_setup',
+        'winsxs_component_store',
         'memory_dumps',
         'wechat_media_cache',
         'wechat_chat_backup',
@@ -77,6 +106,48 @@ void main() {
       byId['steam_web_cache']!.paths,
       contains(r'C:\Users\Ada\AppData\Local\Steam\htmlcache\Cache'),
     );
+    expect(
+      byId['edge_webview_cache']!.paths,
+      contains(r'C:\Users\Ada\AppData\Local\GameViewer\webviewcache\EBWebView'),
+    );
+    expect(
+      byId['edgecore_old_versions']!.paths,
+      contains(r'C:\Program Files (x86)\Microsoft\EdgeCore'),
+    );
+    expect(byId['edgecore_old_versions']!.canClean, isFalse);
+    expect(
+      byId['drvpath_driver_packages']!.paths,
+      contains(r'C:\DrvPath'),
+    );
+    expect(
+      byId['legacy_ie_cache']!.paths,
+      contains(r'C:\Users\Ada\AppData\Local\Microsoft\Windows\WebCache'),
+    );
+    expect(
+      byId['windowsapps_cleanup_candidates']!.paths,
+      contains(r'C:\Program Files\WindowsApps'),
+    );
+    expect(byId['windowsapps_cleanup_candidates']!.canClean, isFalse);
+    expect(
+      byId['windows_update_lcu_backup']!.paths,
+      contains(r'C:\Windows\servicing\LCU'),
+    );
+    expect(
+      byId['windows_update_signature_cache']!.paths,
+      contains(r'C:\Windows\System32\catroot2'),
+    );
+    expect(byId['windows_update_signature_cache']!.canClean, isFalse);
+    expect(
+      byId['defender_definition_backup']!.paths,
+      contains(
+          r'C:\ProgramData\Microsoft\Windows Defender\Definition Updates\Backup'),
+    );
+    expect(byId['defender_quarantine']!.canClean, isFalse);
+    expect(
+      byId['winsxs_component_store']!.paths,
+      contains(r'C:\Windows\WinSxS'),
+    );
+    expect(byId['winsxs_component_store']!.canClean, isFalse);
   });
 
   test('scans cleanup targets and totals discovered file sizes', () async {

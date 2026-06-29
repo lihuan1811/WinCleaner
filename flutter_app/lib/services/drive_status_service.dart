@@ -1,6 +1,8 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart' show kIsWeb;
+
 class DriveStatus {
   const DriveStatus({
     required this.drive,
@@ -64,7 +66,7 @@ class DriveStatusService {
   final Future<ProcessResult> Function(
       String executable, List<String> arguments) _processRunner;
 
-  bool get _isWindows => _isWindowsOverride ?? Platform.isWindows;
+  bool get _isWindows => _isWindowsOverride ?? (!kIsWeb && Platform.isWindows);
 
   Future<DriveStatus> loadDrive([String drive = 'C']) async {
     final normalizedDrive = _normalizeDrive(drive);

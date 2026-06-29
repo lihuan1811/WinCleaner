@@ -42,6 +42,19 @@ class _FakeCleanupScanService extends SystemCleanupScanService {
           scannedPathCount: 1,
           errors: [],
         ),
+        CleanupCategoryResult(
+          id: 'edgecore_old_versions',
+          name: 'EdgeCore 旧版本更新',
+          description: 'Microsoft EdgeCore 旧版本目录，仅统计不直接清理',
+          group: '浏览器缓存',
+          risk: CleanupRisk.caution,
+          recommended: false,
+          canClean: false,
+          itemCount: 7,
+          totalBytes: 664 * 1024 * 1024,
+          scannedPathCount: 1,
+          errors: [],
+        ),
       ],
     );
   }
@@ -75,13 +88,21 @@ void main() {
     await tester.tap(find.text('一键开始扫描'));
     await tester.pumpAndSettle();
 
-    expect(find.text('发现 2 个可清理项目'), findsAtLeastNWidgets(1));
-    expect(find.text('12.0 MB'), findsAtLeastNWidgets(1));
+    expect(find.text('发现 9 个可清理项目'), findsAtLeastNWidgets(1));
+    expect(find.text('676.0 MB'), findsAtLeastNWidgets(1));
+    expect(
+      find.byKey(const ValueKey('scan-preview-edgecore_old_versions')),
+      findsOneWidget,
+    );
 
     await tester.tap(find.text('详细报告'));
     await tester.pumpAndSettle();
 
     expect(find.text('扫描详细报告'), findsOneWidget);
     expect(find.text('临时文件'), findsAtLeastNWidgets(1));
+    expect(find.byKey(const ValueKey('scan-logo-edge')), findsWidgets);
+    expect(find.text('仅扫描'), findsAtLeastNWidgets(1));
+    expect(find.textContaining('全屏'), findsNothing);
+    expect(find.byIcon(Icons.fullscreen), findsNothing);
   });
 }

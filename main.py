@@ -15,6 +15,12 @@ import queue
 from config import APP_NAME, VERSION
 from cleaner_logic import CleanerLogic
 from backup_manager import BackupManagerWindow
+from category_display import (
+    CATEGORY_NAMES,
+    category_key_from_tree_tags,
+    category_tree_label,
+    strip_category_badge,
+)
 
 # 配置日志
 logging.basicConfig(
@@ -33,6 +39,8 @@ class CleanerApp(tk.Tk):
         self.title(APP_NAME)
         self.geometry("800x600")
         self.minsize(800, 600)
+        self.category_icon_image = None
+        self._apply_window_icon()
 
         self.cleaner = CleanerLogic()
         self.scan_results = {}
@@ -40,6 +48,27 @@ class CleanerApp(tk.Tk):
 
         self.create_widgets()
         self.update_disk_info()
+
+    def _apply_window_icon(self):
+        """Apply the bundled cleaner logo to the window and category tree."""
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        ico_path = os.path.join(base_dir, "icons", "cleaner.ico")
+        png_path = os.path.join(base_dir, "icons", "cleaner.png")
+
+        if os.path.exists(ico_path):
+            try:
+                self.iconbitmap(ico_path)
+            except tk.TclError:
+                logger.debug("无法加载 ico 窗口图标", exc_info=True)
+
+        if os.path.exists(png_path):
+            try:
+                logo = tk.PhotoImage(file=png_path)
+                self.iconphoto(True, logo)
+                self.category_icon_image = logo.subsample(16, 16)
+                self._window_icon_image = logo
+            except tk.TclError:
+                logger.debug("无法加载 png 窗口图标", exc_info=True)
 
     def create_widgets(self):
         """创建界面组件"""
@@ -289,12 +318,14 @@ class CleanerApp(tk.Tk):
 
             # 计算类别总大小
             category_size = sum(item['size'] for item in items)
-            category_name = categories.get(category, category)
+            category_name = category_tree_label(category)
 
             # 添加类别节点
             category_id = self.result_tree.insert(
                 "", "end", text=category_name,
-                values=(category_name, self.format_size(category_size), "")
+                image=self.category_icon_image,
+                values=(category_name, self.format_size(category_size), ""),
+                tags=(f"category:{category}",)
             )
 
             # 添加文件节点
@@ -375,15 +406,21 @@ class CleanerApp(tk.Tk):
             'large_files': "大文件"
         }
         
-        # 使用反向映射从显示名称找到类别键
-        display_to_key = {v: k for k, v in categories.items()}
+        # 使用反向映射从显示名称找到类别键，优先读取树节点保存的原始 key。
+        display_to_key = {v: k for k, v in CATEGORY_NAMES.items()}
         
         for category_id in self.result_tree.get_children():
             for item_id in self.result_tree.get_children(category_id):
                 if self.result_tree.item(item_id, 'values')[-1] == '是':  # 检查"选中"列
                     # 从结果数据中找到对应的项目
-                    category = self.result_tree.item(category_id, 'text').split()[0]  # 获取分类名称
-                    category_key = display_to_key.get(category)
+                    category_key = category_key_from_tree_tags(
+                        self.result_tree.item(category_id, 'tags')
+                    )
+                    if not category_key:
+                        category = strip_category_badge(
+                            self.result_tree.item(category_id, 'text')
+                        )
+                        category_key = display_to_key.get(category)
                     if not category_key:
                         continue
 

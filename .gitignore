@@ -1,5 +1,6 @@
 # Python
 __pycache__/
+.pytest_cache/
 *.py[cod]
 *$py.class
 *.so
@@ -30,8 +31,13 @@ logs/
 backups/
 
 # 虚拟环境
+.venv/
 venv/
 ENV/
+
+# 本地数据库
+backend/*.db
+backend/*.db-*
 
 # IDE文件
 .idea/

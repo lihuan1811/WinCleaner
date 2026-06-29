@@ -1,6 +1,8 @@
 import 'dart:io';
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart' show kIsWeb;
+
 import '../models/installed_app.dart';
 
 class InstalledAppsService {
@@ -13,7 +15,7 @@ class InstalledAppsService {
   ];
 
   Future<List<InstalledApp>> loadInstalledApps() async {
-    if (!Platform.isWindows) {
+    if (kIsWeb || !Platform.isWindows) {
       return const [];
     }
 

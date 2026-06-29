@@ -1,5 +1,7 @@
 import 'dart:io';
 
+import 'package:flutter/foundation.dart' show kIsWeb;
+
 class DiskOptimizationResult {
   const DiskOptimizationResult({
     required this.success,
@@ -24,7 +26,7 @@ class DiskOptimizationService {
   final Future<ProcessResult> Function(
       String executable, List<String> arguments) _processRunner;
 
-  bool get _isWindows => _isWindowsOverride ?? Platform.isWindows;
+  bool get _isWindows => _isWindowsOverride ?? (!kIsWeb && Platform.isWindows);
 
   Future<DiskOptimizationResult> analyze(String drive) {
     return _runDefrag(_normalizeDrive(drive), const ['/A', '/U', '/V']);

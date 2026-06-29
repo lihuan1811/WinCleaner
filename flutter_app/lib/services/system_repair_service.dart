@@ -1,5 +1,7 @@
 import 'dart:io';
 
+import 'package:flutter/foundation.dart' show kIsWeb;
+
 typedef SystemRepairProcessRunner = Future<ProcessResult> Function(
   String executable,
   List<String> arguments,
@@ -61,7 +63,7 @@ class SystemRepairService {
   final bool? _isWindowsOverride;
   final SystemRepairProcessRunner _processRunner;
 
-  bool get _isWindows => _isWindowsOverride ?? Platform.isWindows;
+  bool get _isWindows => _isWindowsOverride ?? (!kIsWeb && Platform.isWindows);
 
   Future<SystemRepairResult> runAction(SystemRepairAction action) async {
     if (!_isWindows) {

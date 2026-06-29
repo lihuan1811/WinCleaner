@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:wincleaner_desktop/main.dart';
 import 'package:wincleaner_desktop/models/installed_app.dart';
 import 'package:wincleaner_desktop/services/installed_apps_service.dart';
+import 'package:wincleaner_desktop/services/local_account_service.dart';
 
 class _FakeInstalledAppsService extends InstalledAppsService {
   const _FakeInstalledAppsService();
@@ -12,6 +13,32 @@ class _FakeInstalledAppsService extends InstalledAppsService {
   Future<List<InstalledApp>> loadInstalledApps() async {
     return sampleInstalledApps;
   }
+}
+
+LocalAccountService _premiumAccountService() {
+  final now = DateTime.now();
+  return LocalAccountService(
+    initialState: LocalAccountState(
+      deviceId: 'test-device',
+      user: LocalUser(
+        email: 'admin@example.com',
+        displayName: 'Administrator',
+        passwordHash: 'test-hash',
+        createdAt: now,
+        subscription: LocalSubscription(
+          planName: '企业会员',
+          activatedAt: now,
+          expiresAt: now.add(const Duration(days: 365)),
+        ),
+      ),
+    ),
+  );
+}
+
+LocalAccountService _guestAccountService() {
+  return LocalAccountService(
+    initialState: LocalAccountState.empty(deviceId: 'guest-device'),
+  );
 }
 
 void main() {
@@ -26,7 +53,9 @@ void main() {
   testWidgets('app shell shows primary navigation items', (tester) async {
     useDesktopTestWindow(tester);
 
-    await tester.pumpWidget(const WinCleanerApp());
+    await tester.pumpWidget(
+      WinCleanerApp(accountService: _guestAccountService()),
+    );
     await tester.pumpAndSettle();
 
     expect(find.text('C盘清理'), findsOneWidget);
@@ -45,7 +74,10 @@ void main() {
     useDesktopTestWindow(tester);
 
     await tester.pumpWidget(
-      const WinCleanerApp(installedAppsService: _FakeInstalledAppsService()),
+      WinCleanerApp(
+        installedAppsService: const _FakeInstalledAppsService(),
+        accountService: _premiumAccountService(),
+      ),
     );
     await tester.pumpAndSettle();
 
@@ -63,7 +95,10 @@ void main() {
     useDesktopTestWindow(tester);
 
     await tester.pumpWidget(
-      const WinCleanerApp(installedAppsService: _FakeInstalledAppsService()),
+      WinCleanerApp(
+        installedAppsService: const _FakeInstalledAppsService(),
+        accountService: _premiumAccountService(),
+      ),
     );
     await tester.pumpAndSettle();
 
@@ -110,7 +145,10 @@ void main() {
     useDesktopTestWindow(tester);
 
     await tester.pumpWidget(
-      const WinCleanerApp(installedAppsService: _FakeInstalledAppsService()),
+      WinCleanerApp(
+        installedAppsService: const _FakeInstalledAppsService(),
+        accountService: _premiumAccountService(),
+      ),
     );
     await tester.pumpAndSettle();
 
@@ -136,7 +174,10 @@ void main() {
     useDesktopTestWindow(tester);
 
     await tester.pumpWidget(
-      const WinCleanerApp(installedAppsService: _FakeInstalledAppsService()),
+      WinCleanerApp(
+        installedAppsService: const _FakeInstalledAppsService(),
+        accountService: _premiumAccountService(),
+      ),
     );
     await tester.pumpAndSettle();
 
@@ -184,7 +225,10 @@ void main() {
     useDesktopTestWindow(tester);
 
     await tester.pumpWidget(
-      const WinCleanerApp(installedAppsService: _FakeInstalledAppsService()),
+      WinCleanerApp(
+        installedAppsService: const _FakeInstalledAppsService(),
+        accountService: _guestAccountService(),
+      ),
     );
     await tester.pumpAndSettle();
 
@@ -204,7 +248,10 @@ void main() {
     useDesktopTestWindow(tester);
 
     await tester.pumpWidget(
-      const WinCleanerApp(installedAppsService: _FakeInstalledAppsService()),
+      WinCleanerApp(
+        installedAppsService: const _FakeInstalledAppsService(),
+        accountService: _guestAccountService(),
+      ),
     );
     await tester.pumpAndSettle();
 
@@ -215,8 +262,31 @@ void main() {
     await tester.tap(find.text('关闭'));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Administrator'));
+    await tester.tap(find.text('未登录'));
     await tester.pumpAndSettle();
-    expect(find.text('账户'), findsOneWidget);
+    expect(find.text('账户与会员'), findsOneWidget);
+    expect(find.text('登录'), findsWidgets);
+    expect(find.text('注册'), findsWidgets);
+  });
+
+  testWidgets('free user is prompted before opening premium modules', (
+    tester,
+  ) async {
+    useDesktopTestWindow(tester);
+
+    await tester.pumpWidget(
+      WinCleanerApp(
+        installedAppsService: const _FakeInstalledAppsService(),
+        accountService: _guestAccountService(),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('系统优化'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('需要会员'), findsOneWidget);
+    expect(find.text('系统优化 属于会员功能。'), findsOneWidget);
+    expect(find.text('C盘清理工作台'), findsOneWidget);
   });
 }

@@ -1,5 +1,7 @@
 import 'dart:io';
 
+import 'package:flutter/foundation.dart' show kIsWeb;
+
 class BcuStatus {
   const BcuStatus({
     required this.isAvailable,
@@ -26,6 +28,12 @@ class BcuService {
   ];
 
   BcuStatus locate() {
+    if (kIsWeb) {
+      return const BcuStatus(
+        isAvailable: false,
+        message: 'Web 预览模式不检测 BCUninstaller 后端。',
+      );
+    }
     for (final candidate in _searchPaths) {
       final file = File(candidate);
       if (file.existsSync()) {

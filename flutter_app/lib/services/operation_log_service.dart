@@ -1,5 +1,7 @@
 import 'dart:io';
 
+import 'package:flutter/foundation.dart' show kIsWeb;
+
 class OperationLogEntry {
   const OperationLogEntry({
     required this.timestamp,
@@ -40,6 +42,9 @@ class OperationLogService {
   final File? _logFile;
 
   Future<void> append(OperationLogEntry entry) async {
+    if (kIsWeb) {
+      return;
+    }
     try {
       final file = _resolvedFile();
       await file.parent.create(recursive: true);
@@ -50,6 +55,9 @@ class OperationLogService {
   }
 
   Future<List<OperationLogEntry>> read({int limit = 100}) async {
+    if (kIsWeb) {
+      return const [];
+    }
     try {
       final file = _resolvedFile();
       if (!await file.exists()) {
@@ -67,6 +75,9 @@ class OperationLogService {
   }
 
   File _resolvedFile() {
+    if (kIsWeb) {
+      return File('/wincleaner-operation.log');
+    }
     if (_logFile != null) {
       return _logFile;
     }

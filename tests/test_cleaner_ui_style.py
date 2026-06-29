@@ -12,11 +12,21 @@ def test_qt_ui_uses_cleaner_spirit_layout():
     assert "scanPrimaryButton" in source
 
 
-def test_qt_ui_keeps_screenshot_like_green_shell():
+def test_qt_ui_keeps_screenshot_like_teal_shell():
     source = Path("cleaner_ui.py").read_text(encoding="utf-8")
 
-    assert "#35C878" in source
+    assert "#14B8A6" in source
     assert "一键扫描" in source
     assert "一键清理" in source
     assert "扫描结果" in source
     assert "C盘清理精灵" in source
+
+
+def test_qt_ui_sidebar_navigation_is_wired():
+    source = Path("cleaner_ui.py").read_text(encoding="utf-8")
+
+    assert "QStackedWidget" in source
+    assert "_select_page" in source
+    assert "系统优化" in source
+    assert "软件卸载" in source
+    assert "文件管理" in source
