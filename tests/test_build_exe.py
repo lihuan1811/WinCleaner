@@ -34,6 +34,8 @@ class BuildExeCommandTests(unittest.TestCase):
         self.assertIn("PYTHONUTF8: \"1\"", workflow)
         self.assertIn("PYTHONIOENCODING: utf-8", workflow)
         self.assertIn("C盘清理精灵.exe", workflow)
+        self.assertIn("CDriveCleanerSpirit.exe", workflow)
+        self.assertIn("CDriveCleanerSpirit.zip", workflow)
         self.assertNotIn("Build Flutter Windows UI", workflow)
 
     def test_local_launcher_uses_qt_entrypoint(self):
