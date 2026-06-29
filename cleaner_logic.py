@@ -14,6 +14,7 @@ import fnmatch
 import logging
 import datetime
 import concurrent.futures
+import threading
 from dismpp_rules import DismRuleScanner
 
 # 配置日志
@@ -23,6 +24,37 @@ logging.basicConfig(
     filename='cleaner.log'
 )
 logger = logging.getLogger('CCleaner')
+
+
+def emit_scan_progress(progress_callback, path, count):
+    if not progress_callback or not path:
+        return
+    if hasattr(progress_callback, 'emit'):
+        progress_callback.emit(path, count)
+    else:
+        progress_callback(path, count)
+
+
+class ProgressAwareList(list):
+    """列表被扫描任务写入时，同步发出当前发现路径。"""
+
+    def __init__(self, category, progress_callback=None):
+        super().__init__()
+        self.category = category
+        self.progress_callback = progress_callback
+        self._lock = threading.Lock()
+
+    def append(self, item):
+        with self._lock:
+            super().append(item)
+            count = len(self)
+        if isinstance(item, dict):
+            emit_scan_progress(self.progress_callback, item.get('path'), count)
+
+    def extend(self, items):
+        for item in items:
+            self.append(item)
+
 
 class CleanerLogic:
     """清理逻辑核心类"""
@@ -529,7 +561,7 @@ class CleanerLogic:
             logger.error(f"恢复备份失败: {e}")
             return False
 
-    def scan_system(self):
+    def scan_system(self, progress_callback=None):
         """扫描系统中可清理的文件"""
         logger.info("开始扫描系统")
         results = {
@@ -603,6 +635,11 @@ class CleanerLogic:
             # 大文件扫描
             'large_files': []    # 大文件
         }
+        if progress_callback:
+            results = {
+                category: ProgressAwareList(category, progress_callback)
+                for category in results
+            }
 
         # 定义扫描任务
         scan_tasks = [
@@ -647,7 +684,10 @@ class CleanerLogic:
         # 根据测试调整max_workers，None通常默认为os.cpu_count（）*5
         with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
             # 提交所有任务
-            future_to_task = {executor.submit(task, results): task for task in scan_tasks}
+            future_to_task = {
+                executor.submit(self._run_scan_task, task, results, progress_callback): task
+                for task in scan_tasks
+            }
 
             # 等待所有任务完成并处理潜在的异常
             for future in concurrent.futures.as_completed(future_to_task):
@@ -662,6 +702,11 @@ class CleanerLogic:
 
         logger.info(f"扫描完成，找到 {sum(len(items) for items in results.values())} 个可清理项目")
         return results
+
+    def _run_scan_task(self, task, results, progress_callback=None):
+        task_label = task.__name__.replace('_scan_', '扫描 ').replace('_', ' ')
+        emit_scan_progress(progress_callback, task_label, 0)
+        return task(results)
 
     def _scan_temp_files(self, results):
         """扫描临时文件"""

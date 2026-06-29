@@ -113,6 +113,7 @@ QLabel#pageSubtitle,
 QLabel#diskInfo,
 QLabel#resultSummary,
 QLabel#statusLabel,
+QLabel#scanPathLabel,
 QLabel#selectedSummary {
     color: #5E726B;
 }
@@ -191,6 +192,14 @@ QProgressBar#scanProgress {
 QProgressBar#scanProgress::chunk {
     background: #14B8A6;
     border-radius: 7px;
+}
+
+QLabel#scanPathLabel {
+    background: #F2FAF8;
+    border: 1px solid #D6E8E4;
+    border-radius: 7px;
+    min-height: 28px;
+    padding: 0 12px;
 }
 
 QLabel#resultTitle {
@@ -336,7 +345,7 @@ QWidget#pageScrollInner {
 
 class ScanThread(QThread):
     """扫描线程，避免UI冻结"""
-    update_signal = pyqtSignal(dict)
+    update_signal = pyqtSignal(str, int)
     finished_signal = pyqtSignal(dict)
     error_signal = pyqtSignal(str)
 
@@ -347,7 +356,7 @@ class ScanThread(QThread):
     def run(self):
         """运行扫描过程"""
         try:
-            results = self.cleaner.scan_system()
+            results = self.cleaner.scan_system(self.update_signal)
             self.finished_signal.emit(results)
         except Exception as exc:  # pragma: no cover - depends on host filesystem
             self.error_signal.emit(str(exc))
@@ -626,6 +635,11 @@ class CleanerMainWindow(QMainWindow):
         self.progress_bar.setObjectName("scanProgress")
         self.progress_bar.setVisible(False)
 
+        self.current_scan_path_label = QLabel("当前扫描: --")
+        self.current_scan_path_label.setObjectName("scanPathLabel")
+        self.current_scan_path_label.setVisible(False)
+        self.current_scan_path_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+
         result_card = QFrame()
         result_card.setObjectName("resultCard")
         result_layout = QVBoxLayout(result_card)
@@ -701,6 +715,7 @@ class CleanerMainWindow(QMainWindow):
 
         content_layout.addWidget(hero_panel)
         content_layout.addWidget(self.progress_bar)
+        content_layout.addWidget(self.current_scan_path_label)
         content_layout.addWidget(result_card, 1)
         content_layout.addWidget(status_strip)
 
@@ -1664,6 +1679,9 @@ class CleanerMainWindow(QMainWindow):
         self.cleanable_items = []
         self.progress_bar.setVisible(True)
         self.progress_bar.setRange(0, 0)  # 不确定进度
+        self.current_scan_path_label.setVisible(True)
+        self.current_scan_path_label.setText("当前扫描: 正在准备扫描 C 盘路径...")
+        self.current_scan_path_label.setToolTip("")
         self.cleanable_value_label.setText("0 B")
         self.result_summary_label.setText("扫描进行中")
         self.selected_summary_label.setText("已选 0 项 / 0 B")
@@ -1671,9 +1689,22 @@ class CleanerMainWindow(QMainWindow):
 
         # 启动扫描线程
         self.scan_thread = ScanThread(self.cleaner)
+        self.scan_thread.update_signal.connect(self.on_scan_progress)
         self.scan_thread.finished_signal.connect(self.on_scan_finished)
         self.scan_thread.error_signal.connect(self.on_scan_error)
         self.scan_thread.start()
+
+    def on_scan_progress(self, path, count):
+        """实时展示扫描线程正在处理或刚发现的路径。"""
+        compact = self.compact_path(path)
+        if count > 0:
+            message = f"当前扫描: {compact}"
+        else:
+            message = f"当前扫描项: {compact}"
+        self.current_scan_path_label.setVisible(True)
+        self.current_scan_path_label.setText(message)
+        self.current_scan_path_label.setToolTip(path)
+        self.status_label.setText(message)
 
     def on_scan_finished(self, results):
         """扫描完成后的处理"""
@@ -1681,6 +1712,8 @@ class CleanerMainWindow(QMainWindow):
         self.progress_bar.setVisible(False)
         self.scan_button.setEnabled(True)
         self.scan_button.setText("重新扫描")
+        self.current_scan_path_label.setVisible(True)
+        self.current_scan_path_label.setText("当前扫描: 扫描完成，正在整理结果")
 
         total_items = sum(len(items) for items in results.values())
         total_size = sum(item['size'] for category in results.values() for item in category)
@@ -1720,6 +1753,8 @@ class CleanerMainWindow(QMainWindow):
         self.progress_bar.setVisible(False)
         self.scan_button.setEnabled(True)
         self.scan_button.setText("重新扫描")
+        self.current_scan_path_label.setVisible(True)
+        self.current_scan_path_label.setText(f"当前扫描: 失败 - {message}")
         self.clean_all_button.setEnabled(False)
         self.clean_button.setEnabled(False)
         self.select_all_checkbox.setEnabled(False)
@@ -1733,6 +1768,13 @@ class CleanerMainWindow(QMainWindow):
         if not normalized:
             return path
         return normalized.replace("\\", "/").rsplit("/", 1)[-1] or normalized
+
+    @staticmethod
+    def compact_path(path, max_length=128):
+        if len(path) <= max_length:
+            return path
+        keep = max(24, (max_length - 5) // 2)
+        return f"{path[:keep]} ... {path[-keep:]}"
 
     @staticmethod
     def is_scan_only_item(item):
