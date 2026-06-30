@@ -23,12 +23,12 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QH
                             QFileDialog, QTabWidget, QTableWidget,
                             QTableWidgetItem, QHeaderView, QAbstractItemView,
                             QFileIconProvider, QGraphicsOpacityEffect, QLineEdit,
-                            QTextEdit)
+                            QTextEdit, QAbstractButton)
 from PyQt5.QtCore import (
     Qt, QThread, pyqtSignal, QSize, QFileInfo, QPropertyAnimation, QEasingCurve,
     QTimer
 )
-from PyQt5.QtGui import QIcon, QFont, QPixmap, QColor
+from PyQt5.QtGui import QIcon, QFont, QPixmap, QColor, QPainter
 
 from cleaner_logic import CleanerLogic
 from category_display import category_tree_label
@@ -40,6 +40,34 @@ from system_repair import SystemRepairService, decode_console_output
 
 
 APP_DISPLAY_NAME = "C盘清理精灵"
+
+
+class BXToggleSwitch(QAbstractButton):
+    """BoosterX 风格的滑动开关：开=蓝色(向右)，关=红色(向左)。"""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setCheckable(True)
+        self.setCursor(Qt.PointingHandCursor)
+        self.setFixedSize(48, 26)
+
+    def sizeHint(self):
+        return QSize(48, 26)
+
+    def paintEvent(self, _event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        rect = self.rect().adjusted(1, 1, -1, -1)
+        radius = rect.height() / 2
+        track = QColor("#2F6BFF") if self.isChecked() else QColor("#E5484D")
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(track)
+        painter.drawRoundedRect(rect, radius, radius)
+
+        diameter = rect.height() - 6
+        knob_x = rect.right() - diameter - 3 if self.isChecked() else rect.left() + 3
+        painter.setBrush(QColor("#FFFFFF"))
+        painter.drawEllipse(knob_x, rect.top() + 3, diameter, diameter)
 
 
 def hidden_windows_subprocess_kwargs():
@@ -409,6 +437,41 @@ QScrollArea#pageScroll {
 QWidget#pageScrollInner {
     background: transparent;
 }
+
+QScrollArea#bxScrollArea {
+    background: transparent;
+    border: none;
+}
+
+QWidget#bxListContainer {
+    background: transparent;
+}
+
+QFrame#bxCard {
+    background: #FFFFFF;
+    border: 1px solid #D7E6E2;
+    border-radius: 12px;
+}
+
+QFrame#bxCard:hover {
+    border: 1px solid #14B8A6;
+}
+
+QLabel#bxCardTitle {
+    color: #0F2E2A;
+    font-size: 14px;
+    font-weight: 600;
+}
+
+QLabel#bxCardWarning {
+    color: #B8860B;
+    font-size: 11px;
+}
+
+QLabel#bxStateLabel {
+    font-size: 12px;
+    min-width: 64px;
+}
 """
 
 
@@ -773,6 +836,8 @@ class CleanerMainWindow(QMainWindow):
         self.bx_active_category = "基础"
         self.bx_category_buttons = {}
         self.bx_thread = None
+        self.bx_item_states = {}
+        self.bx_rows = []
         self.active_animations = []
         self.account_service = LocalAccountService()
         self.account_state = self.account_service.current_state()
@@ -1335,15 +1400,28 @@ class CleanerMainWindow(QMainWindow):
         quick_title.setObjectName("featureCardTitle")
         category_layout.addWidget(quick_title)
 
-        quick_basic_button = QPushButton("基本")
-        quick_basic_button.setObjectName("cleanSecondaryButton")
-        quick_basic_button.clicked.connect(lambda: self.select_bx_mode("basic"))
-        quick_best_button = QPushButton("最佳")
-        quick_best_button.setObjectName("scanPrimaryButton")
-        quick_best_button.clicked.connect(lambda: self.select_bx_mode("best"))
-        category_layout.addWidget(quick_basic_button)
-        category_layout.addWidget(quick_best_button)
+        self.bx_basic_button = QPushButton("基本")
+        self.bx_basic_button.setObjectName("scanPrimaryButton")
+        self.bx_basic_button.setMinimumHeight(34)
+        self.bx_basic_button.clicked.connect(lambda: self.select_bx_mode("basic"))
+        self.bx_best_button = QPushButton("最佳")
+        self.bx_best_button.setObjectName("cleanSecondaryButton")
+        self.bx_best_button.setMinimumHeight(34)
+        self.bx_best_button.clicked.connect(lambda: self.select_bx_mode("best"))
+        bx_advanced_button = QPushButton("高级  PRO")
+        bx_advanced_button.setObjectName("cleanSecondaryButton")
+        bx_advanced_button.setMinimumHeight(34)
+        bx_advanced_button.clicked.connect(lambda: self.apply_bx_preset("max"))
+        category_layout.addWidget(self.bx_basic_button)
+        category_layout.addWidget(self.bx_best_button)
+        category_layout.addWidget(bx_advanced_button)
         category_layout.addStretch(1)
+
+        self.bx_apply_button = QPushButton("✓ 应用")
+        self.bx_apply_button.setObjectName("scanPrimaryButton")
+        self.bx_apply_button.setMinimumHeight(40)
+        self.bx_apply_button.clicked.connect(self.apply_bx_optimization)
+        category_layout.addWidget(self.bx_apply_button)
 
         main_panel = QVBoxLayout()
         main_panel.setSpacing(10)
@@ -1356,47 +1434,44 @@ class CleanerMainWindow(QMainWindow):
 
         toolbar_title = QLabel("基础设置")
         toolbar_title.setObjectName("featureCardTitle")
-        self.bx_basic_button = QPushButton("基本")
-        self.bx_basic_button.setMinimumWidth(96)
-        self.bx_basic_button.clicked.connect(lambda: self.select_bx_mode("basic"))
-        self.bx_best_button = QPushButton("最佳")
-        self.bx_best_button.setMinimumWidth(96)
-        self.bx_best_button.clicked.connect(lambda: self.select_bx_mode("best"))
+        bx_default_button = QPushButton("默认")
+        bx_default_button.setObjectName("cleanSecondaryButton")
+        bx_default_button.setMinimumWidth(88)
+        bx_default_button.clicked.connect(lambda: self.apply_bx_preset("default"))
+        bx_best_tab_button = QPushButton("最佳")
+        bx_best_tab_button.setObjectName("cleanSecondaryButton")
+        bx_best_tab_button.setMinimumWidth(88)
+        bx_best_tab_button.clicked.connect(lambda: self.select_bx_mode("best"))
+        bx_max_button = QPushButton("最大")
+        bx_max_button.setObjectName("scanPrimaryButton")
+        bx_max_button.setMinimumWidth(88)
+        bx_max_button.clicked.connect(lambda: self.apply_bx_preset("max"))
         bx_refresh_button = QPushButton("更新")
         bx_refresh_button.setObjectName("cleanSecondaryButton")
-        bx_refresh_button.setMinimumWidth(96)
+        bx_refresh_button.setMinimumWidth(88)
         bx_refresh_button.clicked.connect(self.refresh_bx_page)
-        self.bx_apply_button = QPushButton("应用")
-        self.bx_apply_button.setObjectName("scanPrimaryButton")
-        self.bx_apply_button.setMinimumWidth(112)
-        self.bx_apply_button.clicked.connect(self.apply_bx_optimization)
 
         toolbar_layout.addWidget(toolbar_title)
         toolbar_layout.addStretch(1)
-        toolbar_layout.addWidget(self.bx_basic_button)
-        toolbar_layout.addWidget(self.bx_best_button)
+        toolbar_layout.addWidget(bx_default_button)
+        toolbar_layout.addWidget(bx_best_tab_button)
+        toolbar_layout.addWidget(bx_max_button)
         toolbar_layout.addWidget(bx_refresh_button)
-        toolbar_layout.addWidget(self.bx_apply_button)
         main_panel.addWidget(toolbar)
 
-        self.bx_table = QTreeWidget()
-        self.bx_table.setObjectName("optimizerTable")
-        self.bx_table.setColumnCount(4)
-        self.bx_table.setHeaderLabels(["优化项", "状态", "风险", "说明"])
-        self.bx_table.setSelectionBehavior(QAbstractItemView.SelectRows)
-        self.bx_table.setSelectionMode(QAbstractItemView.SingleSelection)
-        self.bx_table.setAlternatingRowColors(True)
-        self.bx_table.setIconSize(QSize(20, 20))
-        self.bx_table.setRootIsDecorated(True)
-        self.bx_table.setItemsExpandable(True)
-        self.bx_table.itemChanged.connect(lambda _item, _column: self.update_bx_status())
-        bx_header = self.bx_table.header()
-        bx_header.setMinimumSectionSize(86)
-        bx_header.setSectionResizeMode(0, QHeaderView.Stretch)
-        bx_header.setSectionResizeMode(1, QHeaderView.ResizeToContents)
-        bx_header.setSectionResizeMode(2, QHeaderView.ResizeToContents)
-        bx_header.setSectionResizeMode(3, QHeaderView.Stretch)
-        main_panel.addWidget(self.bx_table, 1)
+        self.bx_scroll = QScrollArea()
+        self.bx_scroll.setObjectName("bxScrollArea")
+        self.bx_scroll.setWidgetResizable(True)
+        self.bx_scroll.setFrameShape(QFrame.NoFrame)
+        self.bx_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.bx_list_container = QWidget()
+        self.bx_list_container.setObjectName("bxListContainer")
+        self.bx_list_layout = QVBoxLayout(self.bx_list_container)
+        self.bx_list_layout.setContentsMargins(2, 2, 2, 2)
+        self.bx_list_layout.setSpacing(10)
+        self.bx_list_layout.addStretch(1)
+        self.bx_scroll.setWidget(self.bx_list_container)
+        main_panel.addWidget(self.bx_scroll, 1)
 
         self.bx_status_label = QLabel("基本模式已就绪。")
         self.bx_status_label.setObjectName("statusLabel")
@@ -1407,8 +1482,7 @@ class CleanerMainWindow(QMainWindow):
         outer.addLayout(body, 1)
 
         self.update_bx_mode_buttons()
-        self.populate_bx_categories()
-        self.populate_bx_items()
+        self.apply_bx_preset(self.bx_mode, refresh_only=False)
         return page
 
     def bx_category_order(self):
@@ -1434,6 +1508,54 @@ class CleanerMainWindow(QMainWindow):
 
     def bx_catalog(self):
         return [
+            {
+                "category": "基础",
+                "title": "鼠标加速",
+                "target_state": "将被禁用",
+                "risk": "基础",
+                "description": "关闭“增强指针精确度”，让鼠标移动更线性，适合游戏。",
+                "command": (
+                    r'reg add "HKCU\Control Panel\Mouse" /v MouseSpeed /t REG_SZ /d 0 /f & '
+                    r'reg add "HKCU\Control Panel\Mouse" /v MouseThreshold1 /t REG_SZ /d 0 /f & '
+                    r'reg add "HKCU\Control Panel\Mouse" /v MouseThreshold2 /t REG_SZ /d 0 /f'
+                ),
+                "icon_hint": "windows",
+                "basic": True,
+                "best": True,
+            },
+            {
+                "category": "基础",
+                "title": "系统启动时自动更新驱动程序",
+                "target_state": "将被禁用",
+                "risk": "基础",
+                "description": "禁止 Windows 在启动时自动搜索并安装驱动。",
+                "command": r'reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\DriverSearching" /v SearchOrderConfig /t REG_DWORD /d 0 /f',
+                "icon_hint": "driver",
+                "basic": True,
+                "best": True,
+            },
+            {
+                "category": "基础",
+                "title": "全局通知",
+                "target_state": "将被禁用",
+                "risk": "基础",
+                "description": "关闭操作中心 Toast 通知，减少打扰。",
+                "command": r'reg add "HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\PushNotifications" /v ToastEnabled /t REG_DWORD /d 0 /f',
+                "icon_hint": "windows",
+                "basic": True,
+                "best": True,
+            },
+            {
+                "category": "基础",
+                "title": "UWP应用程序在后台运行",
+                "target_state": "将被禁用",
+                "risk": "基础",
+                "description": "禁止 UWP/商店应用在后台运行，节省内存与电量。",
+                "command": r'reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\BackgroundAccessApplications" /v GlobalUserDisabled /t REG_DWORD /d 1 /f',
+                "icon_hint": "windows",
+                "basic": True,
+                "best": True,
+            },
             {
                 "category": "基础",
                 "title": "自动更新地图",
@@ -1462,9 +1584,10 @@ class CleanerMainWindow(QMainWindow):
                 "target_state": "将被禁用",
                 "risk": "基础",
                 "description": "禁用游戏全屏优化，降低部分游戏输入延迟。",
+                "warning": "禁用时将无法工作: 快速ALT+TAB",
                 "command": r'reg add "HKCU\System\GameConfigStore" /v GameDVR_FSEBehaviorMode /t REG_DWORD /d 2 /f',
                 "icon_hint": "game",
-                "basic": True,
+                "basic": False,
                 "best": True,
             },
             {
@@ -1517,6 +1640,7 @@ class CleanerMainWindow(QMainWindow):
                 "target_state": "将被禁用",
                 "risk": "谨慎",
                 "description": "停用 SysMain 预取服务，SSD 游戏机常用。",
+                "warning": "禁用时将无法工作: LastActivityView",
                 "command": r'cmd /c "sc stop SysMain & sc config SysMain start= disabled"',
                 "icon_hint": "windows",
                 "basic": False,
@@ -1528,6 +1652,7 @@ class CleanerMainWindow(QMainWindow):
                 "target_state": "将被禁用",
                 "risk": "谨慎",
                 "description": "没有打印机时可停用 Print Spooler。",
+                "warning": "禁用时将无法工作: 打印机",
                 "command": r'cmd /c "sc stop Spooler & sc config Spooler start= disabled"',
                 "icon_hint": "printer",
                 "basic": False,
@@ -1539,6 +1664,7 @@ class CleanerMainWindow(QMainWindow):
                 "target_state": "将被禁用",
                 "risk": "谨慎",
                 "description": "停用 Diagnostic Policy Service 后台诊断。",
+                "warning": "禁用时将无法工作: 任务管理器中的网络使用, 网络设置中的网络使用情况",
                 "command": r'cmd /c "sc stop DPS & sc config DPS start= disabled"',
                 "icon_hint": "driver",
                 "basic": False,
@@ -1612,26 +1738,50 @@ class CleanerMainWindow(QMainWindow):
             },
         ]
 
-    def bx_mode_items(self):
-        if self.bx_mode == "best":
-            return [item for item in self.bx_catalog() if item.get("best")]
-        return [item for item in self.bx_catalog() if item.get("basic")]
+    def bx_item_id(self, item):
+        return f"{item.get('category', '')}::{item.get('title', '')}"
 
-    def bx_visible_items(self):
-        items = self.bx_mode_items()
-        if self.bx_active_category == "我的调整":
-            return items
-        return [item for item in items if item.get("category") == self.bx_active_category]
+    def bx_category_items(self, category=None):
+        category = category or self.bx_active_category
+        if category == "我的调整":
+            return list(self.bx_catalog())
+        return [item for item in self.bx_catalog() if item.get("category") == category]
+
+    def bx_preset_default_on(self, item, preset):
+        """某个预设下该项是否默认开启。"""
+        if not item.get("command"):
+            return False
+        if preset == "default":
+            return False
+        if preset == "max":
+            return True
+        if preset == "best":
+            return bool(item.get("best"))
+        return bool(item.get("basic"))
+
+    def apply_bx_preset(self, preset, refresh_only=False):
+        """按预设(默认/基本/最佳/最大)重置全部开关状态。"""
+        if preset in ("basic", "best"):
+            self.bx_mode = preset
+        else:
+            self.bx_mode = preset
+        self.bx_item_states = {}
+        for item in self.bx_catalog():
+            self.bx_item_states[self.bx_item_id(item)] = self.bx_preset_default_on(item, preset)
+        self.update_bx_mode_buttons()
+        self.populate_bx_categories()
+        self.populate_bx_items()
+        if not refresh_only and hasattr(self, "bx_status_label"):
+            preset_name = {"default": "默认", "basic": "基本", "best": "最佳", "max": "最大"}.get(preset, preset)
+            self.bx_status_label.setText(f"已套用「{preset_name}」预设，可逐项微调后点击应用。")
+            self.animate_status_pulse(self.bx_status_label)
 
     def populate_bx_categories(self):
         if not self.bx_category_buttons:
             return
-        mode_items = self.bx_mode_items()
         for category, button in self.bx_category_buttons.items():
-            if category == "我的调整":
-                count = len(mode_items)
-            else:
-                count = sum(1 for item in mode_items if item.get("category") == category)
+            items = self.bx_category_items(category)
+            count = sum(1 for item in items if self.bx_item_states.get(self.bx_item_id(item)))
             button.setText(f"{category}    {count}" if count else category)
             button.setObjectName("featureButton" if category == self.bx_active_category else "cleanSecondaryButton")
             button.style().unpolish(button)
@@ -1656,9 +1806,7 @@ class CleanerMainWindow(QMainWindow):
             self.bx_mode = "best"
         else:
             self.bx_mode = "basic"
-        self.update_bx_mode_buttons()
-        self.populate_bx_categories()
-        self.populate_bx_items()
+        self.apply_bx_preset(self.bx_mode)
 
     def refresh_bx_page(self):
         self.populate_bx_categories()
@@ -1667,60 +1815,109 @@ class CleanerMainWindow(QMainWindow):
             self.bx_status_label.setText("BX(优化) 项目已刷新。")
             self.animate_status_pulse(self.bx_status_label)
 
-    def populate_bx_items(self):
-        if not hasattr(self, "bx_table"):
-            return
-        items = self.bx_visible_items()
-        self.bx_table.setUpdatesEnabled(False)
-        self.bx_table.blockSignals(True)
-        self.bx_table.clear()
-        for item in items:
-            row = QTreeWidgetItem()
-            row.setText(0, item["title"])
-            row.setText(1, item["target_state"])
-            row.setText(2, item["risk"])
-            row.setText(3, item["description"])
-            row.setToolTip(0, item["title"])
-            row.setToolTip(3, item["description"])
-            row.setFlags(row.flags() | Qt.ItemIsUserCheckable)
-            row.setCheckState(0, Qt.Checked)
-            row.setData(0, Qt.UserRole, item)
-            icon = self.category_icon_for_name(item.get("icon_hint") or item["title"])
-            if not icon.isNull():
-                row.setIcon(0, icon)
+    def _bx_off_label(self, item):
+        mapping = {
+            "将被禁用": "已启用",
+            "将被启用": "已禁用",
+            "将被调整": "默认",
+            "将被限制": "未限制",
+            "仅检查": "仅检查",
+            "仅展示": "仅展示",
+        }
+        return mapping.get(item.get("target_state", ""), "未更改")
 
-            detail = QTreeWidgetItem(row)
-            detail.setText(0, "命令")
-            detail.setText(1, item.get("command") or "仅展示/检查")
-            detail.setText(2, item.get("category", ""))
-            detail.setText(3, "执行后部分项目需要重启或重新登录生效。")
-            detail.setToolTip(1, item.get("command") or "仅展示/检查")
-            row.setExpanded(False)
-            self.bx_table.addTopLevelItem(row)
-        self.bx_table.blockSignals(False)
-        self.bx_table.setUpdatesEnabled(True)
+    def _bx_apply_row_visual(self, item, toggle, state_label):
+        is_on = bool(self.bx_item_states.get(self.bx_item_id(item)))
+        if is_on:
+            state_label.setText(item.get("target_state", "将被禁用"))
+            state_label.setStyleSheet("color: #2F6BFF; font-weight: 600;")
+        else:
+            state_label.setText(self._bx_off_label(item))
+            state_label.setStyleSheet("color: #E5484D; font-weight: 600;")
+        if toggle.isChecked() != is_on:
+            toggle.blockSignals(True)
+            toggle.setChecked(is_on)
+            toggle.blockSignals(False)
+
+    def _on_bx_toggle(self, item, toggle, state_label, checked):
+        self.bx_item_states[self.bx_item_id(item)] = bool(checked)
+        self._bx_apply_row_visual(item, toggle, state_label)
+        self.populate_bx_categories()
+        self.update_bx_status()
+
+    def _make_bx_card(self, item):
+        card = QFrame()
+        card.setObjectName("bxCard")
+        card_layout = QHBoxLayout(card)
+        card_layout.setContentsMargins(16, 12, 16, 12)
+        card_layout.setSpacing(12)
+
+        icon_label = QLabel()
+        icon = self.category_icon_for_name(item.get("icon_hint") or item["title"])
+        if not icon.isNull():
+            icon_label.setPixmap(icon.pixmap(22, 22))
+        icon_label.setFixedWidth(26)
+        card_layout.addWidget(icon_label, 0, Qt.AlignVCenter)
+
+        text_box = QVBoxLayout()
+        text_box.setSpacing(2)
+        title_label = QLabel(f"{item['title']}  ⌄")
+        title_label.setObjectName("bxCardTitle")
+        title_label.setToolTip(item.get("description", ""))
+        text_box.addWidget(title_label)
+        if item.get("warning"):
+            warning_label = QLabel(f"⚠ {item['warning']}")
+            warning_label.setObjectName("bxCardWarning")
+            warning_label.setWordWrap(True)
+            text_box.addWidget(warning_label)
+        card_layout.addLayout(text_box, 1)
+
+        state_label = QLabel()
+        state_label.setObjectName("bxStateLabel")
+        state_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        card_layout.addWidget(state_label, 0, Qt.AlignVCenter)
+
+        toggle = BXToggleSwitch()
+        has_command = bool(item.get("command"))
+        toggle.setEnabled(has_command)
+        toggle.toggled.connect(
+            lambda checked, it=item, tg=toggle, sl=state_label: self._on_bx_toggle(it, tg, sl, checked)
+        )
+        card_layout.addWidget(toggle, 0, Qt.AlignVCenter)
+
+        self._bx_apply_row_visual(item, toggle, state_label)
+        self.bx_rows.append({"item": item, "toggle": toggle, "state_label": state_label})
+        return card
+
+    def populate_bx_items(self):
+        if not hasattr(self, "bx_list_layout"):
+            return
+        self.bx_rows = []
+        while self.bx_list_layout.count():
+            child = self.bx_list_layout.takeAt(0)
+            widget = child.widget()
+            if widget is not None:
+                widget.deleteLater()
+        for item in self.bx_category_items():
+            self.bx_list_layout.addWidget(self._make_bx_card(item))
+        self.bx_list_layout.addStretch(1)
         self.update_bx_status()
 
     def selected_bx_items(self):
-        if not hasattr(self, "bx_table"):
-            return []
-        items = []
-        for index in range(self.bx_table.topLevelItemCount()):
-            row = self.bx_table.topLevelItem(index)
-            if row and row.checkState(0) == Qt.Checked:
-                payload = row.data(0, Qt.UserRole)
-                if payload:
-                    items.append(payload)
-        return items
+        return [
+            item
+            for item in self.bx_catalog()
+            if item.get("command") and self.bx_item_states.get(self.bx_item_id(item))
+        ]
 
     def update_bx_status(self):
         if not hasattr(self, "bx_status_label"):
             return
         selected_count = len(self.selected_bx_items())
-        total_count = self.bx_table.topLevelItemCount() if hasattr(self, "bx_table") else 0
-        mode_name = "最佳" if self.bx_mode == "best" else "基本"
+        total_count = sum(1 for item in self.bx_catalog() if item.get("command"))
+        mode_name = {"default": "默认", "basic": "基本", "best": "最佳", "max": "最大"}.get(self.bx_mode, self.bx_mode)
         self.bx_status_label.setText(
-            f"{mode_name}模式 / {self.bx_active_category} / 已勾选 {selected_count} 项 / 共 {total_count} 项"
+            f"{mode_name}预设 / {self.bx_active_category} / 已开启 {selected_count} 项 / 可优化 {total_count} 项"
         )
 
     def apply_bx_optimization(self):
@@ -1731,7 +1928,7 @@ class CleanerMainWindow(QMainWindow):
 
         items = self.selected_bx_items()
         if not items:
-            self.bx_status_label.setText("请先勾选需要应用的 BX 优化项。")
+            self.bx_status_label.setText("请先开启需要应用的 BX 优化项（蓝色开关）。")
             self.animate_status_pulse(self.bx_status_label)
             return
 
@@ -1748,9 +1945,9 @@ class CleanerMainWindow(QMainWindow):
     def set_bx_busy(self, busy):
         if hasattr(self, "bx_apply_button"):
             self.bx_apply_button.setEnabled(not busy)
-            self.bx_apply_button.setText("应用中..." if busy else "应用")
-        if hasattr(self, "bx_table"):
-            self.bx_table.setEnabled(not busy)
+            self.bx_apply_button.setText("应用中..." if busy else "✓ 应用")
+        if hasattr(self, "bx_scroll"):
+            self.bx_scroll.setEnabled(not busy)
         if hasattr(self, "bx_basic_button"):
             self.bx_basic_button.setEnabled(not busy)
             self.bx_best_button.setEnabled(not busy)
@@ -1761,11 +1958,14 @@ class CleanerMainWindow(QMainWindow):
         self.bx_status_label.setText(message)
 
     def on_bx_item_finished(self, title, success, message):
-        for index in range(self.bx_table.topLevelItemCount()):
-            row = self.bx_table.topLevelItem(index)
-            if row and row.text(0) == title:
-                row.setText(1, "已应用" if success else "跳过/失败")
-                row.setToolTip(1, message)
+        for row in getattr(self, "bx_rows", []):
+            if row["item"].get("title") == title:
+                state_label = row["state_label"]
+                state_label.setText("已应用" if success else "跳过/失败")
+                state_label.setStyleSheet(
+                    "color: #0D9488; font-weight: 600;" if success else "color: #E5484D; font-weight: 600;"
+                )
+                state_label.setToolTip(message)
                 break
 
     def on_bx_finished(self, summary):
@@ -3228,6 +3428,9 @@ class CleanerMainWindow(QMainWindow):
         elif action_type == "registry_delete" and row.get("registry"):
             handled = self.delete_registry_issue(row, confirm=confirm)
         elif action_type == "open_regedit" and row.get("reg_path"):
+            if quiet:
+                # 批量「一键优化」不应弹出注册表编辑器，仅供单项点击时查看
+                return False
             handled = self.open_registry_editor(row["reg_path"], quiet=quiet)
         elif action_type in {"kill_process", "kill_process_by_name"}:
             handled = self.kill_process_item(row, confirm=confirm)

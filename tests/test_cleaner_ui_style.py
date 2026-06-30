@@ -278,6 +278,50 @@ def test_qt_bx_module_contains_boosterx_like_items():
     assert "best" in source
 
 
+def test_qt_bx_module_uses_toggle_card_layout_and_presets():
+    source = Path("cleaner_ui.py").read_text(encoding="utf-8")
+
+    # 开关卡片式 UI
+    assert "class BXToggleSwitch(QAbstractButton)" in source
+    assert "def _make_bx_card" in source
+    assert "self.bx_item_states" in source
+    assert "bxCard" in source
+
+    # 默认/基本/最佳/最大 预设
+    assert "def apply_bx_preset" in source
+    for preset in ['"default"', '"basic"', '"best"', '"max"']:
+        assert preset in source
+
+    # 参考图新增项与警告行
+    for label in ["鼠标加速", "系统启动时自动更新驱动程序", "全局通知", "UWP应用程序在后台运行"]:
+        assert label in source
+    for warning in ["禁用时将无法工作: 打印机", "禁用时将无法工作: 快速ALT+TAB"]:
+        assert warning in source
+
+
+def test_qt_bx_best_preset_is_superset_of_basic():
+    """最佳预设应覆盖基本预设的全部项（best ⊇ basic）。"""
+    import ast
+
+    source = Path("cleaner_ui.py").read_text(encoding="utf-8")
+    tree = ast.parse(source)
+
+    catalog_fn = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef) and node.name == "bx_catalog"
+    )
+    list_node = next(
+        stmt.value for stmt in catalog_fn.body if isinstance(stmt, ast.Return)
+    )
+    items = [ast.literal_eval(element) for element in list_node.elts]
+
+    assert items, "bx_catalog 不应为空"
+    for item in items:
+        if item.get("basic"):
+            assert item.get("best"), f"基本项 {item['title']} 必须也属于最佳预设"
+
+
 def test_qt_bx_module_runs_without_blocking_or_manual_confirmation():
     source = Path("cleaner_ui.py").read_text(encoding="utf-8")
     apply_logic = source.split("def apply_bx_optimization", 1)[1].split("def set_bx_busy", 1)[0]

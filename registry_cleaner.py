@@ -54,6 +54,7 @@ HIVE_FULL_NAMES = {
 
 CATEGORY_SHARED_DLL = "缺失的共享 DLL"
 CATEGORY_UNINSTALL = "应用程序卸载残留"
+CATEGORY_APP_PATHS = "无效的应用程序路径"
 
 
 def first_path_token(command):
@@ -95,6 +96,7 @@ class RegistryCleanerService:
         issues = []
         issues.extend(self._scan_shared_dlls(limit_per_category))
         issues.extend(self._scan_uninstall_residue(limit_per_category))
+        issues.extend(self._scan_app_paths(limit_per_category))
         return issues
 
     def _scan_shared_dlls(self, limit):
@@ -173,10 +175,47 @@ class RegistryCleanerService:
                 continue
         return issues
 
+    def _scan_app_paths(self, limit):
+        locations = [
+            ("HKLM", r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths"),
+            ("HKLM", r"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\App Paths"),
+        ]
+        issues = []
+        for hive_name, base in locations:
+            root = HIVE_HANDLES[hive_name]
+            try:
+                with winreg.OpenKey(root, base) as parent:
+                    sub_count, _values, _modified = winreg.QueryInfoKey(parent)
+                    for index in range(sub_count):
+                        if len(issues) >= limit:
+                            break
+                        try:
+                            child = winreg.EnumKey(parent, index)
+                            with winreg.OpenKey(parent, child) as child_key:
+                                target = self._read_value(child_key, "")
+                        except OSError:
+                            continue
+                        if not target:
+                            continue
+                        path = os.path.expandvars(str(target).strip().strip('"'))
+                        if not path or os.path.exists(path):
+                            continue
+                        issues.append({
+                            "category": CATEGORY_APP_PATHS,
+                            "hive": hive_name,
+                            "subkey": f"{base}\\{child}",
+                            "value_name": None,
+                            "kind": "key",
+                            "detail": child,
+                        })
+            except OSError:
+                continue
+        return issues
+
     @staticmethod
     def _read_value(key, name):
         try:
-            value, _vtype = winreg.QueryValueEx(key, name)
+            value, _vtype = winreg.QueryValueEx(key, name or "")
             return value
         except OSError:
             return None
