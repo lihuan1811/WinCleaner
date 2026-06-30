@@ -838,6 +838,7 @@ class CleanerMainWindow(QMainWindow):
         self.bx_thread = None
         self.bx_item_states = {}
         self.bx_rows = []
+        self._prime_process_cpu()
         self.active_animations = []
         self.account_service = LocalAccountService()
         self.account_state = self.account_service.current_state()
@@ -916,12 +917,34 @@ class CleanerMainWindow(QMainWindow):
 
         layout.addStretch(1)
 
-        footer = QLabel("推荐模式\n路径统计")
-        footer.setObjectName("sidebarFooter")
-        footer.setAlignment(Qt.AlignLeft | Qt.AlignBottom)
-        layout.addWidget(footer)
+        self.sidebar_footer_label = QLabel("等待扫描…")
+        self.sidebar_footer_label.setObjectName("sidebarFooter")
+        self.sidebar_footer_label.setAlignment(Qt.AlignLeft | Qt.AlignBottom)
+        self.sidebar_footer_label.setWordWrap(True)
+        layout.addWidget(self.sidebar_footer_label)
+        self.update_sidebar_footer()
 
         return sidebar
+
+    def update_sidebar_footer(self):
+        """用真实数据刷新侧边栏底部：清理模式 + 上次扫描可清理项/大小。"""
+        if not hasattr(self, "sidebar_footer_label"):
+            return
+        recommended = True
+        if hasattr(self, "recommended_checkbox"):
+            recommended = self.recommended_checkbox.isChecked()
+        mode_text = "推荐模式" if recommended else "全面模式"
+
+        count = len(getattr(self, "cleanable_items", []) or [])
+        total_bytes = 0
+        for item in getattr(self, "cleanable_items", []) or []:
+            if isinstance(item, dict):
+                total_bytes += item.get("size", 0) or 0
+        if count:
+            stats_text = f"可清理 {count} 项 / {self.format_size(total_bytes)}"
+        else:
+            stats_text = "路径统计：暂未扫描"
+        self.sidebar_footer_label.setText(f"{mode_text}\n{stats_text}")
 
     def _select_page(self, index):
         """切换主区域页面并更新侧边栏选中态。"""
@@ -2722,7 +2745,9 @@ class CleanerMainWindow(QMainWindow):
 
         rows.extend(self.startup_folder_items())
         rows.extend(self.populate_startup_service_items())
-        rows.extend(self._fallback_startup_rows())
+        # 仅在真实枚举不到任何启动项时才回退到示例数据，避免把假项混进真实列表
+        if not rows:
+            rows = self._fallback_startup_rows()
         return self._dedupe_optimizer_rows(rows)
 
     def _fallback_memory_rows(self):
@@ -2735,6 +2760,16 @@ class CleanerMainWindow(QMainWindow):
             {"columns": ["crashpad_handler.exe", "7.89MB", "0.00%"], "icon_hint": "crashpad", "action": "结束", "action_type": "kill_process_by_name", "process_name": "crashpad_handler.exe", "recommended": False},
             {"columns": ["CDriveCleanerSpirit.exe", "7.39MB", "0.00%"], "icon_hint": "cleaner", "action": "保留", "action_type": None, "recommended": False},
         ]
+
+    def _prime_process_cpu(self):
+        """初始化 psutil 每进程 CPU 采样基线，使后续刷新得到真实 CPU 占用。"""
+        if psutil is None:
+            return
+        try:
+            for _process in psutil.process_iter(["cpu_percent"]):
+                pass
+        except Exception:
+            pass
 
     def _windows_tasklist_rows(self):
         """psutil 不可用时，用 Windows 自带 tasklist 枚举真实进程，保证“结束”能直接关掉。"""
@@ -2793,6 +2828,7 @@ class CleanerMainWindow(QMainWindow):
         if psutil is not None:
             try:
                 total_memory = max(psutil.virtual_memory().total, 1)
+                cpu_cores = max(psutil.cpu_count() or 1, 1)
                 processes = []
                 for process in psutil.process_iter(["pid", "name", "memory_info", "cpu_percent"]):
                     try:
@@ -2807,7 +2843,7 @@ class CleanerMainWindow(QMainWindow):
                     pid = info.get("pid")
                     name = info.get("name") or f"PID {pid}"
                     memory_percent = rss / total_memory * 100
-                    cpu_percent = info.get("cpu_percent") or 0.0
+                    cpu_percent = (info.get("cpu_percent") or 0.0) / cpu_cores
                     current_process = pid == os.getpid()
                     rows.append({
                         "columns": [
@@ -2824,10 +2860,11 @@ class CleanerMainWindow(QMainWindow):
             except Exception:
                 rows = []
 
-        if len(rows) < 8:
+        if not rows:
             rows.extend(self._windows_tasklist_rows())
 
-        if len(rows) < 8:
+        # 仅在既没有 psutil 也没有 tasklist（基本只会发生在非 Windows）时才用示例数据
+        if not rows:
             rows.extend(self._fallback_memory_rows())
 
         return self._dedupe_optimizer_rows(rows)
@@ -4860,6 +4897,7 @@ class CleanerMainWindow(QMainWindow):
             self.clean_all_button.setEnabled(bool(self.cleanable_items))
             self.uncheck_items_outside_current_mode()
             self.update_selected_items()
+        self.update_sidebar_footer()
 
     def refresh_cleanable_totals(self):
         total_items = sum(len(items) for items in self.scan_results.values())
@@ -4881,6 +4919,7 @@ class CleanerMainWindow(QMainWindow):
             self.status_label.setText(
                 f"扫描完成，统计空间 {self.format_size(total_size)}，{mode_name}可释放 {self.format_size(cleanable_size)}"
             )
+        self.update_sidebar_footer()
         return total_items
 
     def category_icon_for_name(self, name):
