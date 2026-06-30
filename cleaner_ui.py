@@ -641,10 +641,74 @@ class SystemRepairThread(QThread):
             self.error_signal.emit(str(exc))
 
 
+class BXOptimizationThread(QThread):
+    """BoosterX 风格优化执行线程，避免批量命令阻塞 UI。"""
+    bx_progress_signal = pyqtSignal(str)
+    bx_item_finished_signal = pyqtSignal(str, bool, str)
+    bx_finished_signal = pyqtSignal(dict)
+    bx_error_signal = pyqtSignal(str)
+
+    def __init__(self, items):
+        super().__init__()
+        self.items = list(items)
+
+    def run(self):
+        summary = {"executed": 0, "failed": 0, "skipped": 0}
+        try:
+            for item in self.items:
+                title = item.get("title", "优化项")
+                command = item.get("command", "")
+                self.bx_progress_signal.emit(f"正在处理: {title}")
+                if not command:
+                    summary["skipped"] += 1
+                    self.bx_item_finished_signal.emit(title, False, "该项目仅展示或检查")
+                    continue
+
+                if not sys.platform.startswith("win"):
+                    summary["executed"] += 1
+                    self.bx_item_finished_signal.emit(
+                        title,
+                        True,
+                        f"将在 Windows 上执行: {command}",
+                    )
+                    continue
+
+                result = subprocess.run(
+                    command,
+                    shell=True,
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    errors="replace",
+                    timeout=120,
+                    **hidden_windows_subprocess_kwargs(),
+                )
+                output = "\n".join(
+                    part.strip()
+                    for part in (result.stdout, result.stderr)
+                    if part and part.strip()
+                )
+                if result.returncode == 0:
+                    summary["executed"] += 1
+                    self.bx_item_finished_signal.emit(title, True, output or "已处理")
+                else:
+                    summary["failed"] += 1
+                    self.bx_item_finished_signal.emit(
+                        title,
+                        False,
+                        output or f"命令返回 {result.returncode}",
+                    )
+            self.bx_finished_signal.emit(summary)
+        except Exception as exc:  # pragma: no cover - depends on host commands
+            self.bx_error_signal.emit(str(exc))
+
+
 # 侧边栏导航项：(标签, 页面构建方法名)
 NAV_ITEMS = [
     ("C盘清理", "_build_clean_page"),
     ("系统优化", "_build_optimize_page"),
+    ("BX(优化)", "_build_bx_page"),
     ("软件卸载", "_build_uninstall_page"),
     ("文件管理", "_build_file_page"),
     ("系统修复", "_build_repair_page"),
@@ -672,6 +736,10 @@ class CleanerMainWindow(QMainWindow):
         self.file_scan_thread = None
         self.defrag_thread = None
         self.fragment_grid_cells = []
+        self.bx_mode = "basic"
+        self.bx_active_category = "基础"
+        self.bx_category_buttons = {}
+        self.bx_thread = None
         self.active_animations = []
         self.account_service = LocalAccountService()
         self.account_state = self.account_service.current_state()
@@ -772,6 +840,12 @@ class CleanerMainWindow(QMainWindow):
             self.animate_page_transition(self.stack.currentWidget())
             if 0 <= index < len(self.nav_buttons):
                 self.animate_status_pulse(self.nav_buttons[index])
+
+    def page_index_for_label(self, label):
+        for index, (text, _builder) in enumerate(NAV_ITEMS):
+            if text == label:
+                return index
+        return 0
 
     # ------------------------------------------------------------------
     # 通用小组件
@@ -1184,6 +1258,501 @@ class CleanerMainWindow(QMainWindow):
         outer.addWidget(self.optimizer_status_label)
 
         return page
+
+    def _build_bx_page(self):
+        page = QWidget()
+        page.setObjectName("contentArea")
+        outer = QVBoxLayout(page)
+        outer.setContentsMargins(20, 18, 20, 18)
+        outer.setSpacing(12)
+
+        header = QVBoxLayout()
+        header.setSpacing(5)
+        page_title = QLabel("BX(优化)")
+        page_title.setObjectName("pageTitle")
+        page_subtitle = QLabel("参考 BoosterX 的基础设置工作流，提供基本和最佳两个模式，直接在软件内应用 Windows 优化项。")
+        page_subtitle.setObjectName("pageSubtitle")
+        page_subtitle.setWordWrap(True)
+        header.addWidget(page_title)
+        header.addWidget(page_subtitle)
+        outer.addLayout(header)
+
+        body = QHBoxLayout()
+        body.setSpacing(14)
+
+        category_panel = QFrame()
+        category_panel.setObjectName("featureCard")
+        category_panel.setFixedWidth(240)
+        category_layout = QVBoxLayout(category_panel)
+        category_layout.setContentsMargins(16, 16, 16, 16)
+        category_layout.setSpacing(8)
+
+        category_title = QLabel("我的调整")
+        category_title.setObjectName("featureCardTitle")
+        category_layout.addWidget(category_title)
+
+        self.bx_category_buttons = {}
+        for category in self.bx_category_order():
+            button = QPushButton(category)
+            button.setObjectName("featureButton" if category == self.bx_active_category else "cleanSecondaryButton")
+            button.setCursor(Qt.PointingHandCursor)
+            button.setMinimumHeight(34)
+            button.clicked.connect(lambda _checked=False, target=category: self.select_bx_category(target))
+            category_layout.addWidget(button)
+            self.bx_category_buttons[category] = button
+
+        category_layout.addSpacing(12)
+        quick_title = QLabel("快速方法")
+        quick_title.setObjectName("featureCardTitle")
+        category_layout.addWidget(quick_title)
+
+        quick_basic_button = QPushButton("基本")
+        quick_basic_button.setObjectName("cleanSecondaryButton")
+        quick_basic_button.clicked.connect(lambda: self.select_bx_mode("basic"))
+        quick_best_button = QPushButton("最佳")
+        quick_best_button.setObjectName("scanPrimaryButton")
+        quick_best_button.clicked.connect(lambda: self.select_bx_mode("best"))
+        category_layout.addWidget(quick_basic_button)
+        category_layout.addWidget(quick_best_button)
+        category_layout.addStretch(1)
+
+        main_panel = QVBoxLayout()
+        main_panel.setSpacing(10)
+
+        toolbar = QFrame()
+        toolbar.setObjectName("featureCard")
+        toolbar_layout = QHBoxLayout(toolbar)
+        toolbar_layout.setContentsMargins(14, 12, 14, 12)
+        toolbar_layout.setSpacing(10)
+
+        toolbar_title = QLabel("基础设置")
+        toolbar_title.setObjectName("featureCardTitle")
+        self.bx_basic_button = QPushButton("基本")
+        self.bx_basic_button.setMinimumWidth(96)
+        self.bx_basic_button.clicked.connect(lambda: self.select_bx_mode("basic"))
+        self.bx_best_button = QPushButton("最佳")
+        self.bx_best_button.setMinimumWidth(96)
+        self.bx_best_button.clicked.connect(lambda: self.select_bx_mode("best"))
+        bx_refresh_button = QPushButton("更新")
+        bx_refresh_button.setObjectName("cleanSecondaryButton")
+        bx_refresh_button.setMinimumWidth(96)
+        bx_refresh_button.clicked.connect(self.refresh_bx_page)
+        self.bx_apply_button = QPushButton("应用")
+        self.bx_apply_button.setObjectName("scanPrimaryButton")
+        self.bx_apply_button.setMinimumWidth(112)
+        self.bx_apply_button.clicked.connect(self.apply_bx_optimization)
+
+        toolbar_layout.addWidget(toolbar_title)
+        toolbar_layout.addStretch(1)
+        toolbar_layout.addWidget(self.bx_basic_button)
+        toolbar_layout.addWidget(self.bx_best_button)
+        toolbar_layout.addWidget(bx_refresh_button)
+        toolbar_layout.addWidget(self.bx_apply_button)
+        main_panel.addWidget(toolbar)
+
+        self.bx_table = QTreeWidget()
+        self.bx_table.setObjectName("optimizerTable")
+        self.bx_table.setColumnCount(4)
+        self.bx_table.setHeaderLabels(["优化项", "状态", "风险", "说明"])
+        self.bx_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.bx_table.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.bx_table.setAlternatingRowColors(True)
+        self.bx_table.setIconSize(QSize(20, 20))
+        self.bx_table.setRootIsDecorated(True)
+        self.bx_table.setItemsExpandable(True)
+        self.bx_table.itemChanged.connect(lambda _item, _column: self.update_bx_status())
+        bx_header = self.bx_table.header()
+        bx_header.setMinimumSectionSize(86)
+        bx_header.setSectionResizeMode(0, QHeaderView.Stretch)
+        bx_header.setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        bx_header.setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        bx_header.setSectionResizeMode(3, QHeaderView.Stretch)
+        main_panel.addWidget(self.bx_table, 1)
+
+        self.bx_status_label = QLabel("基本模式已就绪。")
+        self.bx_status_label.setObjectName("statusLabel")
+        main_panel.addWidget(self.bx_status_label)
+
+        body.addWidget(category_panel)
+        body.addLayout(main_panel, 1)
+        outer.addLayout(body, 1)
+
+        self.update_bx_mode_buttons()
+        self.populate_bx_categories()
+        self.populate_bx_items()
+        return page
+
+    def bx_category_order(self):
+        return [
+            "我的调整",
+            "基础",
+            "安全性",
+            "自定义",
+            "Nvidia 面板",
+            "电源管理",
+            "应用程序移除",
+            "清理",
+            "隐私",
+            "调整",
+            "自启动",
+            "中断",
+            "设备",
+            "网络适配器",
+            "任务",
+            "组件",
+            "过时",
+        ]
+
+    def bx_catalog(self):
+        return [
+            {
+                "category": "基础",
+                "title": "自动更新地图",
+                "target_state": "将被禁用",
+                "risk": "基础",
+                "description": "关闭离线地图自动下载和更新。",
+                "command": r'reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows\Maps" /v AutoDownloadAndUpdateMapData /t REG_DWORD /d 0 /f',
+                "icon_hint": "windows",
+                "basic": True,
+                "best": True,
+            },
+            {
+                "category": "基础",
+                "title": "商店应用程序的自动更新",
+                "target_state": "将被禁用",
+                "risk": "基础",
+                "description": "减少 Microsoft Store 后台自动更新占用。",
+                "command": r'reg add "HKLM\SOFTWARE\Policies\Microsoft\WindowsStore" /v AutoDownload /t REG_DWORD /d 2 /f',
+                "icon_hint": "windows",
+                "basic": True,
+                "best": True,
+            },
+            {
+                "category": "基础",
+                "title": "全局全屏优化（FSO）",
+                "target_state": "将被禁用",
+                "risk": "基础",
+                "description": "禁用游戏全屏优化，降低部分游戏输入延迟。",
+                "command": r'reg add "HKCU\System\GameConfigStore" /v GameDVR_FSEBehaviorMode /t REG_DWORD /d 2 /f',
+                "icon_hint": "game",
+                "basic": True,
+                "best": True,
+            },
+            {
+                "category": "基础",
+                "title": "游戏栏",
+                "target_state": "将被禁用",
+                "risk": "基础",
+                "description": "关闭 Game DVR 和游戏栏后台录制。",
+                "command": r'reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\GameDVR" /v AppCaptureEnabled /t REG_DWORD /d 0 /f',
+                "icon_hint": "game",
+                "basic": True,
+                "best": True,
+            },
+            {
+                "category": "基础",
+                "title": "交付优化",
+                "target_state": "将被调整",
+                "risk": "基础",
+                "description": "停止交付优化服务并改为按需启动。",
+                "command": r'cmd /c "sc stop DoSvc & sc config DoSvc start= demand"',
+                "icon_hint": "update",
+                "basic": True,
+                "best": True,
+            },
+            {
+                "category": "基础",
+                "title": "加速 Microsoft Edge 启动和后台运行",
+                "target_state": "将被禁用",
+                "risk": "基础",
+                "description": "关闭 Edge 启动增强和后台运行策略。",
+                "command": r'reg add "HKLM\SOFTWARE\Policies\Microsoft\Edge" /v StartupBoostEnabled /t REG_DWORD /d 0 /f & reg add "HKLM\SOFTWARE\Policies\Microsoft\Edge" /v BackgroundModeEnabled /t REG_DWORD /d 0 /f',
+                "icon_hint": "edge",
+                "basic": True,
+                "best": True,
+            },
+            {
+                "category": "基础",
+                "title": "索引",
+                "target_state": "将被禁用",
+                "risk": "谨慎",
+                "description": "停用 Windows Search 索引服务，适合低配或游戏环境。",
+                "command": r'cmd /c "sc stop WSearch & sc config WSearch start= disabled"',
+                "icon_hint": "search",
+                "basic": False,
+                "best": True,
+            },
+            {
+                "category": "基础",
+                "title": "SysMain（预取、Superfetch...）",
+                "target_state": "将被禁用",
+                "risk": "谨慎",
+                "description": "停用 SysMain 预取服务，SSD 游戏机常用。",
+                "command": r'cmd /c "sc stop SysMain & sc config SysMain start= disabled"',
+                "icon_hint": "windows",
+                "basic": False,
+                "best": True,
+            },
+            {
+                "category": "基础",
+                "title": "打印服务",
+                "target_state": "将被禁用",
+                "risk": "谨慎",
+                "description": "没有打印机时可停用 Print Spooler。",
+                "command": r'cmd /c "sc stop Spooler & sc config Spooler start= disabled"',
+                "icon_hint": "printer",
+                "basic": False,
+                "best": True,
+            },
+            {
+                "category": "基础",
+                "title": "诊断驱动程序",
+                "target_state": "将被禁用",
+                "risk": "谨慎",
+                "description": "停用 Diagnostic Policy Service 后台诊断。",
+                "command": r'cmd /c "sc stop DPS & sc config DPS start= disabled"',
+                "icon_hint": "driver",
+                "basic": False,
+                "best": True,
+            },
+            {
+                "category": "基础",
+                "title": "暂停 Windows 更新",
+                "target_state": "将被调整",
+                "risk": "谨慎",
+                "description": "停止 Windows Update 并设置为按需启动。",
+                "command": r'cmd /c "sc stop wuauserv & sc config wuauserv start= demand"',
+                "icon_hint": "update",
+                "basic": False,
+                "best": True,
+            },
+            {
+                "category": "基础",
+                "title": "OneDrive",
+                "target_state": "将被禁用",
+                "risk": "谨慎",
+                "description": "通过策略禁用 OneDrive 同步客户端。",
+                "command": r'reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows\OneDrive" /v DisableFileSyncNGSC /t REG_DWORD /d 1 /f',
+                "icon_hint": "onedrive",
+                "basic": False,
+                "best": True,
+            },
+            {
+                "category": "基础",
+                "title": "HAGS",
+                "target_state": "将被启用",
+                "risk": "谨慎",
+                "description": "启用硬件加速 GPU 调度，部分显卡需重启生效。",
+                "command": r'reg add "HKLM\SYSTEM\CurrentControlSet\Control\GraphicsDrivers" /v HwSchMode /t REG_DWORD /d 2 /f',
+                "icon_hint": "nvidia",
+                "basic": False,
+                "best": True,
+            },
+            {
+                "category": "安全性",
+                "title": "SmartScreen 后台提示",
+                "target_state": "仅检查",
+                "risk": "谨慎",
+                "description": "安全相关项目默认不直接处理，避免降低防护。",
+                "command": "",
+                "icon_hint": "defender",
+                "basic": False,
+                "best": False,
+            },
+            {
+                "category": "隐私",
+                "title": "遥测和体验改善",
+                "target_state": "将被限制",
+                "risk": "基础",
+                "description": "限制 Windows 遥测等级。",
+                "command": r'reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows\DataCollection" /v AllowTelemetry /t REG_DWORD /d 0 /f',
+                "icon_hint": "privacy",
+                "basic": True,
+                "best": True,
+            },
+            {
+                "category": "自启动",
+                "title": "Edge 自动启动批准项",
+                "target_state": "将被禁用",
+                "risk": "基础",
+                "description": "禁止 Edge 作为用户启动批准项自动运行。",
+                "command": r'reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run" /v MicrosoftEdgeAutoLaunch /t REG_BINARY /d 030000000000000000000000 /f',
+                "icon_hint": "edge",
+                "basic": False,
+                "best": True,
+            },
+        ]
+
+    def bx_mode_items(self):
+        if self.bx_mode == "best":
+            return [item for item in self.bx_catalog() if item.get("best")]
+        return [item for item in self.bx_catalog() if item.get("basic")]
+
+    def bx_visible_items(self):
+        items = self.bx_mode_items()
+        if self.bx_active_category == "我的调整":
+            return items
+        return [item for item in items if item.get("category") == self.bx_active_category]
+
+    def populate_bx_categories(self):
+        if not self.bx_category_buttons:
+            return
+        mode_items = self.bx_mode_items()
+        for category, button in self.bx_category_buttons.items():
+            if category == "我的调整":
+                count = len(mode_items)
+            else:
+                count = sum(1 for item in mode_items if item.get("category") == category)
+            button.setText(f"{category}    {count}" if count else category)
+            button.setObjectName("featureButton" if category == self.bx_active_category else "cleanSecondaryButton")
+            button.style().unpolish(button)
+            button.style().polish(button)
+
+    def select_bx_category(self, category):
+        self.bx_active_category = category
+        self.populate_bx_categories()
+        self.populate_bx_items()
+
+    def update_bx_mode_buttons(self):
+        if not hasattr(self, "bx_basic_button"):
+            return
+        self.bx_basic_button.setObjectName("scanPrimaryButton" if self.bx_mode == "basic" else "cleanSecondaryButton")
+        self.bx_best_button.setObjectName("scanPrimaryButton" if self.bx_mode == "best" else "cleanSecondaryButton")
+        for button in (self.bx_basic_button, self.bx_best_button):
+            button.style().unpolish(button)
+            button.style().polish(button)
+
+    def select_bx_mode(self, mode):
+        if mode == "best":
+            self.bx_mode = "best"
+        else:
+            self.bx_mode = "basic"
+        self.update_bx_mode_buttons()
+        self.populate_bx_categories()
+        self.populate_bx_items()
+
+    def refresh_bx_page(self):
+        self.populate_bx_categories()
+        self.populate_bx_items()
+        if hasattr(self, "bx_status_label"):
+            self.bx_status_label.setText("BX(优化) 项目已刷新。")
+            self.animate_status_pulse(self.bx_status_label)
+
+    def populate_bx_items(self):
+        if not hasattr(self, "bx_table"):
+            return
+        items = self.bx_visible_items()
+        self.bx_table.setUpdatesEnabled(False)
+        self.bx_table.blockSignals(True)
+        self.bx_table.clear()
+        for item in items:
+            row = QTreeWidgetItem()
+            row.setText(0, item["title"])
+            row.setText(1, item["target_state"])
+            row.setText(2, item["risk"])
+            row.setText(3, item["description"])
+            row.setToolTip(0, item["title"])
+            row.setToolTip(3, item["description"])
+            row.setFlags(row.flags() | Qt.ItemIsUserCheckable)
+            row.setCheckState(0, Qt.Checked)
+            row.setData(0, Qt.UserRole, item)
+            icon = self.category_icon_for_name(item.get("icon_hint") or item["title"])
+            if not icon.isNull():
+                row.setIcon(0, icon)
+
+            detail = QTreeWidgetItem(row)
+            detail.setText(0, "命令")
+            detail.setText(1, item.get("command") or "仅展示/检查")
+            detail.setText(2, item.get("category", ""))
+            detail.setText(3, "执行后部分项目需要重启或重新登录生效。")
+            detail.setToolTip(1, item.get("command") or "仅展示/检查")
+            row.setExpanded(False)
+            self.bx_table.addTopLevelItem(row)
+        self.bx_table.blockSignals(False)
+        self.bx_table.setUpdatesEnabled(True)
+        self.update_bx_status()
+
+    def selected_bx_items(self):
+        if not hasattr(self, "bx_table"):
+            return []
+        items = []
+        for index in range(self.bx_table.topLevelItemCount()):
+            row = self.bx_table.topLevelItem(index)
+            if row and row.checkState(0) == Qt.Checked:
+                payload = row.data(0, Qt.UserRole)
+                if payload:
+                    items.append(payload)
+        return items
+
+    def update_bx_status(self):
+        if not hasattr(self, "bx_status_label"):
+            return
+        selected_count = len(self.selected_bx_items())
+        total_count = self.bx_table.topLevelItemCount() if hasattr(self, "bx_table") else 0
+        mode_name = "最佳" if self.bx_mode == "best" else "基本"
+        self.bx_status_label.setText(
+            f"{mode_name}模式 / {self.bx_active_category} / 已勾选 {selected_count} 项 / 共 {total_count} 项"
+        )
+
+    def apply_bx_optimization(self):
+        if self.bx_thread and self.bx_thread.isRunning():
+            self.bx_status_label.setText("BX(优化) 正在执行，请稍后。")
+            self.animate_status_pulse(self.bx_status_label)
+            return
+
+        items = self.selected_bx_items()
+        if not items:
+            self.bx_status_label.setText("请先勾选需要应用的 BX 优化项。")
+            self.animate_status_pulse(self.bx_status_label)
+            return
+
+        self.set_bx_busy(True)
+        self.bx_status_label.setText(f"开始应用 BX(优化) {len(items)} 项...")
+        self.bx_thread = BXOptimizationThread(items)
+        self.bx_thread.bx_progress_signal.connect(self.on_bx_progress)
+        self.bx_thread.bx_item_finished_signal.connect(self.on_bx_item_finished)
+        self.bx_thread.bx_finished_signal.connect(self.on_bx_finished)
+        self.bx_thread.bx_error_signal.connect(self.on_bx_error)
+        self.bx_thread.finished.connect(self.bx_thread.deleteLater)
+        self.bx_thread.start()
+
+    def set_bx_busy(self, busy):
+        if hasattr(self, "bx_apply_button"):
+            self.bx_apply_button.setEnabled(not busy)
+            self.bx_apply_button.setText("应用中..." if busy else "应用")
+        if hasattr(self, "bx_table"):
+            self.bx_table.setEnabled(not busy)
+        if hasattr(self, "bx_basic_button"):
+            self.bx_basic_button.setEnabled(not busy)
+            self.bx_best_button.setEnabled(not busy)
+        for button in getattr(self, "bx_category_buttons", {}).values():
+            button.setEnabled(not busy)
+
+    def on_bx_progress(self, message):
+        self.bx_status_label.setText(message)
+
+    def on_bx_item_finished(self, title, success, message):
+        for index in range(self.bx_table.topLevelItemCount()):
+            row = self.bx_table.topLevelItem(index)
+            if row and row.text(0) == title:
+                row.setText(1, "已应用" if success else "跳过/失败")
+                row.setToolTip(1, message)
+                break
+
+    def on_bx_finished(self, summary):
+        self.set_bx_busy(False)
+        self.bx_thread = None
+        self.bx_status_label.setText(
+            f"BX(优化) 完成: 已处理 {summary.get('executed', 0)} 项，"
+            f"跳过 {summary.get('skipped', 0)} 项，失败 {summary.get('failed', 0)} 项。"
+        )
+        self.animate_status_pulse(self.bx_status_label)
+
+    def on_bx_error(self, message):
+        self.set_bx_busy(False)
+        self.bx_thread = None
+        self.bx_status_label.setText(f"BX(优化) 失败: {message}")
+        QMessageBox.warning(self, "BX(优化)", f"执行失败:\n{message}")
 
     def _build_uninstall_page(self):
         page = QWidget()
@@ -2861,7 +3430,7 @@ class CleanerMainWindow(QMainWindow):
 
     def show_installed_apps(self):
         """切到软件卸载页并刷新内置软件列表。"""
-        self._select_page(2)
+        self._select_page(self.page_index_for_label("软件卸载"))
         self.load_installed_apps(show_message=True)
 
     def load_installed_apps(self, show_message=False):

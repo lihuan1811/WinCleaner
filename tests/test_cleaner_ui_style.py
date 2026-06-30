@@ -228,6 +228,69 @@ def test_qt_uses_lightweight_opacity_animations():
     assert "resize" not in page_animation
 
 
+def test_qt_sidebar_has_bx_optimization_module():
+    source = Path("cleaner_ui.py").read_text(encoding="utf-8")
+
+    assert '("BX(优化)", "_build_bx_page")' in source
+    assert "def _build_bx_page" in source
+    assert "self.bx_mode" in source
+    assert "self.bx_active_category" in source
+    assert "def page_index_for_label" in source
+    show_apps = source.split("def show_installed_apps", 1)[1].split("def load_installed_apps", 1)[0]
+    assert 'self.page_index_for_label("软件卸载")' in show_apps
+    assert "self._select_page(2)" not in show_apps
+
+
+def test_qt_bx_module_has_basic_and_best_modes():
+    source = Path("cleaner_ui.py").read_text(encoding="utf-8")
+
+    assert "BX(优化)" in source
+    assert "基础设置" in source
+    assert "self.bx_basic_button = QPushButton(\"基本\")" in source
+    assert "self.bx_best_button = QPushButton(\"最佳\")" in source
+    assert "def select_bx_mode" in source
+    assert 'self.bx_mode = "basic"' in source
+    assert 'self.bx_mode = "best"' in source
+    assert "应用" in source
+
+
+def test_qt_bx_module_contains_boosterx_like_items():
+    source = Path("cleaner_ui.py").read_text(encoding="utf-8")
+
+    for label in [
+        "自动更新地图",
+        "商店应用程序的自动更新",
+        "全局全屏优化（FSO）",
+        "游戏栏",
+        "索引",
+        "SysMain（预取、Superfetch...）",
+        "打印服务",
+        "诊断驱动程序",
+        "暂停 Windows 更新",
+        "交付优化",
+        "加速 Microsoft Edge 启动和后台运行",
+        "OneDrive",
+        "HAGS",
+    ]:
+        assert label in source
+
+    assert "basic" in source
+    assert "best" in source
+
+
+def test_qt_bx_module_runs_without_blocking_or_manual_confirmation():
+    source = Path("cleaner_ui.py").read_text(encoding="utf-8")
+    apply_logic = source.split("def apply_bx_optimization", 1)[1].split("def set_bx_busy", 1)[0]
+
+    assert "class BXOptimizationThread(QThread)" in source
+    assert "bx_progress_signal" in source
+    assert "bx_item_finished_signal" in source
+    assert "bx_finished_signal" in source
+    assert "hidden_windows_subprocess_kwargs" in source
+    assert "subprocess.run" in source
+    assert "QMessageBox.question" not in apply_logic
+
+
 def test_qt_has_in_app_account_login_register_and_card_redeem():
     source = Path("cleaner_ui.py").read_text(encoding="utf-8")
 
