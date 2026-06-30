@@ -163,3 +163,19 @@ def test_qt_labels_have_room_for_chinese_actions():
     assert "button.setMinimumWidth(148)" in source
     assert "uninstall_button.setMinimumWidth(96)" in source
     assert "header_view.setMinimumSectionSize(86)" in source
+
+
+def test_qt_uses_lightweight_opacity_animations():
+    source = Path("cleaner_ui.py").read_text(encoding="utf-8")
+
+    assert "QPropertyAnimation" in source
+    assert "QGraphicsOpacityEffect" in source
+    assert "QEasingCurve.OutCubic" in source
+    assert "def animate_page_transition" in source
+    assert "def animate_status_pulse" in source
+    page_animation = source.split("def animate_page_transition", 1)[1].split("def animate_status_pulse", 1)[0]
+    assert 'b"opacity"' in source
+    assert "animation.setDuration(duration)" in source
+    assert "0.62, 1.0, 160" in page_animation
+    assert "geometry" not in page_animation
+    assert "resize" not in page_animation

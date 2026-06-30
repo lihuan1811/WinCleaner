@@ -20,8 +20,10 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QH
                             QFrame, QGridLayout, QStackedWidget, QScrollArea,
                             QFileDialog, QTabWidget, QTableWidget,
                             QTableWidgetItem, QHeaderView, QAbstractItemView,
-                            QFileIconProvider)
-from PyQt5.QtCore import Qt, QThread, pyqtSignal, QSize, QFileInfo
+                            QFileIconProvider, QGraphicsOpacityEffect)
+from PyQt5.QtCore import (
+    Qt, QThread, pyqtSignal, QSize, QFileInfo, QPropertyAnimation, QEasingCurve
+)
 from PyQt5.QtGui import QIcon, QFont, QPixmap
 
 from cleaner_logic import CleanerLogic
@@ -412,6 +414,7 @@ class CleanerMainWindow(QMainWindow):
         self.file_scan_root = ""
         self.file_large_items = []
         self.file_duplicate_groups = []
+        self.active_animations = []
 
         self.init_ui()
 
@@ -496,6 +499,7 @@ class CleanerMainWindow(QMainWindow):
 
     def _select_page(self, index):
         """切换主区域页面并更新侧边栏选中态。"""
+        previous_index = self.stack.currentIndex()
         self.stack.setCurrentIndex(index)
         for i, button in enumerate(self.nav_buttons):
             button.setObjectName(
@@ -504,10 +508,47 @@ class CleanerMainWindow(QMainWindow):
             # 重新应用样式表，让 objectName 变化即时生效
             button.style().unpolish(button)
             button.style().polish(button)
+        if index != previous_index:
+            self.animate_page_transition(self.stack.currentWidget())
+            if 0 <= index < len(self.nav_buttons):
+                self.animate_status_pulse(self.nav_buttons[index])
 
     # ------------------------------------------------------------------
     # 通用小组件
     # ------------------------------------------------------------------
+    def run_opacity_animation(self, widget, start_opacity, end_opacity, duration):
+        if widget is None:
+            return None
+
+        effect = QGraphicsOpacityEffect(widget)
+        effect.setOpacity(start_opacity)
+        widget.setGraphicsEffect(effect)
+
+        animation = QPropertyAnimation(effect, b"opacity", self)
+        animation.setDuration(duration)
+        animation.setStartValue(start_opacity)
+        animation.setEndValue(end_opacity)
+        animation.setEasingCurve(QEasingCurve.OutCubic)
+        self.active_animations.append(animation)
+
+        def cleanup():
+            if widget.graphicsEffect() is effect:
+                widget.setGraphicsEffect(None)
+            if animation in self.active_animations:
+                self.active_animations.remove(animation)
+
+        animation.finished.connect(cleanup)
+        animation.start()
+        return animation
+
+    def animate_page_transition(self, widget):
+        """页面切换只做短 opacity 动画，避免触发布局重算。"""
+        return self.run_opacity_animation(widget, 0.62, 1.0, 160)
+
+    def animate_status_pulse(self, widget):
+        """给按钮/状态文案一个轻量反馈，不改变尺寸。"""
+        return self.run_opacity_animation(widget, 0.55, 1.0, 140)
+
     def _make_stat_block(self, title, value="--", value_object_name="statValue"):
         frame = QFrame()
         frame.setObjectName("statBlock")
@@ -1898,6 +1939,7 @@ class CleanerMainWindow(QMainWindow):
         self.result_summary_label.setText("扫描进行中")
         self.selected_summary_label.setText("已选 0 项 / 0 B")
         self.status_label.setText("正在扫描系统，请稍候...")
+        self.animate_status_pulse(self.current_scan_path_label)
 
         # 启动扫描线程
         self.scan_thread = ScanThread(self.cleaner)
@@ -1926,6 +1968,7 @@ class CleanerMainWindow(QMainWindow):
         self.scan_button.setText("重新扫描")
         self.current_scan_path_label.setVisible(True)
         self.current_scan_path_label.setText("当前扫描: 扫描完成，正在整理结果")
+        self.animate_status_pulse(self.current_scan_path_label)
 
         total_items = self.refresh_cleanable_totals()
 
@@ -2349,6 +2392,7 @@ class CleanerMainWindow(QMainWindow):
         self.progress_bar.setValue(0)
         self.progress_bar.setRange(0, len(clean_items))
         self.status_label.setText("正在清理文件，请稍候...")
+        self.animate_status_pulse(self.status_label)
 
         # 启动清理线程
         self.clean_thread = CleanThread(self.cleaner, list(clean_items))
@@ -2382,6 +2426,7 @@ class CleanerMainWindow(QMainWindow):
             message += f"，{len(errors)} 个错误"
 
         self.status_label.setText(message)
+        self.animate_status_pulse(self.status_label)
         self.update_selected_items()
 
         # 如果有错误，显示错误日志
