@@ -830,11 +830,11 @@ class CleanerMainWindow(QMainWindow):
         self.recommended_checkbox.stateChanged.connect(self.on_clean_mode_changed)
 
         self.professional_checkbox = QCheckBox("专业")
-        self.professional_checkbox.setToolTip("专业模式允许清理 WinSxS、WindowsApps、Defender、EdgeCore 等高风险扫描项")
+        self.professional_checkbox.setToolTip("专业模式只清理 WinSxS、WindowsApps、Defender、EdgeCore 等专业项")
         self.professional_checkbox.stateChanged.connect(self.on_clean_mode_changed)
 
         self.select_all_checkbox = QCheckBox("全选")
-        self.select_all_checkbox.setToolTip("勾选/取消勾选当前模式下的全部可清理项")
+        self.select_all_checkbox.setToolTip("全选模式包含推荐项和专业项")
         self.select_all_checkbox.setEnabled(False)
         self.select_all_checkbox.stateChanged.connect(self.on_select_all_changed)
 
@@ -2638,7 +2638,7 @@ class CleanerMainWindow(QMainWindow):
 
         # 填充结果树
         self.populate_results_tree(results)
-        self.select_all_checkbox.setEnabled(bool(self.cleanable_items))
+        self.select_all_checkbox.setEnabled(total_items > 0)
         self.clean_all_button.setEnabled(bool(self.cleanable_items))
         self.update_selected_items()
 
@@ -2674,7 +2674,41 @@ class CleanerMainWindow(QMainWindow):
         return f"{path[:keep]} ... {path[-keep:]}"
 
     def professional_mode_enabled(self):
-        return hasattr(self, "professional_checkbox") and self.professional_checkbox.isChecked()
+        return self.current_clean_mode() == "professional"
+
+    def full_clean_mode_enabled(self):
+        return hasattr(self, "select_all_checkbox") and self.select_all_checkbox.isChecked()
+
+    def current_clean_mode(self):
+        if self.full_clean_mode_enabled():
+            return "all"
+        if hasattr(self, "professional_checkbox") and self.professional_checkbox.isChecked():
+            return "professional"
+        return "recommended"
+
+    def clean_mode_name(self):
+        names = {
+            "recommended": "推荐",
+            "professional": "专业",
+            "all": "全选",
+        }
+        return names.get(self.current_clean_mode(), "推荐")
+
+    def set_clean_mode(self, mode):
+        checkbox_map = {
+            "recommended": self.recommended_checkbox,
+            "professional": self.professional_checkbox,
+            "all": self.select_all_checkbox,
+        }
+        for checkbox in checkbox_map.values():
+            checkbox.blockSignals(True)
+        try:
+            self.recommended_checkbox.setChecked(mode == "recommended")
+            self.professional_checkbox.setChecked(mode == "professional")
+            self.select_all_checkbox.setChecked(mode == "all")
+        finally:
+            for checkbox in checkbox_map.values():
+                checkbox.blockSignals(False)
 
     @staticmethod
     def is_scan_only_item(item):
@@ -2682,7 +2716,12 @@ class CleanerMainWindow(QMainWindow):
         return bool(item.get("scan_only"))
 
     def allow_item_cleaning(self, item):
-        return not self.is_scan_only_item(item) or self.professional_mode_enabled()
+        mode = self.current_clean_mode()
+        if mode == "all":
+            return True
+        if mode == "professional":
+            return self.is_scan_only_item(item)
+        return not self.is_scan_only_item(item)
 
     def is_cleanable_item(self, item):
         return self.allow_item_cleaning(item)
@@ -2691,27 +2730,19 @@ class CleanerMainWindow(QMainWindow):
         """推荐/专业模式切换后，重新计算可清理项和勾选状态。"""
         sender = self.sender()
         if sender is self.professional_checkbox and self.professional_checkbox.isChecked():
-            self.recommended_checkbox.blockSignals(True)
-            self.recommended_checkbox.setChecked(False)
-            self.recommended_checkbox.blockSignals(False)
+            self.set_clean_mode("professional")
         elif sender is self.recommended_checkbox and self.recommended_checkbox.isChecked():
-            self.professional_checkbox.blockSignals(True)
-            self.professional_checkbox.setChecked(False)
-            self.professional_checkbox.blockSignals(False)
+            self.set_clean_mode("recommended")
         elif not self.recommended_checkbox.isChecked() and not self.professional_checkbox.isChecked():
-            self.recommended_checkbox.blockSignals(True)
-            self.recommended_checkbox.setChecked(True)
-            self.recommended_checkbox.blockSignals(False)
+            self.set_clean_mode("recommended")
 
         if self.scan_results:
             self.refresh_cleanable_totals()
             self.update_result_tree_cleanability()
-            self.select_all_checkbox.setEnabled(bool(self.cleanable_items))
+            self.select_all_checkbox.setEnabled(bool(self.scan_results))
             self.clean_all_button.setEnabled(bool(self.cleanable_items))
-            if self.select_all_checkbox.isChecked():
-                self.on_select_all_changed(Qt.Checked)
-            else:
-                self.update_selected_items()
+            self.uncheck_items_outside_current_mode()
+            self.update_selected_items()
 
     def refresh_cleanable_totals(self):
         total_items = sum(len(items) for items in self.scan_results.values())
@@ -2724,7 +2755,7 @@ class CleanerMainWindow(QMainWindow):
         ]
         cleanable_size = sum(item['size'] for item in self.cleanable_items)
         category_count = sum(1 for items in self.scan_results.values() if items)
-        mode_name = "专业" if self.professional_mode_enabled() else "推荐"
+        mode_name = self.clean_mode_name()
         self.cleanable_value_label.setText(self.format_size(cleanable_size))
         self.result_summary_label.setText(
             f"{mode_name}模式 / {category_count} 类 / {total_items} 项 / 统计 {self.format_size(total_size)} / 可清理 {self.format_size(cleanable_size)}"
@@ -2805,16 +2836,20 @@ class CleanerMainWindow(QMainWindow):
         item = child_item.data(0, Qt.UserRole) or {}
         cleanable = self.is_cleanable_item(item)
         scan_only = self.is_scan_only_item(item)
+        mode = self.current_clean_mode()
 
         child_item.setText(0, self.item_display_text(item))
         child_item.setDisabled(not cleanable)
         if not cleanable:
             child_item.setCheckState(0, Qt.Unchecked)
-            child_item.setToolTip(0, "仅统计路径，不会直接清理")
+            if mode == "professional":
+                child_item.setToolTip(0, "推荐项，请切换到推荐或全选模式清理")
+            else:
+                child_item.setToolTip(0, "专业项，请切换到专业或全选模式清理")
         elif scan_only:
-            child_item.setToolTip(0, "专业清理项，确认后可清理")
+            child_item.setToolTip(0, "专业清理项")
         else:
-            child_item.setToolTip(0, "")
+            child_item.setToolTip(0, "推荐清理项")
         return cleanable
 
     def update_result_tree_cleanability(self):
@@ -2914,8 +2949,47 @@ class CleanerMainWindow(QMainWindow):
         self.results_tree.blockSignals(False)
         self.results_tree.setUpdatesEnabled(True)
 
+    def uncheck_items_outside_current_mode(self):
+        self.results_tree.setUpdatesEnabled(False)
+        self.results_tree.blockSignals(True)
+        try:
+            for i in range(self.results_tree.topLevelItemCount()):
+                category_item = self.results_tree.topLevelItem(i)
+                checked_children = 0
+                cleanable_children = 0
+                for j in range(category_item.childCount()):
+                    child_item = category_item.child(j)
+                    item_data = child_item.data(0, Qt.UserRole) or {}
+                    if not self.is_cleanable_item(item_data):
+                        child_item.setCheckState(0, Qt.Unchecked)
+                    else:
+                        cleanable_children += 1
+                        if child_item.checkState(0) == Qt.Checked:
+                            checked_children += 1
+
+                if checked_children and checked_children == cleanable_children:
+                    category_item.setCheckState(0, Qt.Checked)
+                elif checked_children:
+                    category_item.setCheckState(0, Qt.PartiallyChecked)
+                else:
+                    category_item.setCheckState(0, Qt.Unchecked)
+        finally:
+            self.results_tree.blockSignals(False)
+            self.results_tree.setUpdatesEnabled(True)
+
     def on_select_all_changed(self, state):
-        """顶部“全选”勾选框：勾选/取消所有类别。"""
+        """顶部“全选”模式：勾选推荐项和专业项。"""
+        if state == Qt.Checked:
+            self.set_clean_mode("all")
+            if self.scan_results:
+                self.refresh_cleanable_totals()
+                self.update_result_tree_cleanability()
+        elif not self.recommended_checkbox.isChecked() and not self.professional_checkbox.isChecked():
+            self.set_clean_mode("recommended")
+            if self.scan_results:
+                self.refresh_cleanable_totals()
+                self.update_result_tree_cleanability()
+
         check_state = Qt.Checked if state == Qt.Checked else Qt.Unchecked
         self.results_tree.setUpdatesEnabled(False)
         self.results_tree.blockSignals(True)
@@ -3038,7 +3112,7 @@ class CleanerMainWindow(QMainWindow):
             'simulate': self.simulate_checkbox.isChecked(),
             'backup': self.backup_checkbox.isChecked(),
             'backup_dir': self.cleaner.backup_dir,
-            'allow_scan_only_clean': self.professional_mode_enabled(),
+            'allow_scan_only_clean': self.current_clean_mode() in {"professional", "all"},
         })
 
         # 开始清理

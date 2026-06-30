@@ -58,10 +58,26 @@ def test_qt_ui_has_recommended_professional_and_select_all_modes():
     assert "self.recommended_checkbox = QCheckBox(\"推荐\")" in source
     assert "self.professional_checkbox = QCheckBox(\"专业\")" in source
     assert "self.select_all_checkbox = QCheckBox(\"全选\")" in source
+    assert "def current_clean_mode" in source
     assert "allow_scan_only_clean" in source
     assert "def professional_mode_enabled" in source
     assert "def on_clean_mode_changed" in source
     assert "def allow_item_cleaning" in source
+
+
+def test_qt_professional_mode_is_not_select_all_mode():
+    source = Path("cleaner_ui.py").read_text(encoding="utf-8")
+    allow_logic = source.split("def allow_item_cleaning", 1)[1].split("def is_cleanable_item", 1)[0]
+    select_all_logic = source.split("def on_select_all_changed", 1)[1].split("def on_item_changed", 1)[0]
+
+    assert 'if mode == "all":' in allow_logic
+    assert "return True" in allow_logic
+    assert 'if mode == "professional":' in allow_logic
+    assert "return self.is_scan_only_item(item)" in allow_logic
+    assert "return not self.is_scan_only_item(item)" in allow_logic
+    assert 'self.set_clean_mode("all")' in select_all_logic
+    assert 'self.set_clean_mode("recommended")' in select_all_logic
+    assert 'self.current_clean_mode() in {"professional", "all"}' in source
 
 
 def test_qt_cleanup_mode_switch_updates_existing_tree_without_rebuilding():
