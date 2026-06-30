@@ -24,6 +24,49 @@ def hidden_windows_subprocess_kwargs():
     }
 
 
+def _console_encoding_candidates():
+    """Windows 控制台程序通常用 OEM/ANSI 代码页输出，优先尝试这些编码。"""
+    candidates = []
+    if sys.platform.startswith("win"):
+        try:
+            import ctypes
+
+            for getter in ("GetConsoleOutputCP", "GetOEMCP", "GetACP"):
+                try:
+                    code_page = getattr(ctypes.windll.kernel32, getter)()
+                    if code_page:
+                        candidates.append(f"cp{code_page}")
+                except Exception:
+                    continue
+        except Exception:
+            pass
+        candidates.append("cp936")  # 简体中文 Windows 默认
+    candidates.append("utf-8")
+    candidates.append("gbk")
+
+    seen = set()
+    ordered = []
+    for encoding in candidates:
+        if encoding not in seen:
+            seen.add(encoding)
+            ordered.append(encoding)
+    return ordered
+
+
+def decode_console_output(data):
+    """把命令行输出的原始字节按正确编码解码为中文文本，避免乱码。"""
+    if data is None:
+        return ""
+    if isinstance(data, str):
+        return data
+    for encoding in _console_encoding_candidates():
+        try:
+            return data.decode(encoding)
+        except (LookupError, UnicodeDecodeError):
+            continue
+    return data.decode("utf-8", errors="replace")
+
+
 class RepairRisk(Enum):
     SAFE = ("安全", "日常维护可执行")
     CAUTION = ("谨慎", "可能耗时较长或需要重启")
@@ -70,15 +113,16 @@ class SystemRepairService:
         result = subprocess.run(
             [executable, *arguments],
             capture_output=True,
-            text=True,
-            errors="replace",
             shell=False,
             stdin=subprocess.DEVNULL,
             **hidden_windows_subprocess_kwargs(),
         )
         output_parts = [
             value.strip()
-            for value in (result.stdout, result.stderr)
+            for value in (
+                decode_console_output(result.stdout),
+                decode_console_output(result.stderr),
+            )
             if value and value.strip()
         ]
         return result.returncode, "\n".join(output_parts) or "命令无输出"

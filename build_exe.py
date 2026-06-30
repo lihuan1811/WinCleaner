@@ -23,6 +23,8 @@ def build_pyinstaller_command():
         '--icon=icons/cleaner.ico',
         f'--add-data=icons{add_data_separator}icons',
         f'--add-data=rules{add_data_separator}rules',
+        '--hidden-import=psutil',
+        '--collect-submodules=psutil',
         '--noconfirm',
         '--clean',
         ENTRY_SCRIPT,

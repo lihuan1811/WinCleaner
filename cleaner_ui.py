@@ -28,14 +28,14 @@ from PyQt5.QtCore import (
     Qt, QThread, pyqtSignal, QSize, QFileInfo, QPropertyAnimation, QEasingCurve,
     QTimer
 )
-from PyQt5.QtGui import QIcon, QFont, QPixmap
+from PyQt5.QtGui import QIcon, QFont, QPixmap, QColor
 
 from cleaner_logic import CleanerLogic
 from category_display import category_tree_label
 from config import APP_NAME
 from local_account_service import AccountError, DEMO_CARD_CODES, LocalAccountService
 from qt_backup_manager import QtBackupManagerDialog
-from system_repair import SystemRepairService
+from system_repair import SystemRepairService, decode_console_output
 
 
 APP_DISPLAY_NAME = "C盘清理精灵"
@@ -558,15 +558,16 @@ class DefragThread(QThread):
                 command,
                 shell=True,
                 capture_output=True,
-                text=True,
-                errors="replace",
                 stdin=subprocess.DEVNULL,
                 timeout=60 * 60,
                 **hidden_windows_subprocess_kwargs(),
             )
             output = "\n".join(
                 part.strip()
-                for part in (result.stdout, result.stderr)
+                for part in (
+                    decode_console_output(result.stdout),
+                    decode_console_output(result.stderr),
+                )
                 if part and part.strip()
             )
             payload = self.parse_output(output)
@@ -679,14 +680,15 @@ class BXOptimizationThread(QThread):
                     stdin=subprocess.DEVNULL,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
-                    text=True,
-                    errors="replace",
                     timeout=120,
                     **hidden_windows_subprocess_kwargs(),
                 )
                 output = "\n".join(
                     part.strip()
-                    for part in (result.stdout, result.stderr)
+                    for part in (
+                        decode_console_output(result.stdout),
+                        decode_console_output(result.stderr),
+                    )
                     if part and part.strip()
                 )
                 if result.returncode == 0:
@@ -729,6 +731,7 @@ class CleanerMainWindow(QMainWindow):
         self.icon_provider = QFileIconProvider()
         self.nav_buttons = []
         self.optimizer_tables = {}
+        self.optimizer_handled_keys = set()
         self.uninstall_apps = []
         self.file_scan_root = ""
         self.file_large_items = []
@@ -2193,6 +2196,31 @@ class CleanerMainWindow(QMainWindow):
             )
             table.setItemWidget(item, table.columnCount() - 1, action_button)
 
+            if self._optimizer_row_key(payload) in self.optimizer_handled_keys:
+                self._mark_optimizer_item_done(item, action_button)
+
+    @staticmethod
+    def _optimizer_row_key(row):
+        """为优化项生成稳定标识，用于记录是否已处理。"""
+        columns = row.get("columns", [])
+        return (
+            "|".join(str(value).strip().lower() for value in columns[:2]),
+            str(row.get("command", "")).strip().lower(),
+            str(row.get("action_type", "")),
+        )
+
+    def _mark_optimizer_item_done(self, item, action_button):
+        """把已执行的优化项渲染成“已处理”，给用户明确反馈。"""
+        base_text = item.text(0)
+        if not base_text.startswith("✓"):
+            item.setText(0, f"✓ {base_text}")
+        if item.flags() & Qt.ItemIsUserCheckable:
+            item.setCheckState(0, Qt.Unchecked)
+        item.setForeground(0, QColor("#0D9488"))
+        if action_button is not None:
+            action_button.setText("已处理")
+            action_button.setEnabled(False)
+
     def _make_optimizer_tree_item(self, payload, column_count, is_child=False):
         item = QTreeWidgetItem()
         columns = payload.get("columns", [])
@@ -2481,6 +2509,58 @@ class CleanerMainWindow(QMainWindow):
             {"columns": ["CDriveCleanerSpirit.exe", "7.39MB", "0.00%"], "icon_hint": "cleaner", "action": "保留", "action_type": None, "recommended": False},
         ]
 
+    def _windows_tasklist_rows(self):
+        """psutil 不可用时，用 Windows 自带 tasklist 枚举真实进程，保证“结束”能直接关掉。"""
+        if not sys.platform.startswith("win"):
+            return []
+        try:
+            result = subprocess.run(
+                "tasklist /FO CSV /NH",
+                shell=True,
+                capture_output=True,
+                stdin=subprocess.DEVNULL,
+                timeout=20,
+                **hidden_windows_subprocess_kwargs(),
+            )
+        except Exception:
+            return []
+
+        import csv
+        import io
+
+        text = decode_console_output(result.stdout)
+        entries = []
+        for parts in csv.reader(io.StringIO(text)):
+            if len(parts) < 5:
+                continue
+            name = parts[0].strip()
+            try:
+                pid = int(parts[1])
+            except (ValueError, IndexError):
+                continue
+            digits = "".join(ch for ch in parts[4] if ch.isdigit())
+            rss = int(digits) * 1024 if digits else 0
+            entries.append((rss, name, pid))
+
+        entries.sort(reverse=True)
+        rows = []
+        for rss, name, pid in entries[:60]:
+            current = pid == os.getpid()
+            rows.append({
+                "columns": [
+                    f"{name}  (PID {pid})",
+                    self.format_size(rss) if rss else "--",
+                    "--",
+                ],
+                "icon_hint": name,
+                "action": "保留" if current else "结束",
+                "action_type": None if current else "kill_process",
+                "pid": pid,
+                "process_name": name,
+                "recommended": False,
+            })
+        return rows
+
     def populate_memory_items(self):
         rows = []
         if psutil is not None:
@@ -2516,6 +2596,9 @@ class CleanerMainWindow(QMainWindow):
                     })
             except Exception:
                 rows = []
+
+        if len(rows) < 8:
+            rows.extend(self._windows_tasklist_rows())
 
         if len(rows) < 8:
             rows.extend(self._fallback_memory_rows())
@@ -3008,18 +3091,23 @@ class CleanerMainWindow(QMainWindow):
 
     def run_optimizer_row_action(self, row, confirm=False, quiet=False):
         action_type = row.get("action_type")
+        handled = False
         if action_type == "disable_startup":
-            return self.disable_startup_item(row, confirm=confirm)
-        if action_type in {"kill_process", "kill_process_by_name"}:
-            return self.kill_process_item(row, confirm=confirm)
-        if action_type == "command" and row.get("command"):
+            handled = self.disable_startup_item(row, confirm=confirm)
+        elif action_type in {"kill_process", "kill_process_by_name"}:
+            handled = self.kill_process_item(row, confirm=confirm)
+        elif action_type == "command" and row.get("command"):
             self._run_shell_command(row.get("columns", ["系统优化"])[0], row["command"], quiet=quiet)
-            return True
+            handled = True
+        else:
+            if not quiet and hasattr(self, "optimizer_status_label"):
+                self.optimizer_status_label.setText("该项目仅展示或检查，不需要执行处理。")
+                self.animate_status_pulse(self.optimizer_status_label)
+            return False
 
-        if not quiet and hasattr(self, "optimizer_status_label"):
-            self.optimizer_status_label.setText("该项目仅展示或检查，不需要执行处理。")
-            self.animate_status_pulse(self.optimizer_status_label)
-        return False
+        if handled:
+            self.optimizer_handled_keys.add(self._optimizer_row_key(row))
+        return handled
 
     def _run_shell_command(self, label, command, quiet=False):
         if sys.platform.startswith("win"):
