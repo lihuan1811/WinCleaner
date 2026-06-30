@@ -35,6 +35,7 @@ from category_display import category_tree_label
 from config import APP_NAME
 from local_account_service import AccountError, DEMO_CARD_CODES, LocalAccountService
 from qt_backup_manager import QtBackupManagerDialog
+from registry_cleaner import RegistryCleanerService
 from system_repair import SystemRepairService, decode_console_output
 
 
@@ -752,6 +753,7 @@ class CleanerMainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.cleaner = CleanerLogic()
+        self.registry_cleaner = RegistryCleanerService()
         self.scan_results = {}
         self.selected_items = []
         self.cleanable_items = []
@@ -2467,9 +2469,10 @@ class CleanerMainWindow(QMainWindow):
                     rows.append({
                         "columns": [display_name, f"HKLM\\{services_key}\\{service_name}"],
                         "icon_hint": display_name,
-                        "action": "查看",
+                        "action": "禁用",
+                        "action_type": "disable_service",
+                        "service_name": service_name,
                         "command": "services.msc",
-                        "action_type": None,
                         "recommended": False,
                     })
         except OSError:
@@ -2692,23 +2695,41 @@ class CleanerMainWindow(QMainWindow):
             {
                 "columns": ["启用大系统缓存以提高性能"],
                 "icon_hint": "windows",
-                "action": "检查",
-                "action_type": None,
+                "action": "优化",
+                "action_type": "command",
+                "command": r'reg add "HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management" /v LargeSystemCache /t REG_DWORD /d 1 /f',
                 "recommended": False,
+                "children": self.optimizer_detail_children(
+                    [r"HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management\LargeSystemCache = 1"],
+                    2,
+                    icon_hint="registry",
+                ),
             },
             {
                 "columns": ["禁止系统内核与驱动程序分页到硬盘"],
                 "icon_hint": "windows",
-                "action": "检查",
-                "action_type": None,
+                "action": "优化",
+                "action_type": "command",
+                "command": r'reg add "HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management" /v DisablePagingExecutive /t REG_DWORD /d 1 /f',
                 "recommended": False,
+                "children": self.optimizer_detail_children(
+                    [r"HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management\DisablePagingExecutive = 1"],
+                    2,
+                    icon_hint="registry",
+                ),
             },
             {
                 "columns": ["系统自动管理文件管理系统缓存"],
                 "icon_hint": "windows",
-                "action": "检查",
-                "action_type": None,
+                "action": "优化",
+                "action_type": "command",
+                "command": r'reg add "HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management" /v LargeSystemCache /t REG_DWORD /d 0 /f',
                 "recommended": False,
+                "children": self.optimizer_detail_children(
+                    [r"HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management\LargeSystemCache = 0"],
+                    2,
+                    icon_hint="registry",
+                ),
             },
             {
                 "columns": ["将Windows预读调整为关闭预读"],
@@ -2726,16 +2747,36 @@ class CleanerMainWindow(QMainWindow):
             {
                 "columns": ["禁用处理器的幽灵和熔断补丁"],
                 "icon_hint": "windows",
-                "action": "检查",
-                "action_type": None,
+                "action": "优化",
+                "action_type": "command",
+                "command": (
+                    r'reg add "HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management" '
+                    r'/v FeatureSettingsOverride /t REG_DWORD /d 3 /f & '
+                    r'reg add "HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management" '
+                    r'/v FeatureSettingsOverrideMask /t REG_DWORD /d 3 /f'
+                ),
                 "recommended": False,
+                "children": self.optimizer_detail_children(
+                    [
+                        r"HKLM\...\Memory Management\FeatureSettingsOverride = 3",
+                        r"HKLM\...\Memory Management\FeatureSettingsOverrideMask = 3",
+                    ],
+                    2,
+                    icon_hint="registry",
+                ),
             },
             {
                 "columns": ["关闭TSX漏洞补丁"],
                 "icon_hint": "windows",
-                "action": "检查",
-                "action_type": None,
+                "action": "优化",
+                "action_type": "command",
+                "command": r'reg add "HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\Kernel" /v DisableTsx /t REG_DWORD /d 0 /f',
                 "recommended": False,
+                "children": self.optimizer_detail_children(
+                    [r"HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\Kernel\DisableTsx = 0"],
+                    2,
+                    icon_hint="registry",
+                ),
             },
             {
                 "columns": ["Windows 启动优化功能（碎片整理预取）"],
@@ -2918,9 +2959,13 @@ class CleanerMainWindow(QMainWindow):
             {
                 "columns": ["系统通知区及图标缓存"],
                 "icon_hint": "windows",
-                "action": "检查",
-                "action_type": None,
+                "action": "清理",
+                "action_type": "command",
                 "recommended": False,
+                "command": (
+                    r'reg delete "HKCU\Software\Classes\Local Settings\Software\Microsoft\Windows\CurrentVersion\TrayNotify" /v IconStreams /f & '
+                    r'reg delete "HKCU\Software\Classes\Local Settings\Software\Microsoft\Windows\CurrentVersion\TrayNotify" /v PastIconsStream /f'
+                ),
                 "children": self.optimizer_detail_children(
                     [
                         r"HKCU\Software\Classes\Local Settings\Software\Microsoft\Windows\CurrentVersion\TrayNotify",
@@ -2933,9 +2978,14 @@ class CleanerMainWindow(QMainWindow):
             {
                 "columns": ["系统通知区及图标缓存"],
                 "icon_hint": "windows",
-                "action": "检查",
-                "action_type": None,
+                "action": "清理",
+                "action_type": "command",
                 "recommended": False,
+                "command": (
+                    r'cmd /c del /f /q "%LOCALAPPDATA%\IconCache.db" '
+                    r'"%LOCALAPPDATA%\Microsoft\Windows\Explorer\iconcache_*" '
+                    r'"%LOCALAPPDATA%\Microsoft\Windows\Explorer\thumbcache_*"'
+                ),
                 "children": self.optimizer_detail_children(
                     [
                         r"%LOCALAPPDATA%\Microsoft\Windows\Explorer\iconcache_*",
@@ -2960,8 +3010,12 @@ class CleanerMainWindow(QMainWindow):
             {
                 "columns": ["程序安装信息"],
                 "icon_hint": "windows",
-                "action": "检查",
-                "action_type": None,
+                "action": "清理",
+                "action_type": "command",
+                "command": (
+                    r'cmd /c del /f /q "%SystemRoot%\Panther\*.log" '
+                    r'"%SystemRoot%\INF\setupapi.dev.log" "%SystemRoot%\setupact.log"'
+                ),
                 "children": self.optimizer_detail_children(
                     [
                         r"C:\Windows\Panther",
@@ -2975,9 +3029,13 @@ class CleanerMainWindow(QMainWindow):
             {
                 "columns": ["快速访问的缓存数据存储"],
                 "icon_hint": "windows",
-                "action": "检查",
-                "action_type": None,
+                "action": "清理",
+                "action_type": "command",
                 "recommended": False,
+                "command": (
+                    r'cmd /c del /f /q "%APPDATA%\Microsoft\Windows\Recent\AutomaticDestinations\*" '
+                    r'"%APPDATA%\Microsoft\Windows\Recent\CustomDestinations\*"'
+                ),
                 "children": self.optimizer_detail_children(
                     [
                         r"%APPDATA%\Microsoft\Windows\Recent\AutomaticDestinations",
@@ -2990,8 +3048,14 @@ class CleanerMainWindow(QMainWindow):
             {
                 "columns": ["IE 浏览器自动完成"],
                 "icon_hint": "ie",
-                "action": "检查",
-                "action_type": None,
+                "action": "清理",
+                "action_type": "command",
+                "command": (
+                    r'reg delete "HKCU\Software\Microsoft\Internet Explorer\TypedURLs" /f & '
+                    r'reg delete "HKCU\Software\Microsoft\Internet Explorer\IntelliForms\Storage1" /f & '
+                    r'reg delete "HKCU\Software\Microsoft\Internet Explorer\IntelliForms\Storage2" /f & '
+                    r"RunDll32.exe InetCpl.cpl,ClearMyTracksByProcess 16"
+                ),
                 "children": self.optimizer_detail_children(
                     [
                         r"HKCU\Software\Microsoft\Internet Explorer\TypedURLs",
@@ -3016,24 +3080,65 @@ class CleanerMainWindow(QMainWindow):
         ]
 
     def populate_registry_items(self):
-        return [
-            {"columns": ["缺失的共享 DLL"], "icon_hint": "registry", "action": "检查", "action_type": None, "recommended": False, "children": self.optimizer_detail_children([r"HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\SharedDLLs"], 2)},
-            {"columns": ["未使用的文件扩展名"], "icon_hint": "registry", "action": "检查", "action_type": None, "recommended": False, "children": self.optimizer_detail_children([".bak", ".cfg", ".idx", ".ipa", ".itc2", ".itdb", ".itl", ".map", ".mdb", ".pls", ".pptx", ".pst", ".rar"], 2)},
-            {"columns": ["无效的默认图标"], "icon_hint": "registry", "action": "检查", "action_type": None, "recommended": False, "children": self.optimizer_detail_children([r"HKCR\*\DefaultIcon", r"HKCR\Applications\*\DefaultIcon"], 2)},
-            {"columns": ["应用程序打开方式文件问题"], "icon_hint": "registry", "action": "检查", "action_type": None, "recommended": False, "children": self.optimizer_detail_children([r"HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts", r"HKCR\Applications"], 2)},
-            {"columns": ["CLSID问题"], "icon_hint": "registry", "action": "检查", "action_type": None, "recommended": False, "children": self.optimizer_detail_children([r"HKCR\CLSID\*\InprocServer32", r"HKCR\Wow6432Node\CLSID\*\InprocServer32"], 2)},
-            {"columns": ["CLSID问题"], "icon_hint": "registry", "action": "检查", "action_type": None, "recommended": False, "children": self.optimizer_detail_children([r"HKCR\CLSID\*\LocalServer32", r"HKCR\Wow6432Node\CLSID\*\LocalServer32"], 2)},
-            {"columns": ["CLSID问题"], "icon_hint": "registry", "action": "检查", "action_type": None, "recommended": False, "children": self.optimizer_detail_children([r"HKCR\Interface", r"HKCR\TypeLib"], 2)},
-            {"columns": ["CLSID问题"], "icon_hint": "registry", "action": "检查", "action_type": None, "recommended": False, "children": self.optimizer_detail_children([r"HKLM\SOFTWARE\Classes\CLSID", r"HKCU\SOFTWARE\Classes\CLSID"], 2)},
-            {"columns": ["CLSID问题"], "icon_hint": "registry", "action": "检查", "action_type": None, "recommended": False, "children": self.optimizer_detail_children([r"HKCR\AppID", r"HKCR\Component Categories"], 2)},
-            {"columns": ["应用程序卸载残留"], "icon_hint": "registry", "action": "检查", "action_type": None, "recommended": False, "children": self.optimizer_detail_children([r"HKLM\Software\Microsoft\Windows\CurrentVersion\Uninstall"], 2)},
-            {"columns": ["应用程序卸载残留"], "icon_hint": "registry", "action": "检查", "action_type": None, "recommended": False, "children": self.optimizer_detail_children([r"HKLM\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall"], 2)},
-            {"columns": ["应用程序卸载残留"], "icon_hint": "registry", "action": "检查", "action_type": None, "recommended": False, "children": self.optimizer_detail_children([r"HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall"], 2)},
-            {"columns": ["应用程序卸载残留"], "icon_hint": "registry", "action": "检查", "action_type": None, "recommended": False, "children": self.optimizer_detail_children([r"HKCR\Installer\Products", r"HKLM\SOFTWARE\Classes\Installer\Products"], 2)},
-            {"columns": ["无效的防火墙规则"], "icon_hint": "registry", "action": "检查", "action_type": None, "recommended": False, "children": self.optimizer_detail_children([r"HKLM\SYSTEM\CurrentControlSet\Services\SharedAccess\Parameters\FirewallPolicy\FirewallRules"], 2)},
-            {"columns": ["Windows 兼容性助手功能的记忆库"], "icon_hint": "registry", "action": "检查", "action_type": None, "recommended": False, "children": self.optimizer_detail_children([r"HKCU\Software\Microsoft\Windows NT\CurrentVersion\AppCompatFlags\Compatibility Assistant\Store"], 2)},
-            {"columns": ["统计和管理用户界面交互行为"], "icon_hint": "registry", "action": "检查", "action_type": None, "recommended": False, "children": self.optimizer_detail_children([r"HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\UserAssist"], 2)},
+        rows = []
+
+        # 真实扫描：缺失的共享 DLL、应用程序卸载残留（可一键安全清理，删除前自动备份）
+        try:
+            issues = self.registry_cleaner.scan()
+        except Exception:  # pragma: no cover - 注册表访问异常兜底
+            issues = []
+        for issue in issues:
+            rows.append({
+                "columns": [f"[{issue['category']}] {issue['detail']}"],
+                "icon_hint": "registry",
+                "action": "清理",
+                "action_type": "registry_delete",
+                "registry": issue,
+                "recommended": True,
+                "children": self.optimizer_detail_children(
+                    [self.registry_cleaner.issue_location(issue)], 2, icon_hint="registry"
+                ),
+            })
+
+        # 高风险类别不自动删除，点击「检查」直接打开注册表编辑器人工核对
+        rows.extend(self._registry_inspect_catalog())
+
+        if not rows:
+            rows = [{
+                "columns": ["未发现可自动清理的注册表无效项"],
+                "icon_hint": "registry",
+                "action": "检查",
+                "action_type": None,
+                "recommended": False,
+            }]
+        return rows
+
+    def _registry_inspect_catalog(self):
+        catalog = [
+            ("未使用的文件扩展名", r"HKEY_CLASSES_ROOT"),
+            ("无效的默认图标", r"HKEY_CLASSES_ROOT\*\DefaultIcon"),
+            ("应用程序打开方式文件问题", r"HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts"),
+            ("CLSID问题", r"HKEY_CLASSES_ROOT\CLSID"),
+            ("CLSID问题", r"HKEY_CLASSES_ROOT\Wow6432Node\CLSID"),
+            ("CLSID问题", r"HKEY_CLASSES_ROOT\Interface"),
+            ("CLSID问题", r"HKEY_CLASSES_ROOT\TypeLib"),
+            ("CLSID问题", r"HKEY_CLASSES_ROOT\AppID"),
+            ("无效的防火墙规则", r"HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Services\SharedAccess\Parameters\FirewallPolicy\FirewallRules"),
+            ("Windows 兼容性助手功能的记忆库", r"HKEY_CURRENT_USER\Software\Microsoft\Windows NT\CurrentVersion\AppCompatFlags\Compatibility Assistant\Store"),
+            ("统计和管理用户界面交互行为", r"HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Explorer\UserAssist"),
         ]
+        rows = []
+        for name, reg_path in catalog:
+            rows.append({
+                "columns": [name],
+                "icon_hint": "registry",
+                "action": "检查",
+                "action_type": "open_regedit",
+                "reg_path": reg_path,
+                "recommended": False,
+                "children": self.optimizer_detail_children([reg_path], 2, icon_hint="registry"),
+            })
+        return rows
 
     def set_current_optimizer_checked(self, state):
         table = self.optimizer_tabs.currentWidget()
@@ -3118,6 +3223,12 @@ class CleanerMainWindow(QMainWindow):
         handled = False
         if action_type == "disable_startup":
             handled = self.disable_startup_item(row, confirm=confirm)
+        elif action_type == "disable_service":
+            handled = self.disable_service_item(row, confirm=confirm)
+        elif action_type == "registry_delete" and row.get("registry"):
+            handled = self.delete_registry_issue(row, confirm=confirm)
+        elif action_type == "open_regedit" and row.get("reg_path"):
+            handled = self.open_registry_editor(row["reg_path"], quiet=quiet)
         elif action_type in {"kill_process", "kill_process_by_name"}:
             handled = self.kill_process_item(row, confirm=confirm)
         elif action_type == "command" and row.get("command"):
@@ -3129,7 +3240,7 @@ class CleanerMainWindow(QMainWindow):
                 self.animate_status_pulse(self.optimizer_status_label)
             return False
 
-        if handled:
+        if handled and action_type != "open_regedit":
             self.optimizer_handled_keys.add(self._optimizer_row_key(row))
         return handled
 
@@ -3174,6 +3285,99 @@ class CleanerMainWindow(QMainWindow):
             return True
         except Exception as exc:  # pragma: no cover - Windows registry dependent
             QMessageBox.warning(self, "禁用启动项", f"禁用失败: {exc}")
+            return False
+
+    def disable_service_item(self, row, confirm=False):
+        service = row.get("service_name")
+        display = row.get("columns", ["服务"])[0]
+        if not service:
+            return False
+        if not sys.platform.startswith("win"):
+            QMessageBox.information(self, "系统服务", "禁用服务功能将在 Windows 上执行。")
+            return False
+        if confirm:
+            answer = QMessageBox.question(
+                self,
+                "禁用服务",
+                f"确定禁用并停止服务“{display}”吗？\n\n部分系统服务被禁用后可能影响相关功能，"
+                f"如需恢复可在“服务”中将启动类型改回自动/手动。",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No,
+            )
+            if answer != QMessageBox.Yes:
+                return False
+        try:
+            subprocess.run(
+                f'sc stop "{service}"',
+                shell=True,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                **hidden_windows_subprocess_kwargs(),
+            )
+            result = subprocess.run(
+                f'sc config "{service}" start= disabled',
+                shell=True,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                **hidden_windows_subprocess_kwargs(),
+            )
+            if result.returncode != 0:
+                QMessageBox.warning(self, "禁用服务", "禁用失败，请用管理员身份运行后重试。")
+                return False
+            return True
+        except Exception as exc:  # pragma: no cover - Windows service dependent
+            QMessageBox.warning(self, "禁用服务", f"禁用失败: {exc}")
+            return False
+
+    def delete_registry_issue(self, row, confirm=False):
+        issue = row.get("registry")
+        if not issue:
+            return False
+        if not self.registry_cleaner.available():
+            if not sys.platform.startswith("win"):
+                QMessageBox.information(self, "注册表清理", "注册表清理功能将在 Windows 上执行。")
+            return False
+        if confirm:
+            answer = QMessageBox.question(
+                self,
+                "注册表清理",
+                f"确定清理该注册表无效项吗？\n\n{self.registry_cleaner.issue_location(issue)}\n\n"
+                f"删除前会自动导出 .reg 备份到备份目录，可随时双击还原。",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No,
+            )
+            if answer != QMessageBox.Yes:
+                return False
+        backup_dir = os.path.join(self.cleaner.backup_dir, "registry_backup")
+        self.registry_cleaner.export_backup(issue, backup_dir)
+        if self.registry_cleaner.delete_issue(issue):
+            return True
+        QMessageBox.warning(self, "注册表清理", "清理失败，请用管理员身份运行后重试。")
+        return False
+
+    def open_registry_editor(self, reg_path, quiet=False):
+        if not sys.platform.startswith("win"):
+            if not quiet:
+                QMessageBox.information(self, "注册表", f"将在 Windows 上打开注册表编辑器并定位:\n{reg_path}")
+            return True
+        try:
+            import winreg
+            last_key = reg_path if reg_path.lower().startswith("computer\\") else f"计算机\\{reg_path}"
+            with winreg.CreateKey(
+                winreg.HKEY_CURRENT_USER,
+                r"Software\Microsoft\Windows\CurrentVersion\Applets\Regedit",
+            ) as key:
+                winreg.SetValueEx(key, "LastKey", 0, winreg.REG_SZ, last_key)
+        except Exception:  # pragma: no cover - 定位失败时仍打开编辑器
+            pass
+        try:
+            subprocess.Popen("regedit", shell=True)
+            return True
+        except Exception as exc:  # pragma: no cover - Windows shell dependent
+            if not quiet:
+                QMessageBox.warning(self, "注册表", f"打开注册表编辑器失败: {exc}")
             return False
 
     def kill_process_item(self, row, confirm=False):
