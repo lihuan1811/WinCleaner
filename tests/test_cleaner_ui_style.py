@@ -30,6 +30,7 @@ def test_qt_ui_sidebar_navigation_is_wired():
     assert "系统优化" in source
     assert "软件卸载" in source
     assert "文件管理" in source
+    assert "系统修复" in source
 
 
 def test_qt_ui_separates_clean_all_from_selected_clean():
@@ -212,6 +213,22 @@ def test_qt_has_in_app_account_login_register_and_card_redeem():
     assert "登录" in source
     assert "注册" in source
     assert "兑换卡密" in source
+
+
+def test_qt_has_system_repair_module_page():
+    source = Path("cleaner_ui.py").read_text(encoding="utf-8")
+    repair_source = Path("system_repair.py").read_text(encoding="utf-8")
+
+    assert '("系统修复", "_build_repair_page")' in source
+    assert "SystemRepairService" in source
+    assert "SystemRepairThread" in source
+    assert "CMD 系统修复工具箱" in source
+    assert "推荐安全修复" in source
+    assert "深度系统修复" in source
+    assert "一键执行选中修复" in source
+    assert "SFC 系统文件修复" in repair_source
+    assert "DISM 系统镜像修复" in repair_source
+    assert "repair_log_output" in source
 
 
 def test_qt_file_manager_scans_run_in_worker_thread():

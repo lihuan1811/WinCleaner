@@ -20,7 +20,8 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QH
                             QFrame, QGridLayout, QStackedWidget, QScrollArea,
                             QFileDialog, QTabWidget, QTableWidget,
                             QTableWidgetItem, QHeaderView, QAbstractItemView,
-                            QFileIconProvider, QGraphicsOpacityEffect, QLineEdit)
+                            QFileIconProvider, QGraphicsOpacityEffect, QLineEdit,
+                            QTextEdit)
 from PyQt5.QtCore import (
     Qt, QThread, pyqtSignal, QSize, QFileInfo, QPropertyAnimation, QEasingCurve,
     QTimer
@@ -32,6 +33,7 @@ from category_display import category_tree_label
 from config import APP_NAME
 from local_account_service import AccountError, DEMO_CARD_CODES, LocalAccountService
 from qt_backup_manager import QtBackupManagerDialog
+from system_repair import SystemRepairService
 
 
 APP_DISPLAY_NAME = "C盘清理精灵"
@@ -502,12 +504,34 @@ class FileScanThread(QThread):
             return None
 
 
+class SystemRepairThread(QThread):
+    progress_signal = pyqtSignal(str)
+    result_signal = pyqtSignal(object)
+    finished_signal = pyqtSignal()
+    error_signal = pyqtSignal(str)
+
+    def __init__(self, service, actions):
+        super().__init__()
+        self.service = service
+        self.actions = actions
+
+    def run(self):
+        try:
+            for action in self.actions:
+                self.progress_signal.emit(f"正在执行 {action.name}...")
+                self.result_signal.emit(self.service.run_action(action))
+            self.finished_signal.emit()
+        except Exception as exc:  # pragma: no cover - depends on host commands
+            self.error_signal.emit(str(exc))
+
+
 # 侧边栏导航项：(标签, 页面构建方法名)
 NAV_ITEMS = [
     ("C盘清理", "_build_clean_page"),
     ("系统优化", "_build_optimize_page"),
     ("软件卸载", "_build_uninstall_page"),
     ("文件管理", "_build_file_page"),
+    ("系统修复", "_build_repair_page"),
     ("账号会员", "_build_account_page"),
 ]
 
@@ -1225,6 +1249,221 @@ class CleanerMainWindow(QMainWindow):
 
         self.refresh_account_state()
         return page
+
+    def _build_repair_page(self):
+        page = QWidget()
+        page.setObjectName("contentArea")
+        outer = QVBoxLayout(page)
+        outer.setContentsMargins(20, 18, 20, 18)
+        outer.setSpacing(12)
+
+        header = QVBoxLayout()
+        header.setSpacing(5)
+        page_title = QLabel("CMD 系统修复工具箱")
+        page_title.setObjectName("pageTitle")
+        page_subtitle = QLabel("封装微软官方原生命令，支持推荐安全修复、深度系统修复和独立勾选执行。")
+        page_subtitle.setObjectName("pageSubtitle")
+        page_subtitle.setWordWrap(True)
+        header.addWidget(page_title)
+        header.addWidget(page_subtitle)
+        outer.addLayout(header)
+
+        action_bar = QHBoxLayout()
+        action_bar.setSpacing(10)
+        recommended_button = QPushButton("推荐安全修复")
+        recommended_button.setObjectName("scanPrimaryButton")
+        recommended_button.setMinimumWidth(126)
+        recommended_button.clicked.connect(self.select_recommended_repairs)
+
+        deep_button = QPushButton("深度系统修复")
+        deep_button.setObjectName("cleanSecondaryButton")
+        deep_button.setMinimumWidth(126)
+        deep_button.clicked.connect(self.select_deep_repairs)
+
+        self.run_repair_button = QPushButton("一键执行选中修复")
+        self.run_repair_button.setObjectName("scanPrimaryButton")
+        self.run_repair_button.setMinimumWidth(148)
+        self.run_repair_button.clicked.connect(self.run_selected_repairs)
+
+        clear_log_button = QPushButton("清空本次日志")
+        clear_log_button.setObjectName("cleanSecondaryButton")
+        clear_log_button.setMinimumWidth(112)
+        clear_log_button.clicked.connect(self.clear_repair_log)
+
+        action_bar.addWidget(recommended_button)
+        action_bar.addWidget(deep_button)
+        action_bar.addWidget(self.run_repair_button)
+        action_bar.addStretch(1)
+        action_bar.addWidget(clear_log_button)
+        outer.addLayout(action_bar)
+
+        self.repair_status_label = QLabel("等待选择修复项目")
+        self.repair_status_label.setObjectName("statusLabel")
+        outer.addWidget(self.repair_status_label)
+
+        self.repair_table = QTableWidget()
+        self.repair_table.setObjectName("optimizerTable")
+        self.repair_table.setColumnCount(5)
+        self.repair_table.setHorizontalHeaderLabels(["修复项", "风险", "说明", "命令", "操作"])
+        self.repair_table.verticalHeader().setVisible(False)
+        self.repair_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.repair_table.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.repair_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.repair_table.setAlternatingRowColors(True)
+        self.repair_table.setIconSize(QSize(20, 20))
+        repair_header = self.repair_table.horizontalHeader()
+        repair_header.setMinimumSectionSize(86)
+        repair_header.setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        repair_header.setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        repair_header.setSectionResizeMode(2, QHeaderView.Stretch)
+        repair_header.setSectionResizeMode(3, QHeaderView.Stretch)
+        repair_header.setSectionResizeMode(4, QHeaderView.Fixed)
+        self.repair_table.setColumnWidth(4, 96)
+        self.repair_table.itemChanged.connect(lambda _item: self.update_repair_status())
+        outer.addWidget(self.repair_table, 1)
+
+        self.repair_log_output = QTextEdit()
+        self.repair_log_output.setObjectName("repairLogOutput")
+        self.repair_log_output.setReadOnly(True)
+        self.repair_log_output.setMinimumHeight(130)
+        self.repair_log_output.setPlaceholderText("系统修复日志会显示在这里。")
+        outer.addWidget(self.repair_log_output)
+
+        self.repair_service = SystemRepairService()
+        self.repair_actions = SystemRepairService.default_actions()
+        self.repair_thread = None
+        self.populate_repair_table(self.repair_actions)
+        self.select_recommended_repairs()
+        return page
+
+    def populate_repair_table(self, actions):
+        self.repair_table.setRowCount(0)
+        for row_index, action in enumerate(actions):
+            self.repair_table.insertRow(row_index)
+
+            name_item = QTableWidgetItem(action.name)
+            name_item.setFlags(name_item.flags() | Qt.ItemIsUserCheckable)
+            name_item.setCheckState(Qt.Checked if action.recommended else Qt.Unchecked)
+            name_item.setData(Qt.UserRole, action)
+            icon = self.category_icon_for_name("windows")
+            if not icon.isNull():
+                name_item.setIcon(icon)
+            self.repair_table.setItem(row_index, 0, name_item)
+
+            risk_item = QTableWidgetItem(action.risk.label)
+            risk_item.setToolTip(action.risk.description)
+            self.repair_table.setItem(row_index, 1, risk_item)
+
+            description_item = QTableWidgetItem(action.description)
+            description_item.setToolTip(action.description)
+            self.repair_table.setItem(row_index, 2, description_item)
+
+            command_item = QTableWidgetItem(action.command)
+            command_item.setToolTip(action.command)
+            self.repair_table.setItem(row_index, 3, command_item)
+
+            run_button = QPushButton("执行")
+            run_button.setObjectName("miniActionButton")
+            run_button.setCursor(Qt.PointingHandCursor)
+            run_button.setMinimumWidth(72)
+            run_button.clicked.connect(
+                lambda _checked=False, target=action: self.run_repair_actions([target])
+            )
+            self.repair_table.setCellWidget(row_index, 4, run_button)
+            self.repair_table.setRowHeight(row_index, 36)
+
+    def set_repair_selection(self, selected_ids):
+        selected_ids = set(selected_ids)
+        self.repair_table.blockSignals(True)
+        try:
+            for row_index in range(self.repair_table.rowCount()):
+                item = self.repair_table.item(row_index, 0)
+                action = item.data(Qt.UserRole) if item else None
+                if item and action:
+                    item.setCheckState(Qt.Checked if action.id in selected_ids else Qt.Unchecked)
+        finally:
+            self.repair_table.blockSignals(False)
+        self.update_repair_status()
+
+    def select_recommended_repairs(self):
+        self.set_repair_selection(action.id for action in SystemRepairService.recommended_preset())
+
+    def select_deep_repairs(self):
+        self.set_repair_selection(action.id for action in SystemRepairService.deep_preset())
+
+    def selected_repair_actions(self):
+        actions = []
+        for row_index in range(self.repair_table.rowCount()):
+            item = self.repair_table.item(row_index, 0)
+            if not item or item.checkState() != Qt.Checked:
+                continue
+            action = item.data(Qt.UserRole)
+            if action:
+                actions.append(action)
+        return actions
+
+    def update_repair_status(self):
+        if not hasattr(self, "repair_status_label"):
+            return
+        selected_count = len(self.selected_repair_actions())
+        self.repair_status_label.setText(f"已选择 {selected_count} 个修复项目")
+
+    def clear_repair_log(self):
+        self.repair_log_output.clear()
+        self.repair_status_label.setText("已清空本次日志")
+
+    def run_selected_repairs(self):
+        actions = self.selected_repair_actions()
+        if not actions:
+            QMessageBox.information(self, "系统修复", "请先勾选需要执行的修复项目。")
+            return
+        self.run_repair_actions(actions)
+
+    def run_repair_actions(self, actions):
+        if self.repair_thread and self.repair_thread.isRunning():
+            self.repair_status_label.setText("系统修复正在执行，请稍后。")
+            self.animate_status_pulse(self.repair_status_label)
+            return
+
+        self.set_repair_busy(True)
+        self.repair_log_output.append(f"开始执行 {len(actions)} 个系统修复项目。")
+        self.repair_thread = SystemRepairThread(self.repair_service, list(actions))
+        self.repair_thread.progress_signal.connect(self.on_repair_progress)
+        self.repair_thread.result_signal.connect(self.on_repair_result)
+        self.repair_thread.finished_signal.connect(self.on_repair_finished)
+        self.repair_thread.error_signal.connect(self.on_repair_error)
+        self.repair_thread.finished.connect(self.repair_thread.deleteLater)
+        self.repair_thread.start()
+
+    def set_repair_busy(self, busy):
+        self.run_repair_button.setEnabled(not busy)
+        for row_index in range(self.repair_table.rowCount()):
+            widget = self.repair_table.cellWidget(row_index, 4)
+            if widget:
+                widget.setEnabled(not busy)
+        self.repair_status_label.setText("系统修复执行中..." if busy else "系统修复已就绪")
+
+    def on_repair_progress(self, message):
+        self.repair_status_label.setText(message)
+        self.repair_log_output.append(message)
+
+    def on_repair_result(self, result):
+        status = "成功" if result.success else "未执行" if result.unsupported else f"失败({result.exit_code})"
+        self.repair_log_output.append(f"[{status}] {result.action.name}")
+        if result.output:
+            self.repair_log_output.append(result.output)
+
+    def on_repair_finished(self):
+        self.set_repair_busy(False)
+        self.repair_thread = None
+        self.repair_status_label.setText("系统修复执行完成")
+        self.animate_status_pulse(self.repair_status_label)
+
+    def on_repair_error(self, message):
+        self.set_repair_busy(False)
+        self.repair_thread = None
+        self.repair_status_label.setText(f"系统修复失败: {message}")
+        QMessageBox.warning(self, "系统修复", f"执行失败:\n{message}")
 
     def _make_optimizer_table(self, headers):
         table = QTableWidget()
