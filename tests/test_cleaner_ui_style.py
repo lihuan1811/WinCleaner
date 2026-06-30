@@ -179,3 +179,20 @@ def test_qt_uses_lightweight_opacity_animations():
     assert "0.62, 1.0, 160" in page_animation
     assert "geometry" not in page_animation
     assert "resize" not in page_animation
+
+
+def test_qt_has_in_app_account_login_register_and_card_redeem():
+    source = Path("cleaner_ui.py").read_text(encoding="utf-8")
+
+    assert '("账号会员", "_build_account_page")' in source
+    assert "LocalAccountService" in source
+    assert "self.account_email_input" in source
+    assert "self.account_password_input" in source
+    assert "self.card_code_input" in source
+    assert "register_account" in source
+    assert "login_account" in source
+    assert "redeem_account_card" in source
+    assert "WINCLEANER-VIP-30D" in source
+    assert "登录" in source
+    assert "注册" in source
+    assert "兑换卡密" in source

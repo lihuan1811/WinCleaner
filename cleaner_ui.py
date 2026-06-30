@@ -20,7 +20,7 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QH
                             QFrame, QGridLayout, QStackedWidget, QScrollArea,
                             QFileDialog, QTabWidget, QTableWidget,
                             QTableWidgetItem, QHeaderView, QAbstractItemView,
-                            QFileIconProvider, QGraphicsOpacityEffect)
+                            QFileIconProvider, QGraphicsOpacityEffect, QLineEdit)
 from PyQt5.QtCore import (
     Qt, QThread, pyqtSignal, QSize, QFileInfo, QPropertyAnimation, QEasingCurve
 )
@@ -29,6 +29,7 @@ from PyQt5.QtGui import QIcon, QFont, QPixmap
 from cleaner_logic import CleanerLogic
 from category_display import category_tree_label
 from config import APP_NAME
+from local_account_service import AccountError, DEMO_CARD_CODES, LocalAccountService
 from qt_backup_manager import QtBackupManagerDialog
 
 
@@ -295,6 +296,19 @@ QCheckBox::indicator {
     width: 16px;
 }
 
+QLineEdit {
+    background: #FFFFFF;
+    border: 1px solid #D6E8E4;
+    border-radius: 6px;
+    color: #15241F;
+    min-height: 34px;
+    padding: 0 10px;
+}
+
+QLineEdit:focus {
+    border-color: #14B8A6;
+}
+
 QLabel#featureCardTitle {
     color: #16271F;
     font-size: 15px;
@@ -394,6 +408,7 @@ NAV_ITEMS = [
     ("系统优化", "_build_optimize_page"),
     ("软件卸载", "_build_uninstall_page"),
     ("文件管理", "_build_file_page"),
+    ("账号会员", "_build_account_page"),
 ]
 
 
@@ -415,6 +430,8 @@ class CleanerMainWindow(QMainWindow):
         self.file_large_items = []
         self.file_duplicate_groups = []
         self.active_animations = []
+        self.account_service = LocalAccountService()
+        self.account_state = self.account_service.current_state()
 
         self.init_ui()
 
@@ -979,6 +996,129 @@ class CleanerMainWindow(QMainWindow):
         outer.addWidget(self.uninstall_status_label)
 
         self.load_installed_apps(show_message=False)
+        return page
+
+    def _build_account_page(self):
+        page = QWidget()
+        page.setObjectName("contentArea")
+        outer = QVBoxLayout(page)
+        outer.setContentsMargins(20, 18, 20, 18)
+        outer.setSpacing(14)
+
+        header = QVBoxLayout()
+        header.setSpacing(5)
+        page_title = QLabel("账号会员")
+        page_title.setObjectName("pageTitle")
+        page_subtitle = QLabel("在软件内登录、注册并兑换会员卡密；离线时使用本地账号状态保存。")
+        page_subtitle.setObjectName("pageSubtitle")
+        page_subtitle.setWordWrap(True)
+        header.addWidget(page_title)
+        header.addWidget(page_subtitle)
+        outer.addLayout(header)
+
+        cards_row = QHBoxLayout()
+        cards_row.setSpacing(14)
+
+        status_card = QFrame()
+        status_card.setObjectName("featureCard")
+        status_layout = QVBoxLayout(status_card)
+        status_layout.setContentsMargins(18, 16, 18, 16)
+        status_layout.setSpacing(8)
+
+        self.account_status_title = QLabel("未登录")
+        self.account_status_title.setObjectName("featureCardTitle")
+        self.account_status_detail = QLabel("登录后可兑换会员卡密。")
+        self.account_status_detail.setObjectName("featureCardDesc")
+        self.account_status_detail.setWordWrap(True)
+        self.account_plan_label = QLabel("当前权益: Guest")
+        self.account_plan_label.setObjectName("statusLabel")
+        self.account_plan_label.setWordWrap(True)
+
+        self.account_logout_button = QPushButton("退出登录")
+        self.account_logout_button.setObjectName("cleanSecondaryButton")
+        self.account_logout_button.setMinimumWidth(96)
+        self.account_logout_button.clicked.connect(self.logout_account)
+
+        status_layout.addWidget(self.account_status_title)
+        status_layout.addWidget(self.account_status_detail)
+        status_layout.addWidget(self.account_plan_label)
+        status_layout.addStretch(1)
+        status_layout.addWidget(self.account_logout_button, 0, Qt.AlignLeft)
+
+        auth_card = QFrame()
+        auth_card.setObjectName("featureCard")
+        auth_layout = QVBoxLayout(auth_card)
+        auth_layout.setContentsMargins(18, 16, 18, 16)
+        auth_layout.setSpacing(9)
+
+        auth_title = QLabel("登录 / 注册")
+        auth_title.setObjectName("featureCardTitle")
+        self.account_email_input = QLineEdit()
+        self.account_email_input.setPlaceholderText("邮箱")
+        self.account_name_input = QLineEdit()
+        self.account_name_input.setPlaceholderText("昵称（注册时使用）")
+        self.account_password_input = QLineEdit()
+        self.account_password_input.setPlaceholderText("密码，至少 6 位")
+        self.account_password_input.setEchoMode(QLineEdit.Password)
+
+        auth_actions = QHBoxLayout()
+        login_button = QPushButton("登录")
+        login_button.setObjectName("scanPrimaryButton")
+        login_button.setMinimumWidth(96)
+        login_button.clicked.connect(self.login_account)
+        register_button = QPushButton("注册")
+        register_button.setObjectName("cleanSecondaryButton")
+        register_button.setMinimumWidth(96)
+        register_button.clicked.connect(self.register_account)
+        auth_actions.addWidget(login_button)
+        auth_actions.addWidget(register_button)
+        auth_actions.addStretch(1)
+
+        auth_layout.addWidget(auth_title)
+        auth_layout.addWidget(self.account_email_input)
+        auth_layout.addWidget(self.account_name_input)
+        auth_layout.addWidget(self.account_password_input)
+        auth_layout.addLayout(auth_actions)
+
+        cards_row.addWidget(status_card, 1)
+        cards_row.addWidget(auth_card, 1)
+        outer.addLayout(cards_row)
+
+        card_box = QFrame()
+        card_box.setObjectName("featureCard")
+        card_layout = QVBoxLayout(card_box)
+        card_layout.setContentsMargins(18, 16, 18, 16)
+        card_layout.setSpacing(9)
+
+        card_title = QLabel("会员卡密")
+        card_title.setObjectName("featureCardTitle")
+        card_desc = QLabel("登录后输入卡密兑换会员。测试卡密: " + " / ".join(DEMO_CARD_CODES.keys()))
+        card_desc.setObjectName("featureCardDesc")
+        card_desc.setWordWrap(True)
+
+        card_row = QHBoxLayout()
+        card_row.setSpacing(10)
+        self.card_code_input = QLineEdit()
+        self.card_code_input.setPlaceholderText("输入会员卡密，例如 WINCLEANER-VIP-30D")
+        redeem_button = QPushButton("兑换卡密")
+        redeem_button.setObjectName("scanPrimaryButton")
+        redeem_button.setMinimumWidth(112)
+        redeem_button.clicked.connect(self.redeem_account_card)
+        card_row.addWidget(self.card_code_input, 1)
+        card_row.addWidget(redeem_button)
+
+        self.account_message_label = QLabel("本地测试卡密可直接兑换，后续可切换为后端 API 授权。")
+        self.account_message_label.setObjectName("statusLabel")
+        self.account_message_label.setWordWrap(True)
+
+        card_layout.addWidget(card_title)
+        card_layout.addWidget(card_desc)
+        card_layout.addLayout(card_row)
+        card_layout.addWidget(self.account_message_label)
+        outer.addWidget(card_box)
+        outer.addStretch(1)
+
+        self.refresh_account_state()
         return page
 
     def _make_optimizer_table(self, headers):
@@ -1700,6 +1840,70 @@ class CleanerMainWindow(QMainWindow):
         if "msiexec" in lowered and " /i" in lowered:
             command = command.replace(" /I", " /X").replace(" /i", " /X")
         return command
+
+    def refresh_account_state(self, message=None):
+        self.account_state = self.account_service.current_state()
+        if not hasattr(self, "account_status_title"):
+            return
+
+        user = self.account_state.get("user")
+        if user:
+            self.account_status_title.setText(user.get("displayName") or user.get("email", "已登录"))
+            self.account_status_detail.setText(user.get("email", ""))
+            subscription = user.get("subscription")
+            if subscription:
+                self.account_plan_label.setText(
+                    f"当前权益: {subscription.get('planName', '专业会员')}，剩余 {subscription.get('remainingDays', 0)} 天"
+                )
+            else:
+                self.account_plan_label.setText("当前权益: Free，登录后可兑换会员卡密")
+            self.account_logout_button.setEnabled(True)
+        else:
+            self.account_status_title.setText("未登录")
+            self.account_status_detail.setText("请先登录或注册账户，再兑换会员卡。")
+            self.account_plan_label.setText("当前权益: Guest")
+            self.account_logout_button.setEnabled(False)
+
+        if message:
+            self.account_message_label.setText(message)
+            self.animate_status_pulse(self.account_message_label)
+
+    def account_credentials(self):
+        return (
+            self.account_email_input.text().strip(),
+            self.account_password_input.text(),
+            self.account_name_input.text().strip(),
+        )
+
+    def register_account(self):
+        email, password, display_name = self.account_credentials()
+        try:
+            self.account_service.register(email, password, display_name)
+            self.account_password_input.clear()
+            self.refresh_account_state("注册并登录成功。")
+        except AccountError as exc:
+            self.refresh_account_state(str(exc))
+
+    def login_account(self):
+        email, password, _display_name = self.account_credentials()
+        try:
+            self.account_service.login(email, password)
+            self.account_password_input.clear()
+            self.refresh_account_state("登录成功。")
+        except AccountError as exc:
+            self.refresh_account_state(str(exc))
+
+    def logout_account(self):
+        self.account_service.logout()
+        self.refresh_account_state("已退出登录。")
+
+    def redeem_account_card(self):
+        try:
+            result = self.account_service.redeem_card(self.card_code_input.text())
+            self.card_code_input.clear()
+            self.refresh_account_state(result["message"])
+        except AccountError as exc:
+            self.refresh_account_state(str(exc))
 
     def scan_large_files(self):
         """在文件管理页内扫描大文件并填充表格。"""
