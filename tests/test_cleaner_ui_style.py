@@ -139,3 +139,27 @@ def test_qt_uninstaller_is_in_app_table():
     assert "QuietUninstallString" in source
     assert "UninstallString" in source
     assert "QTableWidget" in source
+
+
+def test_qt_file_manager_uses_in_app_tables():
+    source = Path("cleaner_ui.py").read_text(encoding="utf-8")
+    file_page = source.split("def _build_file_page", 1)[1].split("def _open_system_tool", 1)[0]
+    large_scan = source.split("def scan_large_files", 1)[1].split("def scan_duplicate_files", 1)[0]
+    duplicate_scan = source.split("def scan_duplicate_files", 1)[1].split("def default_file_scan_root", 1)[0]
+
+    assert "self.file_tabs = QTabWidget()" in file_page
+    assert "self.file_large_table" in file_page
+    assert "self.file_duplicate_table" in file_page
+    assert "populate_large_files_table" in source
+    assert "populate_duplicate_files_table" in source
+    assert "_select_page(0)" not in large_scan
+    assert "QMessageBox.information" not in duplicate_scan
+
+
+def test_qt_labels_have_room_for_chinese_actions():
+    source = Path("cleaner_ui.py").read_text(encoding="utf-8")
+
+    assert "sidebar.setFixedWidth(196)" in source
+    assert "button.setMinimumWidth(148)" in source
+    assert "uninstall_button.setMinimumWidth(96)" in source
+    assert "header_view.setMinimumSectionSize(86)" in source

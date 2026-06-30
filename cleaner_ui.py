@@ -224,7 +224,8 @@ QTreeWidget#resultTree::item {
 }
 
 QTableWidget#optimizerTable,
-QTableWidget#uninstallTable {
+QTableWidget#uninstallTable,
+QTableWidget#fileManageTable {
     background: #FFFFFF;
     border: 1px solid #D6E8E4;
     border-radius: 8px;
@@ -236,7 +237,8 @@ QTableWidget#uninstallTable {
 }
 
 QTableWidget#optimizerTable::item,
-QTableWidget#uninstallTable::item {
+QTableWidget#uninstallTable::item,
+QTableWidget#fileManageTable::item {
     min-height: 30px;
     padding: 4px 6px;
 }
@@ -310,6 +312,7 @@ QPushButton#featureButton {
     font-size: 13px;
     font-weight: 700;
     min-height: 34px;
+    min-width: 112px;
     padding: 0 16px;
 }
 
@@ -325,6 +328,7 @@ QPushButton#miniActionButton {
     font-size: 12px;
     font-weight: 700;
     min-height: 24px;
+    min-width: 64px;
     padding: 0 12px;
 }
 
@@ -405,6 +409,9 @@ class CleanerMainWindow(QMainWindow):
         self.nav_buttons = []
         self.optimizer_tables = {}
         self.uninstall_apps = []
+        self.file_scan_root = ""
+        self.file_large_items = []
+        self.file_duplicate_groups = []
 
         self.init_ui()
 
@@ -431,12 +438,13 @@ class CleanerMainWindow(QMainWindow):
         button = QPushButton(text)
         button.setObjectName("sidebarButtonActive" if active else "sidebarButton")
         button.setCursor(Qt.PointingHandCursor)
+        button.setMinimumWidth(148)
         return button
 
     def _build_sidebar(self):
         sidebar = QFrame()
         sidebar.setObjectName("sidebar")
-        sidebar.setFixedWidth(168)
+        sidebar.setFixedWidth(196)
 
         layout = QVBoxLayout(sidebar)
         layout.setContentsMargins(16, 18, 16, 16)
@@ -522,8 +530,8 @@ class CleanerMainWindow(QMainWindow):
     def init_ui(self):
         """初始化用户界面"""
         self.setWindowTitle(APP_DISPLAY_NAME or APP_NAME)
-        self.setMinimumSize(960, 660)
-        self.resize(1020, 700)
+        self.setMinimumSize(1040, 680)
+        self.resize(1120, 720)
         if not self.app_icon.isNull():
             self.setWindowIcon(self.app_icon)
         self.setStyleSheet(APP_QSS)
@@ -894,9 +902,11 @@ class CleanerMainWindow(QMainWindow):
         toolbar.setSpacing(10)
         reload_button = QPushButton("刷新列表")
         reload_button.setObjectName("cleanSecondaryButton")
+        reload_button.setMinimumWidth(96)
         reload_button.clicked.connect(lambda: self.load_installed_apps(show_message=True))
         uninstall_button = QPushButton("卸载选中")
         uninstall_button.setObjectName("scanPrimaryButton")
+        uninstall_button.setMinimumWidth(96)
         uninstall_button.clicked.connect(self.uninstall_selected_app)
         toolbar.addStretch(1)
         toolbar.addWidget(reload_button)
@@ -914,11 +924,13 @@ class CleanerMainWindow(QMainWindow):
         self.uninstall_table.setAlternatingRowColors(True)
         self.uninstall_table.setIconSize(QSize(20, 20))
         header_view = self.uninstall_table.horizontalHeader()
+        header_view.setMinimumSectionSize(86)
         header_view.setSectionResizeMode(0, QHeaderView.Stretch)
         header_view.setSectionResizeMode(1, QHeaderView.ResizeToContents)
         header_view.setSectionResizeMode(2, QHeaderView.ResizeToContents)
         header_view.setSectionResizeMode(3, QHeaderView.Stretch)
-        header_view.setSectionResizeMode(4, QHeaderView.ResizeToContents)
+        header_view.setSectionResizeMode(4, QHeaderView.Fixed)
+        self.uninstall_table.setColumnWidth(4, 96)
         outer.addWidget(self.uninstall_table, 1)
 
         self.uninstall_status_label = QLabel("正在读取软件列表...")
@@ -1354,22 +1366,93 @@ class CleanerMainWindow(QMainWindow):
             return False
 
     def _build_file_page(self):
-        return self._build_feature_page(
-            "文件管理",
-            "定位大文件、管理磁盘占用，把扫描到的可清理路径交给 C盘清理处理。",
-            [
-                ("大文件扫描", "C盘清理已包含 >100MB 大文件扫描，点此前往查看结果。",
-                 "开始大文件扫描", self.scan_large_files),
-                ("重复文件扫描", "选择一个目录，按大小和哈希找出重复文件。",
-                 "扫描重复文件", self.scan_duplicate_files),
-                ("打开此电脑", "在资源管理器中查看各磁盘占用情况。",
-                 "打开此电脑", lambda: self.run_system_action("此电脑", "explorer")),
-                ("存储使用情况", "打开 Windows 存储设置，按类别查看占用。",
-                 "打开存储设置", lambda: self.run_system_action("存储设置", "ms-settings:storagesense")),
-                ("磁盘清理", "调用 Windows 自带磁盘清理工具。",
-                 "打开磁盘清理", lambda: self.run_system_action("磁盘清理", "cleanmgr")),
-            ],
-        )
+        page = QWidget()
+        page.setObjectName("contentArea")
+        outer = QVBoxLayout(page)
+        outer.setContentsMargins(20, 18, 20, 18)
+        outer.setSpacing(12)
+
+        header = QVBoxLayout()
+        header.setSpacing(5)
+        page_title = QLabel("文件管理")
+        page_title.setObjectName("pageTitle")
+        page_subtitle = QLabel("在软件内扫描大文件和重复文件，直接查看目标路径、大小和所在目录。")
+        page_subtitle.setObjectName("pageSubtitle")
+        page_subtitle.setWordWrap(True)
+        header.addWidget(page_title)
+        header.addWidget(page_subtitle)
+        outer.addLayout(header)
+
+        toolbar = QHBoxLayout()
+        toolbar.setSpacing(10)
+        choose_dir_button = QPushButton("选择目录")
+        choose_dir_button.setObjectName("cleanSecondaryButton")
+        choose_dir_button.setMinimumWidth(96)
+        choose_dir_button.clicked.connect(self.select_file_scan_root)
+
+        scan_large_button = QPushButton("扫描大文件")
+        scan_large_button.setObjectName("scanPrimaryButton")
+        scan_large_button.setMinimumWidth(112)
+        scan_large_button.clicked.connect(self.scan_large_files)
+
+        scan_duplicate_button = QPushButton("扫描重复文件")
+        scan_duplicate_button.setObjectName("cleanSecondaryButton")
+        scan_duplicate_button.setMinimumWidth(128)
+        scan_duplicate_button.clicked.connect(self.scan_duplicate_files)
+
+        toolbar.addWidget(choose_dir_button)
+        toolbar.addWidget(scan_large_button)
+        toolbar.addWidget(scan_duplicate_button)
+        toolbar.addStretch(1)
+        outer.addLayout(toolbar)
+
+        self.file_root_label = QLabel(f"扫描目录: {self.current_file_scan_root()}")
+        self.file_root_label.setObjectName("statusLabel")
+        self.file_root_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        outer.addWidget(self.file_root_label)
+
+        self.file_tabs = QTabWidget()
+        self.file_tabs.setObjectName("optimizerTabs")
+
+        self.file_large_table = self._make_file_manage_table(["文件名", "大小", "路径", "操作"])
+        self.file_duplicate_table = self._make_file_manage_table(["文件名", "大小", "重复组", "路径", "操作"])
+        self.file_tabs.addTab(self.file_large_table, "大文件")
+        self.file_tabs.addTab(self.file_duplicate_table, "重复文件")
+        outer.addWidget(self.file_tabs, 1)
+
+        self.file_status_label = QLabel("准备扫描文件。")
+        self.file_status_label.setObjectName("statusLabel")
+        outer.addWidget(self.file_status_label)
+
+        return page
+
+    def _make_file_manage_table(self, headers):
+        table = QTableWidget()
+        table.setObjectName("fileManageTable")
+        table.setColumnCount(len(headers))
+        table.setHorizontalHeaderLabels(headers)
+        table.verticalHeader().setVisible(False)
+        table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        table.setSelectionMode(QAbstractItemView.SingleSelection)
+        table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        table.setAlternatingRowColors(True)
+        table.setIconSize(QSize(20, 20))
+        table.setSortingEnabled(True)
+
+        header_view = table.horizontalHeader()
+        header_view.setMinimumSectionSize(86)
+        header_view.setSectionResizeMode(0, QHeaderView.Stretch)
+        header_view.setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        if len(headers) == 4:
+            header_view.setSectionResizeMode(2, QHeaderView.Stretch)
+            header_view.setSectionResizeMode(3, QHeaderView.Fixed)
+            table.setColumnWidth(3, 96)
+        else:
+            header_view.setSectionResizeMode(2, QHeaderView.ResizeToContents)
+            header_view.setSectionResizeMode(3, QHeaderView.Stretch)
+            header_view.setSectionResizeMode(4, QHeaderView.Fixed)
+            table.setColumnWidth(4, 96)
+        return table
 
     def _open_system_tool(self, label, command):
         """在 Windows 上启动系统工具；其他平台给出提示。"""
@@ -1436,6 +1519,7 @@ class CleanerMainWindow(QMainWindow):
             uninstall_button = QPushButton("卸载")
             uninstall_button.setObjectName("miniActionButton")
             uninstall_button.setCursor(Qt.PointingHandCursor)
+            uninstall_button.setMinimumWidth(72)
             uninstall_button.clicked.connect(
                 lambda _checked=False, target=dict(app): self.run_uninstall_command(target)
             )
@@ -1577,44 +1661,161 @@ class CleanerMainWindow(QMainWindow):
         return command
 
     def scan_large_files(self):
-        """切回 C 盘清理并执行包含大文件项的一键扫描。"""
-        self._select_page(0)
-        if self.scan_button.isEnabled():
-            self.start_scan()
-        else:
-            self.status_label.setText("扫描正在进行中...")
-
-    def scan_duplicate_files(self):
-        """选择目录并按大小+SHA256 查找重复文件。"""
-        root_dir = QFileDialog.getExistingDirectory(self, "选择重复文件扫描目录", os.path.expanduser("~"))
-        if not root_dir:
-            return
-
-        self.status_label.setText(f"正在扫描重复文件: {root_dir}")
+        """在文件管理页内扫描大文件并填充表格。"""
+        root_dir = self.current_file_scan_root()
+        if hasattr(self, "file_tabs"):
+            self.file_tabs.setCurrentWidget(self.file_large_table)
+        self.file_status_label.setText(f"正在扫描大文件: {root_dir}")
         QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
-            duplicates = self._find_duplicate_files(root_dir)
+            self.file_large_items = self.find_large_files(root_dir)
+        finally:
+            QApplication.restoreOverrideCursor()
+        self.populate_large_files_table(self.file_large_items)
+        total_size = sum(item["size"] for item in self.file_large_items)
+        self.file_status_label.setText(
+            f"大文件扫描完成: {len(self.file_large_items)} 个，合计 {self.format_size(total_size)}"
+        )
+
+    def scan_duplicate_files(self):
+        """在文件管理页内按大小+SHA256 查找重复文件。"""
+        root_dir = self.current_file_scan_root()
+        if hasattr(self, "file_tabs"):
+            self.file_tabs.setCurrentWidget(self.file_duplicate_table)
+        self.file_status_label.setText(f"正在扫描重复文件: {root_dir}")
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            self.file_duplicate_groups = self._find_duplicate_files(root_dir)
         finally:
             QApplication.restoreOverrideCursor()
 
-        if not duplicates:
-            self.status_label.setText("重复文件扫描完成，未发现重复文件")
-            QMessageBox.information(self, "重复文件扫描", "未发现重复文件。")
-            return
-
-        lines = []
         total_waste = 0
-        for size, paths in duplicates[:12]:
+        for size, paths in self.file_duplicate_groups:
             total_waste += size * (len(paths) - 1)
-            lines.append(f"{self.format_size(size)} x {len(paths)}")
-            lines.extend(f"  {path}" for path in paths[:4])
-            if len(paths) > 4:
-                lines.append(f"  ... 还有 {len(paths) - 4} 个")
-
-        self.status_label.setText(
-            f"重复文件扫描完成，发现 {len(duplicates)} 组，约可处理 {self.format_size(total_waste)}"
+        self.populate_duplicate_files_table(self.file_duplicate_groups)
+        self.file_status_label.setText(
+            f"重复文件扫描完成: {len(self.file_duplicate_groups)} 组，约可处理 {self.format_size(total_waste)}"
         )
-        QMessageBox.information(self, "重复文件扫描", "\n".join(lines)[:7000])
+
+    def default_file_scan_root(self):
+        if sys.platform.startswith("win"):
+            return os.environ.get("SystemDrive", "C:") + os.sep
+        return os.path.expanduser("~")
+
+    def current_file_scan_root(self):
+        return self.file_scan_root or self.default_file_scan_root()
+
+    def select_file_scan_root(self):
+        selected = QFileDialog.getExistingDirectory(
+            self,
+            "选择文件扫描目录",
+            self.current_file_scan_root(),
+        )
+        if selected:
+            self.file_scan_root = selected
+            self.file_root_label.setText(f"扫描目录: {selected}")
+            self.file_status_label.setText("已更新扫描目录。")
+
+    def find_large_files(self, root_dir, min_size=100 * 1024 * 1024, max_files=5000):
+        large_files = []
+        scanned = 0
+        for root, _dirs, files in os.walk(root_dir):
+            for file_name in files:
+                if scanned >= max_files:
+                    break
+                path = os.path.join(root, file_name)
+                try:
+                    if not os.path.isfile(path):
+                        continue
+                    scanned += 1
+                    size = os.path.getsize(path)
+                    if size >= min_size:
+                        large_files.append({
+                            "path": path,
+                            "size": size,
+                            "name": file_name,
+                        })
+                except (OSError, PermissionError):
+                    continue
+            if scanned >= max_files:
+                break
+        large_files.sort(key=lambda item: item["size"], reverse=True)
+        return large_files[:200]
+
+    def populate_large_files_table(self, items):
+        if not hasattr(self, "file_large_table"):
+            return
+        self.file_large_table.setSortingEnabled(False)
+        self.file_large_table.setRowCount(0)
+        for row_index, item in enumerate(items):
+            self.file_large_table.insertRow(row_index)
+            path = item["path"]
+            name_item = QTableWidgetItem(os.path.basename(path) or path)
+            if os.path.exists(path):
+                name_item.setIcon(self.icon_provider.icon(QFileInfo(path)))
+            name_item.setToolTip(path)
+            self.file_large_table.setItem(row_index, 0, name_item)
+
+            size_item = QTableWidgetItem(self.format_size(item["size"]))
+            size_item.setData(Qt.UserRole, item["size"])
+            self.file_large_table.setItem(row_index, 1, size_item)
+
+            path_item = QTableWidgetItem(path)
+            path_item.setToolTip(path)
+            self.file_large_table.setItem(row_index, 2, path_item)
+
+            self.file_large_table.setCellWidget(row_index, 3, self._make_open_location_button(path))
+            self.file_large_table.setRowHeight(row_index, 34)
+        self.file_large_table.setSortingEnabled(True)
+
+    def populate_duplicate_files_table(self, duplicates):
+        if not hasattr(self, "file_duplicate_table"):
+            return
+        self.file_duplicate_table.setSortingEnabled(False)
+        self.file_duplicate_table.setRowCount(0)
+        row_index = 0
+        for group_index, (size, paths) in enumerate(duplicates, start=1):
+            for path in paths:
+                self.file_duplicate_table.insertRow(row_index)
+                name_item = QTableWidgetItem(os.path.basename(path) or path)
+                if os.path.exists(path):
+                    name_item.setIcon(self.icon_provider.icon(QFileInfo(path)))
+                name_item.setToolTip(path)
+                self.file_duplicate_table.setItem(row_index, 0, name_item)
+
+                size_item = QTableWidgetItem(self.format_size(size))
+                size_item.setData(Qt.UserRole, size)
+                self.file_duplicate_table.setItem(row_index, 1, size_item)
+                self.file_duplicate_table.setItem(row_index, 2, QTableWidgetItem(f"第 {group_index} 组"))
+
+                path_item = QTableWidgetItem(path)
+                path_item.setToolTip(path)
+                self.file_duplicate_table.setItem(row_index, 3, path_item)
+
+                self.file_duplicate_table.setCellWidget(row_index, 4, self._make_open_location_button(path))
+                self.file_duplicate_table.setRowHeight(row_index, 34)
+                row_index += 1
+        self.file_duplicate_table.setSortingEnabled(True)
+
+    def _make_open_location_button(self, path):
+        button = QPushButton("打开位置")
+        button.setObjectName("miniActionButton")
+        button.setCursor(Qt.PointingHandCursor)
+        button.setMinimumWidth(86)
+        button.clicked.connect(lambda _checked=False, target=path: self.open_file_location(target))
+        return button
+
+    def open_file_location(self, path):
+        directory = path if os.path.isdir(path) else os.path.dirname(path)
+        if not directory:
+            return
+        if sys.platform.startswith("win"):
+            try:
+                os.startfile(directory)  # noqa: P201 - Windows 专用
+            except Exception as exc:  # pragma: no cover - Windows shell dependent
+                QMessageBox.warning(self, "打开位置", f"无法打开位置: {exc}")
+            return
+        QMessageBox.information(self, "打开位置", f"此操作将在 Windows 上打开:\n{directory}")
 
     def _find_duplicate_files(self, root_dir, max_files=5000):
         by_size = {}
