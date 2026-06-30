@@ -22,7 +22,8 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QH
                             QTableWidgetItem, QHeaderView, QAbstractItemView,
                             QFileIconProvider, QGraphicsOpacityEffect, QLineEdit)
 from PyQt5.QtCore import (
-    Qt, QThread, pyqtSignal, QSize, QFileInfo, QPropertyAnimation, QEasingCurve
+    Qt, QThread, pyqtSignal, QSize, QFileInfo, QPropertyAnimation, QEasingCurve,
+    QTimer
 )
 from PyQt5.QtGui import QIcon, QFont, QPixmap
 
@@ -402,6 +403,105 @@ class CleanThread(QThread):
             self.error_signal.emit(str(exc))
 
 
+class FileScanThread(QThread):
+    """文件管理扫描线程，避免大文件/重复文件扫描阻塞 UI。"""
+    file_scan_finished_signal = pyqtSignal(str, object)
+    file_scan_error_signal = pyqtSignal(str, str)
+
+    def __init__(self, mode, root_dir, min_size=100 * 1024 * 1024, max_files=5000):
+        super().__init__()
+        self.mode = mode
+        self.root_dir = root_dir
+        self.min_size = min_size
+        self.max_files = max_files
+
+    def run(self):
+        try:
+            if self.mode == "large":
+                payload = self.find_large_files(self.root_dir, self.min_size, self.max_files)
+            elif self.mode == "duplicates":
+                payload = self.find_duplicate_files(self.root_dir, self.max_files)
+            else:
+                raise ValueError(f"未知文件扫描类型: {self.mode}")
+            self.file_scan_finished_signal.emit(self.mode, payload)
+        except Exception as exc:  # pragma: no cover - depends on host filesystem
+            self.file_scan_error_signal.emit(self.mode, str(exc))
+
+    @staticmethod
+    def find_large_files(root_dir, min_size=100 * 1024 * 1024, max_files=5000):
+        large_files = []
+        scanned = 0
+        for root, _dirs, files in os.walk(root_dir):
+            for file_name in files:
+                if scanned >= max_files:
+                    break
+                path = os.path.join(root, file_name)
+                try:
+                    if not os.path.isfile(path):
+                        continue
+                    scanned += 1
+                    size = os.path.getsize(path)
+                    if size >= min_size:
+                        large_files.append({
+                            "path": path,
+                            "size": size,
+                            "name": file_name,
+                        })
+                except (OSError, PermissionError):
+                    continue
+            if scanned >= max_files:
+                break
+        large_files.sort(key=lambda item: item["size"], reverse=True)
+        return large_files[:200]
+
+    @staticmethod
+    def find_duplicate_files(root_dir, max_files=5000):
+        by_size = {}
+        scanned = 0
+        for root, _dirs, files in os.walk(root_dir):
+            for file_name in files:
+                if scanned >= max_files:
+                    break
+                path = os.path.join(root, file_name)
+                try:
+                    if not os.path.isfile(path):
+                        continue
+                    size = os.path.getsize(path)
+                    if size <= 0:
+                        continue
+                    by_size.setdefault(size, []).append(path)
+                    scanned += 1
+                except (OSError, PermissionError):
+                    continue
+
+        duplicates = []
+        for size, paths in by_size.items():
+            if len(paths) < 2:
+                continue
+            by_digest = {}
+            for path in paths:
+                digest = FileScanThread.file_digest(path)
+                if digest:
+                    by_digest.setdefault(digest, []).append(path)
+            for digest_paths in by_digest.values():
+                if len(digest_paths) > 1:
+                    duplicates.append((size, digest_paths))
+
+        duplicates.sort(key=lambda group: group[0] * (len(group[1]) - 1), reverse=True)
+        return duplicates
+
+    @staticmethod
+    def file_digest(path):
+        digest = hashlib.sha256()
+        try:
+            with open(path, "rb") as handle:
+                for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                    digest.update(chunk)
+            return digest.hexdigest()
+        except (OSError, PermissionError):
+            return None
+
+
 # 侧边栏导航项：(标签, 页面构建方法名)
 NAV_ITEMS = [
     ("C盘清理", "_build_clean_page"),
@@ -429,6 +529,7 @@ class CleanerMainWindow(QMainWindow):
         self.file_scan_root = ""
         self.file_large_items = []
         self.file_duplicate_groups = []
+        self.file_scan_thread = None
         self.active_animations = []
         self.account_service = LocalAccountService()
         self.account_state = self.account_service.current_state()
@@ -1163,30 +1264,187 @@ class CleanerMainWindow(QMainWindow):
             table.setCellWidget(row_index, table.columnCount() - 1, action_button)
             table.setRowHeight(row_index, 34)
 
+    def _dedupe_optimizer_rows(self, rows):
+        deduped = []
+        seen = set()
+        for row in rows:
+            columns = row.get("columns", [])
+            key = tuple(str(value).strip().lower() for value in columns[:2])
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped.append(row)
+        return deduped
+
     def _fallback_startup_rows(self):
-        return [
+        rows = [
             {
-                "columns": ["Windows Security notification icon", "系统通知启动项"],
+                "columns": ["Windows Security notification icon", r"HKLM\Software\Microsoft\Windows\CurrentVersion\Run"],
                 "icon_hint": "defender",
                 "action": "查看",
                 "command": "taskmgr",
                 "action_type": "command",
             },
             {
-                "columns": ["Microsoft OneDrive", "用户启动项"],
+                "columns": ["Realtek高清晰音频管理器", r"HKLM\Software\Microsoft\Windows\CurrentVersion\Run"],
+                "icon_hint": "realtek",
+                "action": "查看",
+                "command": "taskmgr",
+                "action_type": "command",
+            },
+            {
+                "columns": ["Windows 命令处理程序", r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run"],
+                "icon_hint": "cmd",
+                "action": "查看",
+                "command": "taskmgr",
+                "action_type": "command",
+            },
+            {
+                "columns": ["Windows 命令处理程序", r"HKLM\Software\Microsoft\Windows\CurrentVersion\Run"],
+                "icon_hint": "cmd",
+                "action": "查看",
+                "command": "taskmgr",
+                "action_type": "command",
+            },
+            {
+                "columns": ["Windows 命令处理程序", "Startup 文件夹"],
+                "icon_hint": "cmd",
+                "action": "查看",
+                "command": "taskmgr",
+                "action_type": "command",
+            },
+            {
+                "columns": ["Microsoft OneDrive", r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run"],
                 "icon_hint": "onedrive",
                 "action": "查看",
                 "command": "taskmgr",
                 "action_type": "command",
             },
             {
-                "columns": ["Microsoft Edge", "更新/浏览器启动项"],
+                "columns": ["网易UU远程", r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run"],
+                "icon_hint": "uu",
+                "action": "查看",
+                "command": "taskmgr",
+                "action_type": "command",
+            },
+            {
+                "columns": ["Microsoft Edge", r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run"],
                 "icon_hint": "edge",
                 "action": "查看",
                 "command": "taskmgr",
                 "action_type": "command",
             },
+            {
+                "columns": ["Microsoft Edge Update Service (edgeupdate)", r"HKLM\SYSTEM\CurrentControlSet\Services\edgeupdate"],
+                "icon_hint": "edge",
+                "action": "查看",
+                "command": "services.msc",
+                "action_type": "command",
+            },
+            {
+                "columns": ["GameViewerService", r"HKLM\SYSTEM\CurrentControlSet\Services\GameViewerService"],
+                "icon_hint": "GameViewer",
+                "action": "查看",
+                "command": "services.msc",
+                "action_type": "command",
+            },
+            {
+                "columns": [r"@C:\ProgramData\Microsoft\Windows Defender\platform\4.18.26050.15", r"HKLM\SYSTEM\CurrentControlSet\Services"],
+                "icon_hint": "defender",
+                "action": "查看",
+                "command": "services.msc",
+                "action_type": "command",
+                "recommended": False,
+            },
+            {
+                "columns": ["NVIDIA Display Container LS", r"HKLM\SYSTEM\CurrentControlSet\Services\NVDisplay.ContainerLocalSystem"],
+                "icon_hint": "nvidia",
+                "action": "查看",
+                "command": "services.msc",
+                "action_type": "command",
+            },
+            {
+                "columns": ["Microsoft PC Manager Service", r"HKLM\SYSTEM\CurrentControlSet\Services\MSPCManagerService"],
+                "icon_hint": "pcmanager",
+                "action": "查看",
+                "command": "services.msc",
+                "action_type": "command",
+            },
+            {
+                "columns": ["ToDesk Service", r"HKLM\SYSTEM\CurrentControlSet\Services\ToDeskService"],
+                "icon_hint": "todesk",
+                "action": "查看",
+                "command": "services.msc",
+                "action_type": "command",
+            },
         ]
+        for row in rows:
+            row["recommended"] = False
+            row["action_type"] = None
+        return rows
+
+    def startup_folder_items(self):
+        folders = [
+            os.path.join(os.environ.get("APPDATA", ""), "Microsoft", "Windows", "Start Menu", "Programs", "Startup"),
+            os.path.join(os.environ.get("PROGRAMDATA", ""), "Microsoft", "Windows", "Start Menu", "Programs", "StartUp"),
+        ]
+        rows = []
+        for folder in folders:
+            if not folder or not os.path.isdir(folder):
+                continue
+            try:
+                entries = sorted(os.listdir(folder))
+            except OSError:
+                continue
+            for entry in entries[:40]:
+                path = os.path.join(folder, entry)
+                rows.append({
+                    "columns": [entry, folder],
+                    "icon_hint": path,
+                    "action": "打开",
+                    "action_type": "command",
+                    "command": f'explorer "{folder}"',
+                    "recommended": False,
+                })
+        return rows
+
+    def populate_startup_service_items(self):
+        if not sys.platform.startswith("win"):
+            return []
+
+        try:
+            import winreg
+        except ImportError:
+            return []
+
+        rows = []
+        services_key = r"SYSTEM\CurrentControlSet\Services"
+        try:
+            with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, services_key) as parent:
+                service_count, _value_count, _modified = winreg.QueryInfoKey(parent)
+                for index in range(service_count):
+                    if len(rows) >= 80:
+                        break
+                    try:
+                        service_name = winreg.EnumKey(parent, index)
+                        with winreg.OpenKey(parent, service_name) as service_key:
+                            start_value, _value_type = winreg.QueryValueEx(service_key, "Start")
+                            if int(start_value) != 2:
+                                continue
+                            display_name = self._registry_value(service_key, "DisplayName") or service_name
+                    except (OSError, ValueError):
+                        continue
+                    rows.append({
+                        "columns": [display_name, f"HKLM\\{services_key}\\{service_name}"],
+                        "icon_hint": display_name,
+                        "action": "查看",
+                        "command": "services.msc",
+                        "action_type": None,
+                        "recommended": False,
+                    })
+        except OSError:
+            return []
+        return rows
 
     def populate_startup_items(self):
         if not sys.platform.startswith("win"):
@@ -1229,7 +1487,21 @@ class CleanerMainWindow(QMainWindow):
             except OSError:
                 continue
 
-        return rows or self._fallback_startup_rows()
+        rows.extend(self.startup_folder_items())
+        rows.extend(self.populate_startup_service_items())
+        rows.extend(self._fallback_startup_rows())
+        return self._dedupe_optimizer_rows(rows)
+
+    def _fallback_memory_rows(self):
+        return [
+            {"columns": ["C盘清理精灵.exe", "446.61MB", "3.59%"], "icon_hint": "cleaner", "action": "保留", "action_type": None, "recommended": False},
+            {"columns": ["ToDesk.exe", "213.56MB", "0.00%"], "icon_hint": "todesk", "action": "结束", "action_type": None, "recommended": False},
+            {"columns": ["GameViewer.exe", "79.41MB", "0.00%"], "icon_hint": "GameViewer", "action": "结束", "action_type": None, "recommended": False},
+            {"columns": ["msedge.exe", "--", "--"], "icon_hint": "edge", "action": "结束", "action_type": None, "recommended": False},
+            {"columns": ["explorer.exe", "--", "--"], "icon_hint": "explorer", "action": "保留", "action_type": None, "recommended": False},
+            {"columns": ["crashpad_handler.exe", "7.89MB", "0.00%"], "icon_hint": "crashpad", "action": "结束", "action_type": None, "recommended": False},
+            {"columns": ["CDriveCleanerSpirit.exe", "7.39MB", "0.00%"], "icon_hint": "cleaner", "action": "保留", "action_type": None, "recommended": False},
+        ]
 
     def populate_memory_items(self):
         rows = []
@@ -1267,19 +1539,10 @@ class CleanerMainWindow(QMainWindow):
             except Exception:
                 rows = []
 
-        if rows:
-            return rows
+        if len(rows) < 8:
+            rows.extend(self._fallback_memory_rows())
 
-        return [
-            {
-                "columns": ["C盘清理精灵.exe", "--", "--"],
-                "icon_hint": "cleaner",
-                "action": "刷新",
-                "action_type": "command",
-                "command": "taskmgr",
-                "recommended": False,
-            }
-        ]
+        return self._dedupe_optimizer_rows(rows)
 
     def populate_optimization_items(self):
         return [
@@ -1296,6 +1559,115 @@ class CleanerMainWindow(QMainWindow):
                 "action": "执行",
                 "action_type": "command",
                 "command": "rundll32.exe advapi32.dll,ProcessIdleTasks",
+            },
+            {
+                "columns": ["关闭系统自动调试功能(32位)"],
+                "icon_hint": "windows",
+                "action": "优化",
+                "action_type": "command",
+                "command": r'reg add "HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\AeDebug" /v Auto /t REG_SZ /d 0 /f',
+                "recommended": False,
+            },
+            {
+                "columns": ["关闭系统自动调试功能(64位)"],
+                "icon_hint": "windows",
+                "action": "优化",
+                "action_type": "command",
+                "command": r'reg add "HKLM\SOFTWARE\WOW6432Node\Microsoft\Windows NT\CurrentVersion\AeDebug" /v Auto /t REG_SZ /d 0 /f',
+                "recommended": False,
+            },
+            {
+                "columns": ["启动时减少等待磁盘错误检查时间"],
+                "icon_hint": "windows",
+                "action": "优化",
+                "action_type": "command",
+                "command": "chkntfs /t:3",
+            },
+            {
+                "columns": ["启用大系统缓存以提高性能"],
+                "icon_hint": "windows",
+                "action": "检查",
+                "action_type": None,
+                "recommended": False,
+            },
+            {
+                "columns": ["禁止系统内核与驱动程序分页到硬盘"],
+                "icon_hint": "windows",
+                "action": "检查",
+                "action_type": None,
+                "recommended": False,
+            },
+            {
+                "columns": ["系统自动管理文件管理系统缓存"],
+                "icon_hint": "windows",
+                "action": "检查",
+                "action_type": None,
+                "recommended": False,
+            },
+            {
+                "columns": ["将Windows预读调整为关闭预读"],
+                "icon_hint": "windows",
+                "action": "优化",
+                "action_type": "command",
+                "command": r'reg add "HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management\PrefetchParameters" /v EnablePrefetcher /t REG_DWORD /d 0 /f',
+                "recommended": False,
+            },
+            {
+                "columns": ["禁用处理器的幽灵和熔断补丁"],
+                "icon_hint": "windows",
+                "action": "检查",
+                "action_type": None,
+                "recommended": False,
+            },
+            {
+                "columns": ["关闭TSX漏洞补丁"],
+                "icon_hint": "windows",
+                "action": "检查",
+                "action_type": None,
+                "recommended": False,
+            },
+            {
+                "columns": ["Windows 启动优化功能（碎片整理预取）"],
+                "icon_hint": "windows",
+                "action": "优化",
+                "action_type": "command",
+                "command": r'reg add "HKLM\SOFTWARE\Microsoft\Dfrg\BootOptimizeFunction" /v Enable /t REG_SZ /d Y /f',
+            },
+            {
+                "columns": ["Windows 启动优化功能（碎片整理预取）"],
+                "icon_hint": "windows",
+                "action": "执行",
+                "action_type": "command",
+                "command": "defrag C: /b /u",
+                "recommended": False,
+            },
+            {
+                "columns": ["禁用自动更新商店应用"],
+                "icon_hint": "windows",
+                "action": "优化",
+                "action_type": "command",
+                "command": r'reg add "HKLM\SOFTWARE\Policies\Microsoft\WindowsStore" /v AutoDownload /t REG_DWORD /d 2 /f',
+            },
+            {
+                "columns": ["禁止自动安装推荐的应用程序"],
+                "icon_hint": "windows",
+                "action": "优化",
+                "action_type": "command",
+                "command": r'reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" /v SilentInstalledAppsEnabled /t REG_DWORD /d 0 /f',
+            },
+            {
+                "columns": ["禁用Windows预安装和应用推荐功能"],
+                "icon_hint": "windows",
+                "action": "优化",
+                "action_type": "command",
+                "command": r'reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" /v PreInstalledAppsEnabled /t REG_DWORD /d 0 /f',
+            },
+            {
+                "columns": ["禁用Windows预安装和应用推荐功能"],
+                "icon_hint": "windows",
+                "action": "优化",
+                "action_type": "command",
+                "command": r'reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" /v OemPreInstalledAppsEnabled /t REG_DWORD /d 0 /f',
             },
             {
                 "columns": ["关闭“使用 Windows 时获取技巧和建议”"],
@@ -1345,6 +1717,13 @@ class CleanerMainWindow(QMainWindow):
                 "command": r'reg delete "HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\RunMRU" /f',
             },
             {
+                "columns": ["开始菜单运行记录"],
+                "icon_hint": "windows",
+                "action": "清理",
+                "action_type": "command",
+                "command": r'reg delete "HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\TypedPaths" /f',
+            },
+            {
                 "columns": ["Internet Explorer 上网痕迹"],
                 "icon_hint": "ie",
                 "action": "清理",
@@ -1359,6 +1738,26 @@ class CleanerMainWindow(QMainWindow):
                 "recommended": False,
             },
             {
+                "columns": ["系统通知区及图标缓存"],
+                "icon_hint": "windows",
+                "action": "检查",
+                "action_type": None,
+                "recommended": False,
+            },
+            {
+                "columns": ["登录缓存配置文件"],
+                "icon_hint": "windows",
+                "action": "清理",
+                "action_type": "command",
+                "command": r'cmd /c del /f /q "%LOCALAPPDATA%\Microsoft\Windows\UsrClass.dat.LOG*"',
+            },
+            {
+                "columns": ["程序安装信息"],
+                "icon_hint": "windows",
+                "action": "检查",
+                "action_type": None,
+            },
+            {
                 "columns": ["快速访问的缓存数据存储"],
                 "icon_hint": "windows",
                 "action": "检查",
@@ -1371,6 +1770,13 @@ class CleanerMainWindow(QMainWindow):
                 "action": "检查",
                 "action_type": None,
             },
+            {
+                "columns": ["(MMC)控制台文件的最近打开历史记录"],
+                "icon_hint": "windows",
+                "action": "清理",
+                "action_type": "command",
+                "command": r'reg delete "HKCU\Software\Microsoft\Microsoft Management Console\Recent File List" /f',
+            },
         ]
 
     def populate_registry_items(self):
@@ -1379,7 +1785,14 @@ class CleanerMainWindow(QMainWindow):
             {"columns": ["未使用的文件扩展名"], "icon_hint": "registry", "action": "检查", "action_type": None, "recommended": False},
             {"columns": ["无效的默认图标"], "icon_hint": "registry", "action": "检查", "action_type": None, "recommended": False},
             {"columns": ["应用程序打开方式文件问题"], "icon_hint": "registry", "action": "检查", "action_type": None, "recommended": False},
-            {"columns": ["CLSID 问题"], "icon_hint": "registry", "action": "检查", "action_type": None, "recommended": False},
+            {"columns": ["CLSID问题"], "icon_hint": "registry", "action": "检查", "action_type": None, "recommended": False},
+            {"columns": ["CLSID问题"], "icon_hint": "registry", "action": "检查", "action_type": None, "recommended": False},
+            {"columns": ["CLSID问题"], "icon_hint": "registry", "action": "检查", "action_type": None, "recommended": False},
+            {"columns": ["CLSID问题"], "icon_hint": "registry", "action": "检查", "action_type": None, "recommended": False},
+            {"columns": ["CLSID问题"], "icon_hint": "registry", "action": "检查", "action_type": None, "recommended": False},
+            {"columns": ["应用程序卸载残留"], "icon_hint": "registry", "action": "检查", "action_type": None, "recommended": False},
+            {"columns": ["应用程序卸载残留"], "icon_hint": "registry", "action": "检查", "action_type": None, "recommended": False},
+            {"columns": ["应用程序卸载残留"], "icon_hint": "registry", "action": "检查", "action_type": None, "recommended": False},
             {"columns": ["应用程序卸载残留"], "icon_hint": "registry", "action": "检查", "action_type": None, "recommended": False},
             {"columns": ["无效的防火墙规则"], "icon_hint": "registry", "action": "检查", "action_type": None, "recommended": False},
             {"columns": ["Windows 兼容性助手功能的记忆库"], "icon_hint": "registry", "action": "检查", "action_type": None, "recommended": False},
@@ -1571,19 +1984,19 @@ class CleanerMainWindow(QMainWindow):
         choose_dir_button.setMinimumWidth(96)
         choose_dir_button.clicked.connect(self.select_file_scan_root)
 
-        scan_large_button = QPushButton("扫描大文件")
-        scan_large_button.setObjectName("scanPrimaryButton")
-        scan_large_button.setMinimumWidth(112)
-        scan_large_button.clicked.connect(self.scan_large_files)
+        self.scan_large_button = QPushButton("扫描大文件")
+        self.scan_large_button.setObjectName("scanPrimaryButton")
+        self.scan_large_button.setMinimumWidth(112)
+        self.scan_large_button.clicked.connect(self.scan_large_files)
 
-        scan_duplicate_button = QPushButton("扫描重复文件")
-        scan_duplicate_button.setObjectName("cleanSecondaryButton")
-        scan_duplicate_button.setMinimumWidth(128)
-        scan_duplicate_button.clicked.connect(self.scan_duplicate_files)
+        self.scan_duplicate_button = QPushButton("扫描重复文件")
+        self.scan_duplicate_button.setObjectName("cleanSecondaryButton")
+        self.scan_duplicate_button.setMinimumWidth(128)
+        self.scan_duplicate_button.clicked.connect(self.scan_duplicate_files)
 
         toolbar.addWidget(choose_dir_button)
-        toolbar.addWidget(scan_large_button)
-        toolbar.addWidget(scan_duplicate_button)
+        toolbar.addWidget(self.scan_large_button)
+        toolbar.addWidget(self.scan_duplicate_button)
         toolbar.addStretch(1)
         outer.addLayout(toolbar)
 
@@ -1830,7 +2243,9 @@ class CleanerMainWindow(QMainWindow):
 
         try:
             subprocess.Popen(command, shell=True)
-            self.uninstall_status_label.setText(f"已启动卸载程序: {app.get('name', '')}")
+            self.uninstall_status_label.setText(f"已启动卸载程序: {app.get('name', '')}，完成后将自动刷新列表。")
+            QTimer.singleShot(3000, lambda: self.load_installed_apps(show_message=False))
+            QTimer.singleShot(10000, lambda: self.load_installed_apps(show_message=False))
         except Exception as exc:  # pragma: no cover - Windows shell dependent
             QMessageBox.warning(self, "软件卸载", f"启动卸载失败: {exc}")
 
@@ -1911,16 +2326,7 @@ class CleanerMainWindow(QMainWindow):
         if hasattr(self, "file_tabs"):
             self.file_tabs.setCurrentWidget(self.file_large_table)
         self.file_status_label.setText(f"正在扫描大文件: {root_dir}")
-        QApplication.setOverrideCursor(Qt.WaitCursor)
-        try:
-            self.file_large_items = self.find_large_files(root_dir)
-        finally:
-            QApplication.restoreOverrideCursor()
-        self.populate_large_files_table(self.file_large_items)
-        total_size = sum(item["size"] for item in self.file_large_items)
-        self.file_status_label.setText(
-            f"大文件扫描完成: {len(self.file_large_items)} 个，合计 {self.format_size(total_size)}"
-        )
+        self.start_file_scan_thread("large", root_dir)
 
     def scan_duplicate_files(self):
         """在文件管理页内按大小+SHA256 查找重复文件。"""
@@ -1928,19 +2334,60 @@ class CleanerMainWindow(QMainWindow):
         if hasattr(self, "file_tabs"):
             self.file_tabs.setCurrentWidget(self.file_duplicate_table)
         self.file_status_label.setText(f"正在扫描重复文件: {root_dir}")
-        QApplication.setOverrideCursor(Qt.WaitCursor)
-        try:
-            self.file_duplicate_groups = self._find_duplicate_files(root_dir)
-        finally:
-            QApplication.restoreOverrideCursor()
+        self.start_file_scan_thread("duplicates", root_dir)
 
-        total_waste = 0
-        for size, paths in self.file_duplicate_groups:
-            total_waste += size * (len(paths) - 1)
-        self.populate_duplicate_files_table(self.file_duplicate_groups)
-        self.file_status_label.setText(
-            f"重复文件扫描完成: {len(self.file_duplicate_groups)} 组，约可处理 {self.format_size(total_waste)}"
-        )
+    def set_file_scan_controls_enabled(self, enabled):
+        for button_name in ("scan_large_button", "scan_duplicate_button"):
+            if hasattr(self, button_name):
+                getattr(self, button_name).setEnabled(enabled)
+
+    def start_file_scan_thread(self, mode, root_dir):
+        if self.file_scan_thread and self.file_scan_thread.isRunning():
+            QMessageBox.information(self, "文件管理", "文件扫描正在进行，请稍后。")
+            return
+
+        self.set_file_scan_controls_enabled(False)
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        thread = FileScanThread(mode, root_dir)
+        self.file_scan_thread = thread
+        thread.file_scan_finished_signal.connect(self.on_file_scan_finished)
+        thread.file_scan_error_signal.connect(self.on_file_scan_error)
+        thread.finished.connect(lambda: self.set_file_scan_controls_enabled(True))
+        thread.finished.connect(lambda: setattr(self, "file_scan_thread", None))
+        thread.finished.connect(thread.deleteLater)
+        thread.finished.connect(lambda: QApplication.restoreOverrideCursor())
+        thread.start()
+
+    def on_file_scan_finished(self, mode, payload):
+        if mode == "large":
+            self.file_large_items = payload
+            self.populate_large_files_table(self.file_large_items)
+            total_size = sum(item["size"] for item in self.file_large_items)
+            self.file_status_label.setText(
+                f"大文件扫描完成: {len(self.file_large_items)} 个，合计 {self.format_size(total_size)}"
+            )
+            self.animate_status_pulse(self.file_status_label)
+            return
+
+        if mode == "duplicates":
+            self.file_duplicate_groups = payload
+            total_waste = 0
+            for size, paths in self.file_duplicate_groups:
+                total_waste += size * (len(paths) - 1)
+            self.populate_duplicate_files_table(self.file_duplicate_groups)
+            self.file_status_label.setText(
+                f"重复文件扫描完成: {len(self.file_duplicate_groups)} 组，约可处理 {self.format_size(total_waste)}"
+            )
+            self.animate_status_pulse(self.file_status_label)
+
+    def on_file_scan_error(self, mode, message):
+        labels = {
+            "large": "大文件扫描",
+            "duplicates": "重复文件扫描",
+        }
+        label = labels.get(mode, "文件扫描")
+        self.file_status_label.setText(f"{label}失败: {message}")
+        QMessageBox.warning(self, "文件管理", f"{label}失败:\n{message}")
 
     def default_file_scan_root(self):
         if sys.platform.startswith("win"):

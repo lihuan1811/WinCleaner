@@ -145,7 +145,7 @@ def test_qt_file_manager_uses_in_app_tables():
     source = Path("cleaner_ui.py").read_text(encoding="utf-8")
     file_page = source.split("def _build_file_page", 1)[1].split("def _open_system_tool", 1)[0]
     large_scan = source.split("def scan_large_files", 1)[1].split("def scan_duplicate_files", 1)[0]
-    duplicate_scan = source.split("def scan_duplicate_files", 1)[1].split("def default_file_scan_root", 1)[0]
+    duplicate_scan = source.split("def scan_duplicate_files", 1)[1].split("def set_file_scan_controls_enabled", 1)[0]
 
     assert "self.file_tabs = QTabWidget()" in file_page
     assert "self.file_large_table" in file_page
@@ -196,3 +196,44 @@ def test_qt_has_in_app_account_login_register_and_card_redeem():
     assert "登录" in source
     assert "注册" in source
     assert "兑换卡密" in source
+
+
+def test_qt_file_manager_scans_run_in_worker_thread():
+    source = Path("cleaner_ui.py").read_text(encoding="utf-8")
+    large_scan = source.split("def scan_large_files", 1)[1].split("def scan_duplicate_files", 1)[0]
+    duplicate_scan = source.split("def scan_duplicate_files", 1)[1].split("def on_file_scan_finished", 1)[0]
+
+    assert "class FileScanThread(QThread)" in source
+    assert "file_scan_finished_signal" in source
+    assert 'self.start_file_scan_thread("large", root_dir)' in large_scan
+    assert 'self.start_file_scan_thread("duplicates", root_dir)' in duplicate_scan
+    assert "thread = FileScanThread(mode, root_dir)" in source
+    assert "self.find_large_files(root_dir)" not in large_scan
+    assert "self._find_duplicate_files(root_dir)" not in duplicate_scan
+
+
+def test_qt_optimizer_pages_have_expanded_catalogs():
+    source = Path("cleaner_ui.py").read_text(encoding="utf-8")
+
+    assert "populate_startup_service_items" in source
+    assert "startup_folder_items" in source
+    assert "Windows Security notification icon" in source
+    assert "Realtek高清晰音频管理器" in source
+    assert "Microsoft Edge Update Service (edgeupdate)" in source
+    assert "GameViewerService" in source
+    assert "NVIDIA Display Container LS" in source
+    assert "Microsoft PC Manager Service" in source
+    assert "ToDesk Service" in source
+    assert "Windows 启动优化功能（碎片整理预取）" in source
+    assert "禁用Windows预安装和应用推荐功能" in source
+    assert "登录缓存配置文件" in source
+    assert "程序安装信息" in source
+    assert "CLSID问题" in source
+
+
+def test_qt_uninstaller_refreshes_after_uninstall_command():
+    source = Path("cleaner_ui.py").read_text(encoding="utf-8")
+    run_uninstall = source.split("def run_uninstall_command", 1)[1].split("def normalize_uninstall_command", 1)[0]
+
+    assert "QTimer.singleShot" in run_uninstall
+    assert "load_installed_apps(show_message=False)" in run_uninstall
