@@ -364,12 +364,40 @@ QPushButton#miniActionButton {
     font-size: 12px;
     font-weight: 700;
     min-height: 24px;
-    min-width: 64px;
-    padding: 0 12px;
+    min-width: 52px;
+    padding: 0 10px;
 }
 
 QPushButton#miniActionButton:hover {
     background: #E7F7F4;
+}
+
+QPushButton#miniActionButton:disabled {
+    border-color: #C7DDD8;
+    color: #9DB3AD;
+    background: #F4F8F7;
+}
+
+QPushButton#dangerActionButton {
+    background: #FFFFFF;
+    border: 1px solid #E5897F;
+    border-radius: 12px;
+    color: #C0392B;
+    font-size: 12px;
+    font-weight: 700;
+    min-height: 24px;
+    min-width: 52px;
+    padding: 0 10px;
+}
+
+QPushButton#dangerActionButton:hover {
+    background: #FCEDEA;
+}
+
+QPushButton#dangerActionButton:disabled {
+    border-color: #E3D6D4;
+    color: #B7A6A3;
+    background: #F7F3F2;
 }
 
 QScrollArea#pageScroll {
@@ -1057,11 +1085,8 @@ class CleanerMainWindow(QMainWindow):
         self.select_all_checkbox.setEnabled(False)
         self.select_all_checkbox.stateChanged.connect(self.on_select_all_changed)
 
-        self.simulate_checkbox = QCheckBox("模拟模式")
-        self.simulate_checkbox.setToolTip("默认不实际删除文件")
-        self.simulate_checkbox.setChecked(True)
-
         self.backup_checkbox = QCheckBox("删除前备份")
+        self.backup_checkbox.setToolTip("删除前自动备份，可在“备份管理”中恢复")
         self.backup_checkbox.setChecked(True)
 
         backup_dir_button = QPushButton("备份目录")
@@ -1077,7 +1102,6 @@ class CleanerMainWindow(QMainWindow):
         result_header.addWidget(self.recommended_checkbox)
         result_header.addWidget(self.professional_checkbox)
         result_header.addWidget(self.select_all_checkbox)
-        result_header.addWidget(self.simulate_checkbox)
         result_header.addWidget(self.backup_checkbox)
         result_header.addWidget(backup_dir_button)
         result_header.addWidget(backup_manager_button)
@@ -3323,12 +3347,12 @@ class CleanerMainWindow(QMainWindow):
         if len(headers) == 4:
             header_view.setSectionResizeMode(2, QHeaderView.Stretch)
             header_view.setSectionResizeMode(3, QHeaderView.Fixed)
-            table.setColumnWidth(3, 164)
+            table.setColumnWidth(3, 150)
         else:
             header_view.setSectionResizeMode(2, QHeaderView.ResizeToContents)
             header_view.setSectionResizeMode(3, QHeaderView.Stretch)
             header_view.setSectionResizeMode(4, QHeaderView.Fixed)
-            table.setColumnWidth(4, 164)
+            table.setColumnWidth(4, 150)
         return table
 
     def _build_fragment_page(self):
@@ -3950,21 +3974,30 @@ class CleanerMainWindow(QMainWindow):
     def _make_file_action_widget(self, payload):
         widget = QWidget()
         layout = QHBoxLayout(widget)
-        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setContentsMargins(2, 2, 6, 2)
         layout.setSpacing(6)
+
+        keep = payload.get("keep", False)
 
         open_button = QPushButton("打开")
         open_button.setObjectName("miniActionButton")
         open_button.setCursor(Qt.PointingHandCursor)
-        open_button.setMinimumWidth(64)
+        open_button.setFixedWidth(54)
+        open_button.setToolTip("在资源管理器中打开所在目录")
         open_button.clicked.connect(lambda _checked=False, target=payload["path"]: self.open_file_location(target))
 
-        delete_button = QPushButton("保留" if payload.get("keep") else "删除")
-        delete_button.setObjectName("miniActionButton")
+        delete_button = QPushButton("保留" if keep else "删除")
+        delete_button.setObjectName("miniActionButton" if keep else "dangerActionButton")
         delete_button.setCursor(Qt.PointingHandCursor)
-        delete_button.setMinimumWidth(64)
-        delete_button.setEnabled(not payload.get("keep", False))
-        delete_button.clicked.connect(lambda _checked=False, target=dict(payload): self.delete_file_payloads([target]))
+        delete_button.setFixedWidth(54)
+        delete_button.setEnabled(not keep)
+        if keep:
+            delete_button.setToolTip("重复组内保留的文件，不会被删除")
+        else:
+            delete_button.setToolTip("删除该文件（删除前自动备份，可在备份管理中恢复）")
+            delete_button.clicked.connect(
+                lambda _checked=False, target=dict(payload): self.request_delete_payload(target)
+            )
 
         layout.addWidget(open_button)
         layout.addWidget(delete_button)
@@ -4036,20 +4069,67 @@ class CleanerMainWindow(QMainWindow):
         self.file_tabs.setCurrentWidget(self.file_duplicate_table)
         self.delete_file_payloads(payloads)
 
-    def delete_file_payloads(self, payloads):
+    def request_delete_payload(self, payload):
+        """单行“删除”按钮：带确认与受保护提示，确认后强制删除（仍跳过系统关键文件）。"""
+        path = payload.get("path")
+        if payload.get("keep"):
+            return
+        if not path or not os.path.isfile(path):
+            QMessageBox.information(self, "删除文件", "该文件不存在或已被删除。")
+            self.refresh_file_tables_after_delete()
+            return
+        if self.is_hard_protected_file(path):
+            QMessageBox.warning(
+                self,
+                "删除文件",
+                "该文件属于系统关键位置或程序自身，禁止删除以保证系统稳定。",
+            )
+            return
+
+        if self.is_soft_protected_file(path):
+            prompt = (
+                "该文件位于系统或程序目录：\n"
+                f"{path}\n\n"
+                "删除可能影响已安装程序运行。已开启“删除前备份”，可在备份管理中恢复。\n"
+                "确定仍要删除吗？"
+            )
+        else:
+            prompt = (
+                f"确定删除该文件吗？\n{path}\n\n"
+                "（已开启“删除前备份”，可在备份管理中恢复）"
+            )
+
+        if QMessageBox.question(
+            self,
+            "删除文件",
+            prompt,
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        ) != QMessageBox.Yes:
+            return
+
+        self.delete_file_payloads([payload], force=True)
+
+    def delete_file_payloads(self, payloads, force=False):
         backup_dir = self.file_delete_backup_dir() if self.cleaner.options.get("backup", True) else None
         deleted_count = 0
-        skipped_count = 0
+        skipped_protected = 0
+        skipped_keep = 0
         freed_bytes = 0
         errors = []
 
         for payload in payloads:
             path = payload.get("path")
             if payload.get("keep"):
-                skipped_count += 1
+                skipped_keep += 1
                 continue
-            if not path or not self.is_user_deletable_file(path):
-                skipped_count += 1
+            if not path or not os.path.isfile(path):
+                continue
+            if self.is_hard_protected_file(path):
+                skipped_protected += 1
+                continue
+            if not force and not self.is_user_deletable_file(path):
+                skipped_protected += 1
                 continue
             try:
                 freed_bytes += self.delete_file_path(path, backup_dir=backup_dir)
@@ -4058,13 +4138,24 @@ class CleanerMainWindow(QMainWindow):
                 errors.append(f"{path}: {exc}")
 
         self.refresh_file_tables_after_delete()
+
+        skipped_total = skipped_protected + skipped_keep
         status = f"已删除 {deleted_count} 个文件，释放 {self.format_size(freed_bytes)}"
-        if skipped_count:
-            status += f"，跳过 {skipped_count} 个受保护/保留项"
+        if skipped_total:
+            status += f"，跳过 {skipped_total} 个受保护/保留项"
         if errors:
             status += f"，失败 {len(errors)} 个"
         self.file_status_label.setText(status)
         self.animate_status_pulse(self.file_status_label)
+
+        # 批量操作时，如果全部被系统/程序目录保护而未删除，给出明确弹窗说明，避免“点了没反应”的困惑。
+        if deleted_count == 0 and skipped_protected and not errors:
+            QMessageBox.information(
+                self,
+                "未删除文件",
+                f"有 {skipped_protected} 个文件位于受保护的系统/程序目录，已自动跳过。\n\n"
+                "如确实需要删除其中某个文件，请点击该行右侧的“删除”按钮单独确认。",
+            )
 
     def file_delete_backup_dir(self):
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -4083,16 +4174,42 @@ class CleanerMainWindow(QMainWindow):
     def is_user_deletable_file(self, path):
         if not path or not os.path.isfile(path):
             return False
-        file_name = os.path.basename(path).lower()
-        if file_name in {"pagefile.sys", "hiberfil.sys", "swapfile.sys"}:
+        if self.is_hard_protected_file(path):
             return False
+        return not self.is_soft_protected_file(path)
+
+    def is_hard_protected_file(self, path):
+        """系统关键文件 / 程序自身：任何情况下都不允许删除。"""
+        if not path:
+            return True
+        file_name = os.path.basename(path).lower()
+        if file_name in {"pagefile.sys", "hiberfil.sys", "swapfile.sys", "ntldr", "bootmgr"}:
+            return True
         normalized = path.replace("/", "\\").lower()
-        protected_roots = (
+        hard_roots = (
+            "c:\\windows\\system32\\",
+            "c:\\windows\\syswow64\\",
+            "c:\\windows\\winsxs\\",
+        )
+        if any(normalized.startswith(root) for root in hard_roots):
+            return True
+        try:
+            app_dir = os.path.dirname(os.path.abspath(sys.argv[0])).replace("/", "\\").lower()
+        except Exception:
+            app_dir = ""
+        if app_dir and normalized.startswith(app_dir + "\\"):
+            return True
+        return False
+
+    def is_soft_protected_file(self, path):
+        """系统或程序目录：默认跳过，但用户单行确认后可强制删除。"""
+        normalized = (path or "").replace("/", "\\").lower()
+        soft_roots = (
             "c:\\windows\\",
             "c:\\program files\\",
             "c:\\program files (x86)\\",
         )
-        return not any(normalized.startswith(root) for root in protected_roots)
+        return any(normalized.startswith(root) for root in soft_roots)
 
     def refresh_file_tables_after_delete(self):
         self.file_large_items = [
@@ -4677,32 +4794,27 @@ class CleanerMainWindow(QMainWindow):
         msg.setIcon(QMessageBox.Warning)
         msg.setWindowTitle(f"确认{action_label}")
 
-        if self.simulate_checkbox.isChecked():
-            msg.setText(
-                f"您选择了模拟模式，将会模拟{action_label} {len(clean_items)} 个项目，"
-                f"总计 {self.format_size(total_size)}。"
+        msg.setText(
+            f"您确定要{action_label} {len(clean_items)} 个项目，"
+            f"总计 {self.format_size(total_size)} 吗？（将真实删除）"
+        )
+        if professional_items:
+            msg.setInformativeText(
+                f"其中包含 {len(professional_items)} 个专业清理项。"
+                "这些路径可能属于 WinSxS、WindowsApps、Defender、EdgeCore 或系统组件缓存，"
+                "删除后可能影响系统更新、应用恢复或安全记录。此操作无法撤销！"
             )
         else:
-            msg.setText(
-                f"您确定要{action_label} {len(clean_items)} 个项目，"
-                f"总计 {self.format_size(total_size)} 吗？"
-            )
-            if professional_items:
-                msg.setInformativeText(
-                    f"其中包含 {len(professional_items)} 个专业清理项。"
-                    "这些路径可能属于 WinSxS、WindowsApps、Defender、EdgeCore 或系统组件缓存，"
-                    "删除后可能影响系统更新、应用恢复或安全记录。此操作无法撤销！"
-                )
-            else:
-                msg.setInformativeText("此操作无法撤销！")
+            msg.setInformativeText("文件将被真实删除，此操作无法撤销！")
 
         msg.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+        msg.setDefaultButton(QMessageBox.No)
         if msg.exec_() != QMessageBox.Yes:
             return
 
-        # 设置清理选项
+        # 设置清理选项：始终真实删除，备份开启时可在“备份管理”中恢复
         self.cleaner.set_options({
-            'simulate': self.simulate_checkbox.isChecked(),
+            'simulate': False,
             'backup': self.backup_checkbox.isChecked(),
             'backup_dir': self.cleaner.backup_dir,
             'allow_scan_only_clean': self.current_clean_mode() in {"professional", "all"},
@@ -4743,10 +4855,7 @@ class CleanerMainWindow(QMainWindow):
         freed_space = results.get('freed_space', 0)
         errors = results.get('errors', [])
 
-        if self.simulate_checkbox.isChecked():
-            message = f"模拟清理完成，可释放空间: {self.format_size(freed_space)}"
-        else:
-            message = f"清理完成，已释放空间: {self.format_size(freed_space)}"
+        message = f"清理完成，已释放空间: {self.format_size(freed_space)}"
 
         if errors:
             message += f"，{len(errors)} 个错误"
@@ -4769,9 +4878,8 @@ class CleanerMainWindow(QMainWindow):
 
         # 更新磁盘信息；真实清理后重新扫描，避免树里残留已删除路径。
         self.update_disk_info()
-        if not self.simulate_checkbox.isChecked():
-            self.status_label.setText(f"{message}，正在重新扫描...")
-            self.start_scan()
+        self.status_label.setText(f"{message}，正在重新扫描...")
+        self.start_scan()
 
     def on_clean_error(self, message):
         """清理线程异常回传。"""

@@ -14,7 +14,7 @@ APP_NAME = "C盘清理精灵"
 # 默认配置
 DEFAULT_CONFIG = {
     # 安全选项
-    "simulate_mode": True,      # 模拟模式（不实际删除文件）
+    "simulate_mode": False,     # 默认真实删除（不再默认模拟）
     "backup_files": True,       # 删除前备份文件
     
     # 清理选项

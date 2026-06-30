@@ -40,7 +40,7 @@ class CleanerLogic:
     def __init__(self):
         """初始化清理器"""
         self.options = {
-            'simulate': True,  # 默认为模拟模式
+            'simulate': False,  # 默认真实删除（不再默认模拟）
             'backup': True,    # 默认备份文件
             'allow_scan_only_clean': False
         }
