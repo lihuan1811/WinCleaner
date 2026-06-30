@@ -237,3 +237,19 @@ def test_qt_uninstaller_refreshes_after_uninstall_command():
 
     assert "QTimer.singleShot" in run_uninstall
     assert "load_installed_apps(show_message=False)" in run_uninstall
+
+
+def test_qt_optimizer_actions_run_without_manual_confirmations():
+    source = Path("cleaner_ui.py").read_text(encoding="utf-8")
+    populate_table = source.split("def _populate_optimizer_table", 1)[1].split("def _dedupe_optimizer_rows", 1)[0]
+    apply_tab = source.split("def apply_current_optimization_tab", 1)[1].split("def run_optimizer_row_action", 1)[0]
+    run_action_signature = source.split("def run_optimizer_row_action", 1)[1].split(":", 1)[0]
+    kill_process = source.split("def kill_process_item", 1)[1].split("def _build_file_page", 1)[0]
+
+    assert "confirm=False" in populate_table
+    assert "QMessageBox.question" not in apply_tab
+    assert "QMessageBox.information(\n            self,\n            \"一键优化\"" not in apply_tab
+    assert "confirm=False" in run_action_signature
+    assert "kill_process_by_name" in source
+    assert "process_name" in kill_process
+    assert "taskkill /IM" in kill_process

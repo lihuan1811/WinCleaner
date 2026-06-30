@@ -1037,6 +1037,10 @@ class CleanerMainWindow(QMainWindow):
         action_bar.addWidget(optimize_button)
         outer.addLayout(action_bar)
 
+        self.optimizer_status_label = QLabel("准备处理系统优化项。")
+        self.optimizer_status_label.setObjectName("statusLabel")
+        outer.addWidget(self.optimizer_status_label)
+
         return page
 
     def _build_uninstall_page(self):
@@ -1259,7 +1263,7 @@ class CleanerMainWindow(QMainWindow):
             action_button.setObjectName("miniActionButton")
             action_button.setCursor(Qt.PointingHandCursor)
             action_button.clicked.connect(
-                lambda _checked=False, row=dict(payload): self.run_optimizer_row_action(row)
+                lambda _checked=False, row=dict(payload): self.run_optimizer_row_action(row, confirm=False)
             )
             table.setCellWidget(row_index, table.columnCount() - 1, action_button)
             table.setRowHeight(row_index, 34)
@@ -1495,11 +1499,11 @@ class CleanerMainWindow(QMainWindow):
     def _fallback_memory_rows(self):
         return [
             {"columns": ["C盘清理精灵.exe", "446.61MB", "3.59%"], "icon_hint": "cleaner", "action": "保留", "action_type": None, "recommended": False},
-            {"columns": ["ToDesk.exe", "213.56MB", "0.00%"], "icon_hint": "todesk", "action": "结束", "action_type": None, "recommended": False},
-            {"columns": ["GameViewer.exe", "79.41MB", "0.00%"], "icon_hint": "GameViewer", "action": "结束", "action_type": None, "recommended": False},
-            {"columns": ["msedge.exe", "--", "--"], "icon_hint": "edge", "action": "结束", "action_type": None, "recommended": False},
+            {"columns": ["ToDesk.exe", "213.56MB", "0.00%"], "icon_hint": "todesk", "action": "结束", "action_type": "kill_process_by_name", "process_name": "ToDesk.exe", "recommended": False},
+            {"columns": ["GameViewer.exe", "79.41MB", "0.00%"], "icon_hint": "GameViewer", "action": "结束", "action_type": "kill_process_by_name", "process_name": "GameViewer.exe", "recommended": False},
+            {"columns": ["msedge.exe", "--", "--"], "icon_hint": "edge", "action": "结束", "action_type": "kill_process_by_name", "process_name": "msedge.exe", "recommended": False},
             {"columns": ["explorer.exe", "--", "--"], "icon_hint": "explorer", "action": "保留", "action_type": None, "recommended": False},
-            {"columns": ["crashpad_handler.exe", "7.89MB", "0.00%"], "icon_hint": "crashpad", "action": "结束", "action_type": None, "recommended": False},
+            {"columns": ["crashpad_handler.exe", "7.89MB", "0.00%"], "icon_hint": "crashpad", "action": "结束", "action_type": "kill_process_by_name", "process_name": "crashpad_handler.exe", "recommended": False},
             {"columns": ["CDriveCleanerSpirit.exe", "7.39MB", "0.00%"], "icon_hint": "cleaner", "action": "保留", "action_type": None, "recommended": False},
         ]
 
@@ -1853,17 +1857,6 @@ class CleanerMainWindow(QMainWindow):
             QMessageBox.information(self, "一键优化", "请先勾选需要处理的项目。")
             return
 
-        risky_tabs = {"开机加速", "运行内存"}
-        if tab_name in risky_tabs:
-            answer = QMessageBox.question(
-                self,
-                "一键优化",
-                f"将处理 {len(rows)} 个“{tab_name}”项目，是否继续？",
-                QMessageBox.Yes | QMessageBox.No,
-            )
-            if answer != QMessageBox.Yes:
-                return
-
         executed = 0
         skipped = 0
         for row in rows:
@@ -1872,29 +1865,26 @@ class CleanerMainWindow(QMainWindow):
             else:
                 skipped += 1
 
-        QMessageBox.information(
-            self,
-            "一键优化",
-            f"{tab_name} 已处理 {executed} 项，保留/需人工复核 {skipped} 项。",
-        )
+        if hasattr(self, "optimizer_status_label"):
+            self.optimizer_status_label.setText(
+                f"{tab_name} 已直接处理 {executed} 项，跳过 {skipped} 项。"
+            )
+            self.animate_status_pulse(self.optimizer_status_label)
         self.refresh_optimizer_tab()
 
-    def run_optimizer_row_action(self, row, confirm=True, quiet=False):
+    def run_optimizer_row_action(self, row, confirm=False, quiet=False):
         action_type = row.get("action_type")
         if action_type == "disable_startup":
             return self.disable_startup_item(row, confirm=confirm)
-        if action_type == "kill_process":
+        if action_type in {"kill_process", "kill_process_by_name"}:
             return self.kill_process_item(row, confirm=confirm)
         if action_type == "command" and row.get("command"):
             self._run_shell_command(row.get("columns", ["系统优化"])[0], row["command"], quiet=quiet)
             return True
 
-        if not quiet:
-            QMessageBox.information(
-                self,
-                "系统优化",
-                "此项目属于高风险或需人工确认项，已保留在列表中供检查，不会静默修改系统。",
-            )
+        if not quiet and hasattr(self, "optimizer_status_label"):
+            self.optimizer_status_label.setText("该项目仅展示或检查，不需要执行处理。")
+            self.animate_status_pulse(self.optimizer_status_label)
         return False
 
     def _run_shell_command(self, label, command, quiet=False):
@@ -1908,7 +1898,7 @@ class CleanerMainWindow(QMainWindow):
         if not quiet:
             QMessageBox.information(self, label, f"该操作将在 Windows 上执行:\n{command}")
 
-    def disable_startup_item(self, row, confirm=True):
+    def disable_startup_item(self, row, confirm=False):
         if not sys.platform.startswith("win"):
             QMessageBox.information(self, "开机加速", "禁用启动项功能将在 Windows 上写入启动项注册表。")
             return False
@@ -1932,10 +1922,10 @@ class CleanerMainWindow(QMainWindow):
             QMessageBox.warning(self, "禁用启动项", f"禁用失败: {exc}")
             return False
 
-    def kill_process_item(self, row, confirm=True):
+    def kill_process_item(self, row, confirm=False):
         pid = row.get("pid")
-        process_name = row.get("columns", ["进程"])[0]
-        if not pid:
+        process_name = row.get("process_name") or row.get("columns", ["进程"])[0].split("  (PID", 1)[0].strip()
+        if not pid and not process_name:
             return False
         if confirm:
             answer = QMessageBox.question(
@@ -1948,10 +1938,28 @@ class CleanerMainWindow(QMainWindow):
                 return False
 
         try:
-            if psutil is not None:
+            if pid and psutil is not None:
                 psutil.Process(pid).terminate()
-            elif sys.platform.startswith("win"):
+            elif pid and sys.platform.startswith("win"):
                 subprocess.Popen(f"taskkill /PID {pid} /F", shell=True)
+            elif process_name and psutil is not None:
+                killed = False
+                for process in psutil.process_iter(["pid", "name"]):
+                    try:
+                        if process.info.get("pid") == os.getpid():
+                            continue
+                        if (process.info.get("name") or "").lower() == process_name.lower():
+                            process.terminate()
+                            killed = True
+                    except (psutil.Error, AttributeError):
+                        continue
+                if not killed and sys.platform.startswith("win"):
+                    subprocess.Popen(f'taskkill /IM "{process_name}" /F', shell=True)
+                    killed = True
+                if not killed:
+                    return False
+            elif sys.platform.startswith("win"):
+                subprocess.Popen(f'taskkill /IM "{process_name}" /F', shell=True)
             else:
                 return False
             return True
