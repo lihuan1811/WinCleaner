@@ -172,6 +172,8 @@ def test_qt_file_manager_uses_in_app_tables():
     assert "self.file_tabs = QTabWidget()" in file_page
     assert "self.file_large_table" in file_page
     assert "self.file_duplicate_table" in file_page
+    assert "self.fragment_page" in file_page
+    assert "碎片整理" in file_page
     assert "populate_large_files_table" in source
     assert "populate_duplicate_files_table" in source
     assert "删除选中文件" in file_page
@@ -182,6 +184,23 @@ def test_qt_file_manager_uses_in_app_tables():
     assert "delete_file_path" in source
     assert "_select_page(0)" not in large_scan
     assert "QMessageBox.information" not in duplicate_scan
+
+
+def test_qt_file_manager_has_fragment_cleanup_tab():
+    source = Path("cleaner_ui.py").read_text(encoding="utf-8")
+
+    assert "class DefragThread(QThread)" in source
+    assert "scan_fragments" in source
+    assert "optimize_fragments" in source
+    assert "defrag C: /A /V" in source
+    assert "defrag C: /U /V" in source
+    assert "fragment_grid_cells" in source
+    assert "碎片数" in source
+    assert "碎片文件" in source
+    assert "碎片率" in source
+    assert "扫描碎片" in source
+    assert "整理碎片" in source
+    assert "hidden_windows_subprocess_kwargs" in source
 
 
 def test_qt_labels_have_room_for_chinese_actions():

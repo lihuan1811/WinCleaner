@@ -10,6 +10,7 @@ import sys
 import subprocess
 import hashlib
 import datetime
+import re
 try:
     import psutil
 except ImportError:  # pragma: no cover - optional runtime dependency
@@ -520,6 +521,105 @@ class FileScanThread(QThread):
             return None
 
 
+class DefragThread(QThread):
+    """Windows 磁盘碎片扫描/整理线程。"""
+    defrag_progress_signal = pyqtSignal(str)
+    defrag_finished_signal = pyqtSignal(str, dict)
+    defrag_error_signal = pyqtSignal(str, str)
+
+    def __init__(self, mode, drive="C:"):
+        super().__init__()
+        self.mode = mode
+        self.drive = drive
+
+    def run(self):
+        if self.drive.upper() == "C:":
+            command = "defrag C: /A /V" if self.mode == "scan" else "defrag C: /U /V"
+        else:
+            command = f"defrag {self.drive} /A /V" if self.mode == "scan" else f"defrag {self.drive} /U /V"
+        label = "扫描碎片" if self.mode == "scan" else "整理碎片"
+        try:
+            self.defrag_progress_signal.emit(f"{label}中: {command}")
+            if not sys.platform.startswith("win"):
+                self.defrag_finished_signal.emit(
+                    self.mode,
+                    {
+                        "command": command,
+                        "output": f"该操作将在 Windows 上执行: {command}",
+                        "fragment_count": "--",
+                        "fragment_files": "--",
+                        "fragment_rate": "--",
+                        "exit_code": 0,
+                    },
+                )
+                return
+
+            result = subprocess.run(
+                command,
+                shell=True,
+                capture_output=True,
+                text=True,
+                errors="replace",
+                stdin=subprocess.DEVNULL,
+                timeout=60 * 60,
+                **hidden_windows_subprocess_kwargs(),
+            )
+            output = "\n".join(
+                part.strip()
+                for part in (result.stdout, result.stderr)
+                if part and part.strip()
+            )
+            payload = self.parse_output(output)
+            payload.update({
+                "command": command,
+                "output": output or "命令无输出",
+                "exit_code": result.returncode,
+            })
+            self.defrag_finished_signal.emit(self.mode, payload)
+        except Exception as exc:  # pragma: no cover - depends on Windows defrag
+            self.defrag_error_signal.emit(self.mode, str(exc))
+
+    @staticmethod
+    def parse_output(output):
+        rate = DefragThread.first_match(
+            output,
+            [
+                r"碎片率\s*[:：]\s*([\d.]+)\s*%",
+                r"总碎片(?:百分比|率)?\s*[:：]\s*([\d.]+)\s*%",
+                r"Total fragmentation\s*[:：]\s*([\d.]+)\s*%",
+            ],
+        )
+        fragment_files = DefragThread.first_match(
+            output,
+            [
+                r"碎片文件(?:数)?\s*[:：]\s*(\d+)",
+                r"fragmented files\s*[:：]\s*(\d+)",
+            ],
+        )
+        fragment_count = DefragThread.first_match(
+            output,
+            [
+                r"碎片数\s*[:：]\s*(\d+)",
+                r"文件碎片总数\s*[:：]\s*(\d+)",
+                r"fragments\s*[:：]\s*(\d+)",
+            ],
+        )
+        return {
+            "fragment_count": fragment_count or "--",
+            "fragment_files": fragment_files or "--",
+            "fragment_rate": f"{rate}%" if rate else "--",
+            "fragment_rate_value": float(rate) if rate else 0.0,
+        }
+
+    @staticmethod
+    def first_match(output, patterns):
+        for pattern in patterns:
+            match = re.search(pattern, output, re.IGNORECASE)
+            if match:
+                return match.group(1)
+        return ""
+
+
 class SystemRepairThread(QThread):
     progress_signal = pyqtSignal(str)
     result_signal = pyqtSignal(object)
@@ -570,6 +670,8 @@ class CleanerMainWindow(QMainWindow):
         self.file_large_items = []
         self.file_duplicate_groups = []
         self.file_scan_thread = None
+        self.defrag_thread = None
+        self.fragment_grid_cells = []
         self.active_animations = []
         self.account_service = LocalAccountService()
         self.account_state = self.account_service.current_state()
@@ -2532,8 +2634,10 @@ class CleanerMainWindow(QMainWindow):
 
         self.file_large_table = self._make_file_manage_table(["文件名", "大小", "路径", "操作"])
         self.file_duplicate_table = self._make_file_manage_table(["文件名", "大小", "重复组", "路径", "操作"])
+        self.fragment_page = self._build_fragment_page()
         self.file_tabs.addTab(self.file_large_table, "大文件")
         self.file_tabs.addTab(self.file_duplicate_table, "重复文件")
+        self.file_tabs.addTab(self.fragment_page, "碎片整理")
         outer.addWidget(self.file_tabs, 1)
 
         self.file_status_label = QLabel("准备扫描文件。")
@@ -2569,6 +2673,154 @@ class CleanerMainWindow(QMainWindow):
             header_view.setSectionResizeMode(4, QHeaderView.Fixed)
             table.setColumnWidth(4, 164)
         return table
+
+    def _build_fragment_page(self):
+        page = QWidget()
+        outer = QVBoxLayout(page)
+        outer.setContentsMargins(16, 16, 16, 16)
+        outer.setSpacing(14)
+
+        stats_row = QHBoxLayout()
+        stats_row.setSpacing(12)
+        self.fragment_count_label = self._make_fragment_stat(stats_row, "碎片数", "--")
+        self.fragment_files_label = self._make_fragment_stat(stats_row, "碎片文件", "--")
+        self.fragment_rate_label = self._make_fragment_stat(stats_row, "碎片率", "--")
+        outer.addLayout(stats_row)
+
+        self.fragment_progress = QProgressBar()
+        self.fragment_progress.setRange(0, 100)
+        self.fragment_progress.setValue(0)
+        self.fragment_progress.setTextVisible(False)
+        outer.addWidget(self.fragment_progress)
+
+        grid_card = QFrame()
+        grid_card.setObjectName("featureCard")
+        grid_card_layout = QVBoxLayout(grid_card)
+        grid_card_layout.setContentsMargins(16, 16, 16, 16)
+        grid_card_layout.setSpacing(12)
+
+        self.fragment_grid = QGridLayout()
+        self.fragment_grid.setHorizontalSpacing(4)
+        self.fragment_grid.setVerticalSpacing(4)
+        self.fragment_grid_cells = []
+        for row in range(12):
+            for column in range(28):
+                cell = QLabel()
+                cell.setFixedSize(14, 14)
+                cell.setStyleSheet("background: #A0A0A0; border-radius: 1px;")
+                self.fragment_grid.addWidget(cell, row, column)
+                self.fragment_grid_cells.append(cell)
+        grid_card_layout.addLayout(self.fragment_grid)
+
+        legend = QHBoxLayout()
+        legend.setSpacing(8)
+        legend_label = QLabel("映射颜色")
+        legend_label.setObjectName("statusLabel")
+        legend.addWidget(legend_label)
+        for color in ["#E5E7EB", "#67D4EA", "#2E9BEF", "#F59E0B", "#35C878", "#F5E46B", "#F56565"]:
+            swatch = QLabel()
+            swatch.setFixedSize(18, 18)
+            swatch.setStyleSheet(f"background: {color}; border-radius: 2px;")
+            legend.addWidget(swatch)
+        legend.addStretch(1)
+        grid_card_layout.addLayout(legend)
+        outer.addWidget(grid_card, 1)
+
+        actions = QHBoxLayout()
+        actions.addStretch(1)
+        self.scan_fragment_button = QPushButton("扫描碎片")
+        self.scan_fragment_button.setObjectName("scanPrimaryButton")
+        self.scan_fragment_button.setMinimumWidth(112)
+        self.scan_fragment_button.clicked.connect(self.scan_fragments)
+        self.optimize_fragment_button = QPushButton("整理碎片")
+        self.optimize_fragment_button.setObjectName("cleanSecondaryButton")
+        self.optimize_fragment_button.setMinimumWidth(112)
+        self.optimize_fragment_button.clicked.connect(self.optimize_fragments)
+        actions.addWidget(self.scan_fragment_button)
+        actions.addWidget(self.optimize_fragment_button)
+        outer.addLayout(actions)
+
+        self.paint_fragment_grid(0)
+        return page
+
+    def _make_fragment_stat(self, parent_layout, title, value):
+        card = QFrame()
+        card.setObjectName("featureCard")
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(16, 14, 16, 14)
+        label = QLabel(title)
+        label.setObjectName("featureCardTitle")
+        value_label = QLabel(value)
+        value_label.setObjectName("statValue")
+        layout.addWidget(label)
+        layout.addWidget(value_label)
+        parent_layout.addWidget(card, 1)
+        return value_label
+
+    def paint_fragment_grid(self, fragment_rate):
+        colors = ["#A0A0A0", "#67D4EA", "#2E9BEF", "#F59E0B", "#35C878", "#F5E46B", "#F56565"]
+        hot_ratio = max(0.0, min(float(fragment_rate or 0.0) / 100.0, 1.0))
+        hot_cells = int(len(self.fragment_grid_cells) * hot_ratio)
+        for index, cell in enumerate(self.fragment_grid_cells):
+            if index < hot_cells:
+                color = colors[2 + (index % (len(colors) - 2))]
+            elif index % 17 == 0:
+                color = colors[1]
+            else:
+                color = colors[0]
+            cell.setStyleSheet(f"background: {color}; border-radius: 1px;")
+
+    def set_fragment_busy(self, busy):
+        self.scan_fragment_button.setEnabled(not busy)
+        self.optimize_fragment_button.setEnabled(not busy)
+        self.fragment_progress.setRange(0, 0 if busy else 100)
+        if not busy:
+            self.fragment_progress.setValue(100)
+
+    def scan_fragments(self):
+        self.start_defrag_thread("scan")
+
+    def optimize_fragments(self):
+        self.start_defrag_thread("optimize")
+
+    def start_defrag_thread(self, mode):
+        if self.defrag_thread and self.defrag_thread.isRunning():
+            self.file_status_label.setText("碎片处理正在进行，请稍后。")
+            self.animate_status_pulse(self.file_status_label)
+            return
+
+        self.file_tabs.setCurrentWidget(self.fragment_page)
+        self.set_fragment_busy(True)
+        self.file_status_label.setText("正在扫描碎片..." if mode == "scan" else "正在整理碎片...")
+        self.defrag_thread = DefragThread(mode, "C:")
+        self.defrag_thread.defrag_progress_signal.connect(self.on_defrag_progress)
+        self.defrag_thread.defrag_finished_signal.connect(self.on_defrag_finished)
+        self.defrag_thread.defrag_error_signal.connect(self.on_defrag_error)
+        self.defrag_thread.finished.connect(self.defrag_thread.deleteLater)
+        self.defrag_thread.start()
+
+    def on_defrag_progress(self, message):
+        self.file_status_label.setText(message)
+
+    def on_defrag_finished(self, mode, payload):
+        self.set_fragment_busy(False)
+        self.defrag_thread = None
+        self.fragment_count_label.setText(str(payload.get("fragment_count", "--")))
+        self.fragment_files_label.setText(str(payload.get("fragment_files", "--")))
+        self.fragment_rate_label.setText(str(payload.get("fragment_rate", "--")))
+        self.paint_fragment_grid(payload.get("fragment_rate_value", 0.0))
+        action = "扫描" if mode == "scan" else "整理"
+        exit_code = payload.get("exit_code", 0)
+        status = "完成" if exit_code == 0 else f"返回 {exit_code}"
+        self.file_status_label.setText(f"碎片{action}{status}: {payload.get('command', '')}")
+        self.animate_status_pulse(self.file_status_label)
+
+    def on_defrag_error(self, mode, message):
+        self.set_fragment_busy(False)
+        self.defrag_thread = None
+        action = "扫描" if mode == "scan" else "整理"
+        self.file_status_label.setText(f"碎片{action}失败: {message}")
+        QMessageBox.warning(self, "碎片整理", f"碎片{action}失败:\n{message}")
 
     def _open_system_tool(self, label, command):
         """在 Windows 上启动系统工具；其他平台给出提示。"""
