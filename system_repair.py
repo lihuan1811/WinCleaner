@@ -11,6 +11,19 @@ from dataclasses import dataclass
 from enum import Enum
 
 
+def hidden_windows_subprocess_kwargs():
+    if not sys.platform.startswith("win"):
+        return {}
+
+    startupinfo = subprocess.STARTUPINFO()
+    startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+    startupinfo.wShowWindow = 0
+    return {
+        "creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        "startupinfo": startupinfo,
+    }
+
+
 class RepairRisk(Enum):
     SAFE = ("安全", "日常维护可执行")
     CAUTION = ("谨慎", "可能耗时较长或需要重启")
@@ -58,7 +71,10 @@ class SystemRepairService:
             [executable, *arguments],
             capture_output=True,
             text=True,
+            errors="replace",
             shell=False,
+            stdin=subprocess.DEVNULL,
+            **hidden_windows_subprocess_kwargs(),
         )
         output_parts = [
             value.strip()

@@ -134,6 +134,11 @@ def test_qt_system_optimizer_matches_tabbed_internal_tooling():
     source = Path("cleaner_ui.py").read_text(encoding="utf-8")
 
     assert "self.optimizer_tabs" in source
+    assert "QTreeWidget" in source
+    assert "QTreeWidgetItem" in source
+    assert "children" in source
+    assert "addChild" in source
+    assert "setExpanded" in source
     assert "开机加速" in source
     assert "运行内存" in source
     assert "系统优化" in source
@@ -169,6 +174,12 @@ def test_qt_file_manager_uses_in_app_tables():
     assert "self.file_duplicate_table" in file_page
     assert "populate_large_files_table" in source
     assert "populate_duplicate_files_table" in source
+    assert "删除选中文件" in file_page
+    assert "删除重复副本" in file_page
+    assert "_make_file_action_widget" in source
+    assert "delete_selected_files" in source
+    assert "delete_duplicate_copies" in source
+    assert "delete_file_path" in source
     assert "_select_page(0)" not in large_scan
     assert "QMessageBox.information" not in duplicate_scan
 
@@ -283,6 +294,10 @@ def test_qt_optimizer_actions_run_without_manual_confirmations():
     assert "QMessageBox.question" not in apply_tab
     assert "QMessageBox.information(\n            self,\n            \"一键优化\"" not in apply_tab
     assert "confirm=False" in run_action_signature
+    assert "run_optimizer_row_action_from_button" in source
+    assert "QTimer.singleShot(650, self.refresh_optimizer_tab)" in source
     assert "kill_process_by_name" in source
     assert "process_name" in kill_process
-    assert "taskkill /IM" in kill_process
+    assert "taskkill" in kill_process
+    assert "/F /T" in kill_process
+    assert "wait(1.5)" in kill_process

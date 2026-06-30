@@ -9,6 +9,7 @@ import os
 import sys
 import subprocess
 import hashlib
+import datetime
 try:
     import psutil
 except ImportError:  # pragma: no cover - optional runtime dependency
@@ -37,6 +38,19 @@ from system_repair import SystemRepairService
 
 
 APP_DISPLAY_NAME = "C盘清理精灵"
+
+
+def hidden_windows_subprocess_kwargs():
+    if not sys.platform.startswith("win"):
+        return {}
+
+    startupinfo = subprocess.STARTUPINFO()
+    startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+    startupinfo.wShowWindow = 0
+    return {
+        "creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        "startupinfo": startupinfo,
+    }
 
 
 # 主题主色（青绿 teal），从旧版绿色 #35C878 切换而来
@@ -229,6 +243,7 @@ QTreeWidget#resultTree::item {
     padding: 4px 2px;
 }
 
+QTreeWidget#optimizerTable,
 QTableWidget#optimizerTable,
 QTableWidget#uninstallTable,
 QTableWidget#fileManageTable {
@@ -242,6 +257,7 @@ QTableWidget#fileManageTable {
     selection-color: #15241C;
 }
 
+QTreeWidget#optimizerTable::item,
 QTableWidget#optimizerTable::item,
 QTableWidget#uninstallTable::item,
 QTableWidget#fileManageTable::item {
@@ -1466,46 +1482,94 @@ class CleanerMainWindow(QMainWindow):
         QMessageBox.warning(self, "系统修复", f"执行失败:\n{message}")
 
     def _make_optimizer_table(self, headers):
-        table = QTableWidget()
+        table = QTreeWidget()
         table.setObjectName("optimizerTable")
         table.setColumnCount(len(headers))
-        table.setHorizontalHeaderLabels(headers)
-        table.verticalHeader().setVisible(False)
+        table.setHeaderLabels(headers)
         table.setSelectionBehavior(QAbstractItemView.SelectRows)
         table.setSelectionMode(QAbstractItemView.SingleSelection)
-        table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         table.setAlternatingRowColors(True)
         table.setIconSize(QSize(20, 20))
-        table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-        table.horizontalHeader().setSectionResizeMode(len(headers) - 1, QHeaderView.ResizeToContents)
+        table.setRootIsDecorated(True)
+        table.setItemsExpandable(True)
+
+        header = table.header()
+        header.setMinimumSectionSize(86)
+        header.setSectionResizeMode(QHeaderView.Stretch)
+        header.setSectionResizeMode(len(headers) - 1, QHeaderView.ResizeToContents)
         return table
 
     def _populate_optimizer_table(self, table, rows):
-        table.setRowCount(0)
-        for row_index, payload in enumerate(rows):
-            table.insertRow(row_index)
-            columns = payload.get("columns", [])
-            for column_index in range(table.columnCount() - 1):
-                text = columns[column_index] if column_index < len(columns) else ""
-                item = QTableWidgetItem(text)
-                item.setFlags(item.flags() & ~Qt.ItemIsEditable)
-                if column_index == 0:
-                    item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
-                    item.setCheckState(Qt.Checked if payload.get("recommended", True) else Qt.Unchecked)
-                    item.setData(Qt.UserRole, payload)
-                    icon = self.category_icon_for_name(payload.get("icon_hint") or text)
-                    if not icon.isNull():
-                        item.setIcon(icon)
-                table.setItem(row_index, column_index, item)
+        table.clear()
+        for payload in rows:
+            item = self._make_optimizer_tree_item(payload, table.columnCount())
+            table.addTopLevelItem(item)
+            for child_payload in payload.get("children", []):
+                child_item = self._make_optimizer_tree_item(
+                    child_payload,
+                    table.columnCount(),
+                    is_child=True,
+                )
+                item.addChild(child_item)
+            if payload.get("children"):
+                item.setExpanded(payload.get("expanded", True))
 
             action_button = QPushButton(payload.get("action", "处理"))
             action_button.setObjectName("miniActionButton")
             action_button.setCursor(Qt.PointingHandCursor)
             action_button.clicked.connect(
-                lambda _checked=False, row=dict(payload): self.run_optimizer_row_action(row, confirm=False)
+                lambda _checked=False, row=dict(payload): self.run_optimizer_row_action_from_button(row, confirm=False)
             )
-            table.setCellWidget(row_index, table.columnCount() - 1, action_button)
-            table.setRowHeight(row_index, 34)
+            table.setItemWidget(item, table.columnCount() - 1, action_button)
+
+    def _make_optimizer_tree_item(self, payload, column_count, is_child=False):
+        item = QTreeWidgetItem()
+        columns = payload.get("columns", [])
+        for column_index in range(column_count - 1):
+            text = columns[column_index] if column_index < len(columns) else ""
+            item.setText(column_index, text)
+            item.setToolTip(column_index, text)
+            if column_index == 0:
+                if is_child:
+                    item.setFlags(item.flags() & ~Qt.ItemIsUserCheckable)
+                else:
+                    item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+                    item.setCheckState(0, Qt.Checked if payload.get("recommended", True) else Qt.Unchecked)
+                    item.setData(0, Qt.UserRole, payload)
+                icon = self.category_icon_for_name(payload.get("icon_hint") or text)
+                if not icon.isNull():
+                    item.setIcon(0, icon)
+        if is_child:
+            item.setForeground(0, self.palette().mid())
+        return item
+
+    def optimizer_top_level_items(self, table):
+        for row_index in range(table.topLevelItemCount()):
+            yield table.topLevelItem(row_index)
+
+    def iter_optimizer_items(self, item):
+        yield item
+        for child_index in range(item.childCount()):
+            yield from self.iter_optimizer_items(item.child(child_index))
+
+    def optimizer_child_columns(self, values, column_count):
+        columns = list(values)
+        while len(columns) < max(1, column_count - 1):
+            columns.append("")
+        return columns[:max(1, column_count - 1)]
+
+    def optimizer_child(self, *values, icon_hint="registry"):
+        return {
+            "columns": list(values),
+            "icon_hint": icon_hint,
+            "recommended": False,
+        }
+
+    def optimizer_detail_children(self, values, column_count, icon_hint="registry"):
+        return [
+            self.optimizer_child(*self.optimizer_child_columns([value], column_count), icon_hint=icon_hint)
+            for value in values
+        ]
 
     def _dedupe_optimizer_rows(self, rows):
         deduped = []
@@ -1795,6 +1859,11 @@ class CleanerMainWindow(QMainWindow):
                 "action": "执行",
                 "action_type": "command",
                 "command": "ipconfig /flushdns",
+                "children": self.optimizer_detail_children(
+                    [r"ipconfig /flushdns", r"DNS Client 缓存"],
+                    2,
+                    icon_hint="cmd",
+                ),
             },
             {
                 "columns": ["执行系统空闲任务整理"],
@@ -1802,6 +1871,11 @@ class CleanerMainWindow(QMainWindow):
                 "action": "执行",
                 "action_type": "command",
                 "command": "rundll32.exe advapi32.dll,ProcessIdleTasks",
+                "children": self.optimizer_detail_children(
+                    ["ProcessIdleTasks", "Prefetch / SuperFetch 维护队列"],
+                    2,
+                    icon_hint="windows",
+                ),
             },
             {
                 "columns": ["关闭系统自动调试功能(32位)"],
@@ -1810,6 +1884,11 @@ class CleanerMainWindow(QMainWindow):
                 "action_type": "command",
                 "command": r'reg add "HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\AeDebug" /v Auto /t REG_SZ /d 0 /f',
                 "recommended": False,
+                "children": self.optimizer_detail_children(
+                    [r"HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\AeDebug\Auto"],
+                    2,
+                    icon_hint="registry",
+                ),
             },
             {
                 "columns": ["关闭系统自动调试功能(64位)"],
@@ -1818,6 +1897,11 @@ class CleanerMainWindow(QMainWindow):
                 "action_type": "command",
                 "command": r'reg add "HKLM\SOFTWARE\WOW6432Node\Microsoft\Windows NT\CurrentVersion\AeDebug" /v Auto /t REG_SZ /d 0 /f',
                 "recommended": False,
+                "children": self.optimizer_detail_children(
+                    [r"HKLM\SOFTWARE\WOW6432Node\Microsoft\Windows NT\CurrentVersion\AeDebug\Auto"],
+                    2,
+                    icon_hint="registry",
+                ),
             },
             {
                 "columns": ["启动时减少等待磁盘错误检查时间"],
@@ -1825,6 +1909,7 @@ class CleanerMainWindow(QMainWindow):
                 "action": "优化",
                 "action_type": "command",
                 "command": "chkntfs /t:3",
+                "children": self.optimizer_detail_children(["chkntfs /t:3"], 2, icon_hint="cmd"),
             },
             {
                 "columns": ["启用大系统缓存以提高性能"],
@@ -1854,6 +1939,11 @@ class CleanerMainWindow(QMainWindow):
                 "action_type": "command",
                 "command": r'reg add "HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management\PrefetchParameters" /v EnablePrefetcher /t REG_DWORD /d 0 /f',
                 "recommended": False,
+                "children": self.optimizer_detail_children(
+                    [r"HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management\PrefetchParameters\EnablePrefetcher"],
+                    2,
+                    icon_hint="registry",
+                ),
             },
             {
                 "columns": ["禁用处理器的幽灵和熔断补丁"],
@@ -1875,6 +1965,11 @@ class CleanerMainWindow(QMainWindow):
                 "action": "优化",
                 "action_type": "command",
                 "command": r'reg add "HKLM\SOFTWARE\Microsoft\Dfrg\BootOptimizeFunction" /v Enable /t REG_SZ /d Y /f',
+                "children": self.optimizer_detail_children(
+                    [r"HKLM\SOFTWARE\Microsoft\Dfrg\BootOptimizeFunction\Enable"],
+                    2,
+                    icon_hint="registry",
+                ),
             },
             {
                 "columns": ["Windows 启动优化功能（碎片整理预取）"],
@@ -1883,6 +1978,7 @@ class CleanerMainWindow(QMainWindow):
                 "action_type": "command",
                 "command": "defrag C: /b /u",
                 "recommended": False,
+                "children": self.optimizer_detail_children(["defrag C: /b /u"], 2, icon_hint="cmd"),
             },
             {
                 "columns": ["禁用自动更新商店应用"],
@@ -1890,6 +1986,11 @@ class CleanerMainWindow(QMainWindow):
                 "action": "优化",
                 "action_type": "command",
                 "command": r'reg add "HKLM\SOFTWARE\Policies\Microsoft\WindowsStore" /v AutoDownload /t REG_DWORD /d 2 /f',
+                "children": self.optimizer_detail_children(
+                    [r"HKLM\SOFTWARE\Policies\Microsoft\WindowsStore\AutoDownload"],
+                    2,
+                    icon_hint="registry",
+                ),
             },
             {
                 "columns": ["禁止自动安装推荐的应用程序"],
@@ -1897,6 +1998,11 @@ class CleanerMainWindow(QMainWindow):
                 "action": "优化",
                 "action_type": "command",
                 "command": r'reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" /v SilentInstalledAppsEnabled /t REG_DWORD /d 0 /f',
+                "children": self.optimizer_detail_children(
+                    [r"HKCU\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager\SilentInstalledAppsEnabled"],
+                    2,
+                    icon_hint="registry",
+                ),
             },
             {
                 "columns": ["禁用Windows预安装和应用推荐功能"],
@@ -1904,6 +2010,11 @@ class CleanerMainWindow(QMainWindow):
                 "action": "优化",
                 "action_type": "command",
                 "command": r'reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" /v PreInstalledAppsEnabled /t REG_DWORD /d 0 /f',
+                "children": self.optimizer_detail_children(
+                    [r"HKCU\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager\PreInstalledAppsEnabled"],
+                    2,
+                    icon_hint="registry",
+                ),
             },
             {
                 "columns": ["禁用Windows预安装和应用推荐功能"],
@@ -1911,6 +2022,11 @@ class CleanerMainWindow(QMainWindow):
                 "action": "优化",
                 "action_type": "command",
                 "command": r'reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" /v OemPreInstalledAppsEnabled /t REG_DWORD /d 0 /f',
+                "children": self.optimizer_detail_children(
+                    [r"HKCU\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager\OemPreInstalledAppsEnabled"],
+                    2,
+                    icon_hint="registry",
+                ),
             },
             {
                 "columns": ["关闭“使用 Windows 时获取技巧和建议”"],
@@ -1918,6 +2034,11 @@ class CleanerMainWindow(QMainWindow):
                 "action": "优化",
                 "action_type": "command",
                 "command": r'reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" /v SubscribedContent-338389Enabled /t REG_DWORD /d 0 /f',
+                "children": self.optimizer_detail_children(
+                    [r"HKCU\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager\SubscribedContent-338389Enabled"],
+                    2,
+                    icon_hint="registry",
+                ),
             },
             {
                 "columns": ["关闭开始菜单建议广告"],
@@ -1925,6 +2046,11 @@ class CleanerMainWindow(QMainWindow):
                 "action": "优化",
                 "action_type": "command",
                 "command": r'reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" /v SystemPaneSuggestionsEnabled /t REG_DWORD /d 0 /f',
+                "children": self.optimizer_detail_children(
+                    [r"HKCU\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager\SystemPaneSuggestionsEnabled"],
+                    2,
+                    icon_hint="registry",
+                ),
             },
             {
                 "columns": ["关闭锁屏界面内容广告"],
@@ -1932,6 +2058,11 @@ class CleanerMainWindow(QMainWindow):
                 "action": "优化",
                 "action_type": "command",
                 "command": r'reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" /v RotatingLockScreenOverlayEnabled /t REG_DWORD /d 0 /f',
+                "children": self.optimizer_detail_children(
+                    [r"HKCU\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager\RotatingLockScreenOverlayEnabled"],
+                    2,
+                    icon_hint="registry",
+                ),
             },
             {
                 "columns": ["禁用自动更新地图"],
@@ -1940,6 +2071,11 @@ class CleanerMainWindow(QMainWindow):
                 "action_type": "command",
                 "command": r'reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows\Maps" /v AutoDownloadAndUpdateMapData /t REG_DWORD /d 0 /f',
                 "recommended": False,
+                "children": self.optimizer_detail_children(
+                    [r"HKLM\SOFTWARE\Policies\Microsoft\Windows\Maps\AutoDownloadAndUpdateMapData"],
+                    2,
+                    icon_hint="registry",
+                ),
             },
         ]
 
@@ -1951,6 +2087,15 @@ class CleanerMainWindow(QMainWindow):
                 "action": "清理",
                 "action_type": "command",
                 "command": r'cmd /c del /f /q "%APPDATA%\Microsoft\Windows\Recent\*"',
+                "children": self.optimizer_detail_children(
+                    [
+                        r"%APPDATA%\Microsoft\Windows\Recent",
+                        r"%APPDATA%\Microsoft\Windows\Recent\AutomaticDestinations",
+                        r"%APPDATA%\Microsoft\Windows\Recent\CustomDestinations",
+                    ],
+                    2,
+                    icon_hint="windows",
+                ),
             },
             {
                 "columns": ["开始菜单运行记录"],
@@ -1958,6 +2103,11 @@ class CleanerMainWindow(QMainWindow):
                 "action": "清理",
                 "action_type": "command",
                 "command": r'reg delete "HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\RunMRU" /f',
+                "children": self.optimizer_detail_children(
+                    [r"HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\RunMRU"],
+                    2,
+                    icon_hint="registry",
+                ),
             },
             {
                 "columns": ["开始菜单运行记录"],
@@ -1965,6 +2115,11 @@ class CleanerMainWindow(QMainWindow):
                 "action": "清理",
                 "action_type": "command",
                 "command": r'reg delete "HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\TypedPaths" /f',
+                "children": self.optimizer_detail_children(
+                    [r"HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\TypedPaths"],
+                    2,
+                    icon_hint="registry",
+                ),
             },
             {
                 "columns": ["Internet Explorer 上网痕迹"],
@@ -1972,6 +2127,15 @@ class CleanerMainWindow(QMainWindow):
                 "action": "清理",
                 "action_type": "command",
                 "command": "RunDll32.exe InetCpl.cpl,ClearMyTracksByProcess 255",
+                "children": self.optimizer_detail_children(
+                    [
+                        r"%LOCALAPPDATA%\Microsoft\Windows\INetCache",
+                        r"%LOCALAPPDATA%\Microsoft\Windows\WebCache",
+                        r"%LOCALAPPDATA%\Microsoft\Internet Explorer\DOMStore",
+                    ],
+                    2,
+                    icon_hint="ie",
+                ),
             },
             {
                 "columns": ["系统通知区及图标缓存"],
@@ -1979,6 +2143,14 @@ class CleanerMainWindow(QMainWindow):
                 "action": "检查",
                 "action_type": None,
                 "recommended": False,
+                "children": self.optimizer_detail_children(
+                    [
+                        r"HKCU\Software\Classes\Local Settings\Software\Microsoft\Windows\CurrentVersion\TrayNotify",
+                        r"%LOCALAPPDATA%\IconCache.db",
+                    ],
+                    2,
+                    icon_hint="registry",
+                ),
             },
             {
                 "columns": ["系统通知区及图标缓存"],
@@ -1986,6 +2158,14 @@ class CleanerMainWindow(QMainWindow):
                 "action": "检查",
                 "action_type": None,
                 "recommended": False,
+                "children": self.optimizer_detail_children(
+                    [
+                        r"%LOCALAPPDATA%\Microsoft\Windows\Explorer\iconcache_*",
+                        r"%LOCALAPPDATA%\Microsoft\Windows\Explorer\thumbcache_*",
+                    ],
+                    2,
+                    icon_hint="windows",
+                ),
             },
             {
                 "columns": ["登录缓存配置文件"],
@@ -1993,12 +2173,26 @@ class CleanerMainWindow(QMainWindow):
                 "action": "清理",
                 "action_type": "command",
                 "command": r'cmd /c del /f /q "%LOCALAPPDATA%\Microsoft\Windows\UsrClass.dat.LOG*"',
+                "children": self.optimizer_detail_children(
+                    [r"%LOCALAPPDATA%\Microsoft\Windows\UsrClass.dat.LOG*"],
+                    2,
+                    icon_hint="windows",
+                ),
             },
             {
                 "columns": ["程序安装信息"],
                 "icon_hint": "windows",
                 "action": "检查",
                 "action_type": None,
+                "children": self.optimizer_detail_children(
+                    [
+                        r"C:\Windows\Panther",
+                        r"C:\Windows\INF\setupapi.dev.log",
+                        r"C:\Windows\setupact.log",
+                    ],
+                    2,
+                    icon_hint="windows",
+                ),
             },
             {
                 "columns": ["快速访问的缓存数据存储"],
@@ -2006,12 +2200,28 @@ class CleanerMainWindow(QMainWindow):
                 "action": "检查",
                 "action_type": None,
                 "recommended": False,
+                "children": self.optimizer_detail_children(
+                    [
+                        r"%APPDATA%\Microsoft\Windows\Recent\AutomaticDestinations",
+                        r"%APPDATA%\Microsoft\Windows\Recent\CustomDestinations",
+                    ],
+                    2,
+                    icon_hint="windows",
+                ),
             },
             {
                 "columns": ["IE 浏览器自动完成"],
                 "icon_hint": "ie",
                 "action": "检查",
                 "action_type": None,
+                "children": self.optimizer_detail_children(
+                    [
+                        r"HKCU\Software\Microsoft\Internet Explorer\TypedURLs",
+                        r"HKCU\Software\Microsoft\Internet Explorer\IntelliForms",
+                    ],
+                    2,
+                    icon_hint="ie",
+                ),
             },
             {
                 "columns": ["(MMC)控制台文件的最近打开历史记录"],
@@ -2019,27 +2229,32 @@ class CleanerMainWindow(QMainWindow):
                 "action": "清理",
                 "action_type": "command",
                 "command": r'reg delete "HKCU\Software\Microsoft\Microsoft Management Console\Recent File List" /f',
+                "children": self.optimizer_detail_children(
+                    [r"HKCU\Software\Microsoft\Microsoft Management Console\Recent File List"],
+                    2,
+                    icon_hint="registry",
+                ),
             },
         ]
 
     def populate_registry_items(self):
         return [
-            {"columns": ["缺失的共享 DLL"], "icon_hint": "registry", "action": "检查", "action_type": None, "recommended": False},
-            {"columns": ["未使用的文件扩展名"], "icon_hint": "registry", "action": "检查", "action_type": None, "recommended": False},
-            {"columns": ["无效的默认图标"], "icon_hint": "registry", "action": "检查", "action_type": None, "recommended": False},
-            {"columns": ["应用程序打开方式文件问题"], "icon_hint": "registry", "action": "检查", "action_type": None, "recommended": False},
-            {"columns": ["CLSID问题"], "icon_hint": "registry", "action": "检查", "action_type": None, "recommended": False},
-            {"columns": ["CLSID问题"], "icon_hint": "registry", "action": "检查", "action_type": None, "recommended": False},
-            {"columns": ["CLSID问题"], "icon_hint": "registry", "action": "检查", "action_type": None, "recommended": False},
-            {"columns": ["CLSID问题"], "icon_hint": "registry", "action": "检查", "action_type": None, "recommended": False},
-            {"columns": ["CLSID问题"], "icon_hint": "registry", "action": "检查", "action_type": None, "recommended": False},
-            {"columns": ["应用程序卸载残留"], "icon_hint": "registry", "action": "检查", "action_type": None, "recommended": False},
-            {"columns": ["应用程序卸载残留"], "icon_hint": "registry", "action": "检查", "action_type": None, "recommended": False},
-            {"columns": ["应用程序卸载残留"], "icon_hint": "registry", "action": "检查", "action_type": None, "recommended": False},
-            {"columns": ["应用程序卸载残留"], "icon_hint": "registry", "action": "检查", "action_type": None, "recommended": False},
-            {"columns": ["无效的防火墙规则"], "icon_hint": "registry", "action": "检查", "action_type": None, "recommended": False},
-            {"columns": ["Windows 兼容性助手功能的记忆库"], "icon_hint": "registry", "action": "检查", "action_type": None, "recommended": False},
-            {"columns": ["统计和管理用户界面交互行为"], "icon_hint": "registry", "action": "检查", "action_type": None, "recommended": False},
+            {"columns": ["缺失的共享 DLL"], "icon_hint": "registry", "action": "检查", "action_type": None, "recommended": False, "children": self.optimizer_detail_children([r"HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\SharedDLLs"], 2)},
+            {"columns": ["未使用的文件扩展名"], "icon_hint": "registry", "action": "检查", "action_type": None, "recommended": False, "children": self.optimizer_detail_children([".bak", ".cfg", ".idx", ".ipa", ".itc2", ".itdb", ".itl", ".map", ".mdb", ".pls", ".pptx", ".pst", ".rar"], 2)},
+            {"columns": ["无效的默认图标"], "icon_hint": "registry", "action": "检查", "action_type": None, "recommended": False, "children": self.optimizer_detail_children([r"HKCR\*\DefaultIcon", r"HKCR\Applications\*\DefaultIcon"], 2)},
+            {"columns": ["应用程序打开方式文件问题"], "icon_hint": "registry", "action": "检查", "action_type": None, "recommended": False, "children": self.optimizer_detail_children([r"HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts", r"HKCR\Applications"], 2)},
+            {"columns": ["CLSID问题"], "icon_hint": "registry", "action": "检查", "action_type": None, "recommended": False, "children": self.optimizer_detail_children([r"HKCR\CLSID\*\InprocServer32", r"HKCR\Wow6432Node\CLSID\*\InprocServer32"], 2)},
+            {"columns": ["CLSID问题"], "icon_hint": "registry", "action": "检查", "action_type": None, "recommended": False, "children": self.optimizer_detail_children([r"HKCR\CLSID\*\LocalServer32", r"HKCR\Wow6432Node\CLSID\*\LocalServer32"], 2)},
+            {"columns": ["CLSID问题"], "icon_hint": "registry", "action": "检查", "action_type": None, "recommended": False, "children": self.optimizer_detail_children([r"HKCR\Interface", r"HKCR\TypeLib"], 2)},
+            {"columns": ["CLSID问题"], "icon_hint": "registry", "action": "检查", "action_type": None, "recommended": False, "children": self.optimizer_detail_children([r"HKLM\SOFTWARE\Classes\CLSID", r"HKCU\SOFTWARE\Classes\CLSID"], 2)},
+            {"columns": ["CLSID问题"], "icon_hint": "registry", "action": "检查", "action_type": None, "recommended": False, "children": self.optimizer_detail_children([r"HKCR\AppID", r"HKCR\Component Categories"], 2)},
+            {"columns": ["应用程序卸载残留"], "icon_hint": "registry", "action": "检查", "action_type": None, "recommended": False, "children": self.optimizer_detail_children([r"HKLM\Software\Microsoft\Windows\CurrentVersion\Uninstall"], 2)},
+            {"columns": ["应用程序卸载残留"], "icon_hint": "registry", "action": "检查", "action_type": None, "recommended": False, "children": self.optimizer_detail_children([r"HKLM\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall"], 2)},
+            {"columns": ["应用程序卸载残留"], "icon_hint": "registry", "action": "检查", "action_type": None, "recommended": False, "children": self.optimizer_detail_children([r"HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall"], 2)},
+            {"columns": ["应用程序卸载残留"], "icon_hint": "registry", "action": "检查", "action_type": None, "recommended": False, "children": self.optimizer_detail_children([r"HKCR\Installer\Products", r"HKLM\SOFTWARE\Classes\Installer\Products"], 2)},
+            {"columns": ["无效的防火墙规则"], "icon_hint": "registry", "action": "检查", "action_type": None, "recommended": False, "children": self.optimizer_detail_children([r"HKLM\SYSTEM\CurrentControlSet\Services\SharedAccess\Parameters\FirewallPolicy\FirewallRules"], 2)},
+            {"columns": ["Windows 兼容性助手功能的记忆库"], "icon_hint": "registry", "action": "检查", "action_type": None, "recommended": False, "children": self.optimizer_detail_children([r"HKCU\Software\Microsoft\Windows NT\CurrentVersion\AppCompatFlags\Compatibility Assistant\Store"], 2)},
+            {"columns": ["统计和管理用户界面交互行为"], "icon_hint": "registry", "action": "检查", "action_type": None, "recommended": False, "children": self.optimizer_detail_children([r"HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\UserAssist"], 2)},
         ]
 
     def set_current_optimizer_checked(self, state):
@@ -2047,30 +2262,27 @@ class CleanerMainWindow(QMainWindow):
         if not table:
             return
         check_state = Qt.Checked if state == Qt.Checked else Qt.Unchecked
-        for row in range(table.rowCount()):
-            item = table.item(row, 0)
+        for item in self.optimizer_top_level_items(table):
             if item:
-                item.setCheckState(check_state)
+                item.setCheckState(0, check_state)
 
     def apply_optimizer_recommended_filter(self, state):
         table = self.optimizer_tabs.currentWidget()
         if not table or state != Qt.Checked:
             return
-        for row in range(table.rowCount()):
-            item = table.item(row, 0)
-            payload = item.data(Qt.UserRole) if item else {}
+        for item in self.optimizer_top_level_items(table):
+            payload = item.data(0, Qt.UserRole) if item else {}
             if item:
-                item.setCheckState(Qt.Checked if payload.get("recommended", True) else Qt.Unchecked)
+                item.setCheckState(0, Qt.Checked if payload.get("recommended", True) else Qt.Unchecked)
 
     def selected_optimizer_rows(self):
         table = self.optimizer_tabs.currentWidget()
         if not table:
             return []
         rows = []
-        for row_index in range(table.rowCount()):
-            item = table.item(row_index, 0)
-            if item and item.checkState() == Qt.Checked:
-                payload = item.data(Qt.UserRole)
+        for item in self.optimizer_top_level_items(table):
+            if item and item.checkState(0) == Qt.Checked:
+                payload = item.data(0, Qt.UserRole)
                 if payload:
                     rows.append(payload)
         return rows
@@ -2111,6 +2323,18 @@ class CleanerMainWindow(QMainWindow):
             self.animate_status_pulse(self.optimizer_status_label)
         self.refresh_optimizer_tab()
 
+    def run_optimizer_row_action_from_button(self, row, confirm=False):
+        label = row.get("columns", ["系统优化"])[0]
+        handled = self.run_optimizer_row_action(row, confirm=confirm, quiet=False)
+        if hasattr(self, "optimizer_status_label"):
+            if handled:
+                self.optimizer_status_label.setText(f"{label} 已处理，正在刷新当前列表。")
+                QTimer.singleShot(650, self.refresh_optimizer_tab)
+            else:
+                self.optimizer_status_label.setText("该项目仅展示或检查，不需要执行处理。")
+            self.animate_status_pulse(self.optimizer_status_label)
+        return handled
+
     def run_optimizer_row_action(self, row, confirm=False, quiet=False):
         action_type = row.get("action_type")
         if action_type == "disable_startup":
@@ -2129,13 +2353,21 @@ class CleanerMainWindow(QMainWindow):
     def _run_shell_command(self, label, command, quiet=False):
         if sys.platform.startswith("win"):
             try:
-                subprocess.Popen(command, shell=True)
-                return
+                subprocess.Popen(
+                    command,
+                    shell=True,
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    **hidden_windows_subprocess_kwargs(),
+                )
+                return True
             except Exception as exc:  # pragma: no cover - Windows shell dependent
                 QMessageBox.warning(self, label, f"执行失败: {exc}")
-                return
+                return False
         if not quiet:
             QMessageBox.information(self, label, f"该操作将在 Windows 上执行:\n{command}")
+        return True
 
     def disable_startup_item(self, row, confirm=False):
         if not sys.platform.startswith("win"):
@@ -2177,10 +2409,17 @@ class CleanerMainWindow(QMainWindow):
                 return False
 
         try:
+            if sys.platform.startswith("win") and self.taskkill_process(pid=pid, process_name=process_name):
+                return True
+
             if pid and psutil is not None:
-                psutil.Process(pid).terminate()
-            elif pid and sys.platform.startswith("win"):
-                subprocess.Popen(f"taskkill /PID {pid} /F", shell=True)
+                process = psutil.Process(pid)
+                process.terminate()
+                try:
+                    process.wait(1.5)
+                except psutil.TimeoutExpired:
+                    process.kill()
+                    process.wait(1.5)
             elif process_name and psutil is not None:
                 killed = False
                 for process in psutil.process_iter(["pid", "name"]):
@@ -2189,21 +2428,45 @@ class CleanerMainWindow(QMainWindow):
                             continue
                         if (process.info.get("name") or "").lower() == process_name.lower():
                             process.terminate()
+                            try:
+                                process.wait(1.5)
+                            except psutil.TimeoutExpired:
+                                process.kill()
+                                process.wait(1.5)
                             killed = True
                     except (psutil.Error, AttributeError):
                         continue
-                if not killed and sys.platform.startswith("win"):
-                    subprocess.Popen(f'taskkill /IM "{process_name}" /F', shell=True)
-                    killed = True
                 if not killed:
                     return False
-            elif sys.platform.startswith("win"):
-                subprocess.Popen(f'taskkill /IM "{process_name}" /F', shell=True)
             else:
                 return False
             return True
         except Exception as exc:  # pragma: no cover - process state dependent
             QMessageBox.warning(self, "结束进程", f"结束失败: {exc}")
+            return False
+
+    def taskkill_process(self, pid=None, process_name=None):
+        if not sys.platform.startswith("win"):
+            return False
+        if pid:
+            target = f"/PID {int(pid)}"
+        elif process_name:
+            target = f'/IM "{process_name}"'
+        else:
+            return False
+        try:
+            result = subprocess.run(
+                f"taskkill {target} /F /T",
+                shell=True,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                errors="replace",
+                **hidden_windows_subprocess_kwargs(),
+            )
+            return result.returncode == 0
+        except Exception:
             return False
 
     def _build_file_page(self):
@@ -2241,9 +2504,21 @@ class CleanerMainWindow(QMainWindow):
         self.scan_duplicate_button.setMinimumWidth(128)
         self.scan_duplicate_button.clicked.connect(self.scan_duplicate_files)
 
+        self.delete_selected_file_button = QPushButton("删除选中文件")
+        self.delete_selected_file_button.setObjectName("cleanSecondaryButton")
+        self.delete_selected_file_button.setMinimumWidth(128)
+        self.delete_selected_file_button.clicked.connect(self.delete_selected_files)
+
+        self.delete_duplicate_copies_button = QPushButton("删除重复副本")
+        self.delete_duplicate_copies_button.setObjectName("cleanSecondaryButton")
+        self.delete_duplicate_copies_button.setMinimumWidth(128)
+        self.delete_duplicate_copies_button.clicked.connect(self.delete_duplicate_copies)
+
         toolbar.addWidget(choose_dir_button)
         toolbar.addWidget(self.scan_large_button)
         toolbar.addWidget(self.scan_duplicate_button)
+        toolbar.addWidget(self.delete_selected_file_button)
+        toolbar.addWidget(self.delete_duplicate_copies_button)
         toolbar.addStretch(1)
         outer.addLayout(toolbar)
 
@@ -2274,7 +2549,7 @@ class CleanerMainWindow(QMainWindow):
         table.setHorizontalHeaderLabels(headers)
         table.verticalHeader().setVisible(False)
         table.setSelectionBehavior(QAbstractItemView.SelectRows)
-        table.setSelectionMode(QAbstractItemView.SingleSelection)
+        table.setSelectionMode(QAbstractItemView.ExtendedSelection)
         table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         table.setAlternatingRowColors(True)
         table.setIconSize(QSize(20, 20))
@@ -2287,12 +2562,12 @@ class CleanerMainWindow(QMainWindow):
         if len(headers) == 4:
             header_view.setSectionResizeMode(2, QHeaderView.Stretch)
             header_view.setSectionResizeMode(3, QHeaderView.Fixed)
-            table.setColumnWidth(3, 96)
+            table.setColumnWidth(3, 164)
         else:
             header_view.setSectionResizeMode(2, QHeaderView.ResizeToContents)
             header_view.setSectionResizeMode(3, QHeaderView.Stretch)
             header_view.setSectionResizeMode(4, QHeaderView.Fixed)
-            table.setColumnWidth(4, 96)
+            table.setColumnWidth(4, 164)
         return table
 
     def _open_system_tool(self, label, command):
@@ -2701,9 +2976,14 @@ class CleanerMainWindow(QMainWindow):
 
             path_item = QTableWidgetItem(path)
             path_item.setToolTip(path)
+            path_item.setData(Qt.UserRole, {"path": path, "size": item["size"], "mode": "large"})
             self.file_large_table.setItem(row_index, 2, path_item)
 
-            self.file_large_table.setCellWidget(row_index, 3, self._make_open_location_button(path))
+            self.file_large_table.setCellWidget(
+                row_index,
+                3,
+                self._make_file_action_widget({"path": path, "size": item["size"], "mode": "large"}),
+            )
             self.file_large_table.setRowHeight(row_index, 34)
         self.file_large_table.setSortingEnabled(True)
 
@@ -2714,7 +2994,7 @@ class CleanerMainWindow(QMainWindow):
         self.file_duplicate_table.setRowCount(0)
         row_index = 0
         for group_index, (size, paths) in enumerate(duplicates, start=1):
-            for path in paths:
+            for path_offset, path in enumerate(paths):
                 self.file_duplicate_table.insertRow(row_index)
                 name_item = QTableWidgetItem(os.path.basename(path) or path)
                 if os.path.exists(path):
@@ -2729,12 +3009,58 @@ class CleanerMainWindow(QMainWindow):
 
                 path_item = QTableWidgetItem(path)
                 path_item.setToolTip(path)
+                path_item.setData(
+                    Qt.UserRole,
+                    {
+                        "path": path,
+                        "size": size,
+                        "mode": "duplicate",
+                        "group": group_index,
+                        "keep": path_offset == 0,
+                    },
+                )
                 self.file_duplicate_table.setItem(row_index, 3, path_item)
 
-                self.file_duplicate_table.setCellWidget(row_index, 4, self._make_open_location_button(path))
+                self.file_duplicate_table.setCellWidget(
+                    row_index,
+                    4,
+                    self._make_file_action_widget(
+                        {
+                            "path": path,
+                            "size": size,
+                            "mode": "duplicate",
+                            "group": group_index,
+                            "keep": path_offset == 0,
+                        }
+                    ),
+                )
                 self.file_duplicate_table.setRowHeight(row_index, 34)
                 row_index += 1
         self.file_duplicate_table.setSortingEnabled(True)
+
+    def _make_file_action_widget(self, payload):
+        widget = QWidget()
+        layout = QHBoxLayout(widget)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(6)
+
+        open_button = QPushButton("打开")
+        open_button.setObjectName("miniActionButton")
+        open_button.setCursor(Qt.PointingHandCursor)
+        open_button.setMinimumWidth(64)
+        open_button.clicked.connect(lambda _checked=False, target=payload["path"]: self.open_file_location(target))
+
+        delete_button = QPushButton("保留" if payload.get("keep") else "删除")
+        delete_button.setObjectName("miniActionButton")
+        delete_button.setCursor(Qt.PointingHandCursor)
+        delete_button.setMinimumWidth(64)
+        delete_button.setEnabled(not payload.get("keep", False))
+        delete_button.clicked.connect(lambda _checked=False, target=dict(payload): self.delete_file_payloads([target]))
+
+        layout.addWidget(open_button)
+        layout.addWidget(delete_button)
+        layout.addStretch(1)
+        return widget
 
     def _make_open_location_button(self, path):
         button = QPushButton("打开位置")
@@ -2755,6 +3081,125 @@ class CleanerMainWindow(QMainWindow):
                 QMessageBox.warning(self, "打开位置", f"无法打开位置: {exc}")
             return
         QMessageBox.information(self, "打开位置", f"此操作将在 Windows 上打开:\n{directory}")
+
+    def current_file_table_config(self):
+        if self.file_tabs.currentWidget() is self.file_duplicate_table:
+            return self.file_duplicate_table, 3, "duplicate"
+        return self.file_large_table, 2, "large"
+
+    def selected_file_payloads(self):
+        table, path_column, _mode = self.current_file_table_config()
+        selected_rows = table.selectionModel().selectedRows()
+        if not selected_rows and table.currentRow() >= 0:
+            selected_rows = [table.model().index(table.currentRow(), 0)]
+
+        payloads = []
+        for model_index in selected_rows:
+            item = table.item(model_index.row(), path_column)
+            payload = item.data(Qt.UserRole) if item else None
+            if payload:
+                payloads.append(payload)
+        return payloads
+
+    def delete_selected_files(self):
+        payloads = self.selected_file_payloads()
+        if not payloads:
+            self.file_status_label.setText("请先选择需要删除的文件。")
+            self.animate_status_pulse(self.file_status_label)
+            return
+        self.delete_file_payloads(payloads)
+
+    def delete_duplicate_copies(self):
+        payloads = []
+        for group_index, (size, paths) in enumerate(self.file_duplicate_groups, start=1):
+            for path in paths[1:]:
+                payloads.append({
+                    "path": path,
+                    "size": size,
+                    "mode": "duplicate",
+                    "group": group_index,
+                    "keep": False,
+                })
+        if not payloads:
+            self.file_status_label.setText("没有可删除的重复副本。")
+            self.animate_status_pulse(self.file_status_label)
+            return
+        self.file_tabs.setCurrentWidget(self.file_duplicate_table)
+        self.delete_file_payloads(payloads)
+
+    def delete_file_payloads(self, payloads):
+        backup_dir = self.file_delete_backup_dir() if self.cleaner.options.get("backup", True) else None
+        deleted_count = 0
+        skipped_count = 0
+        freed_bytes = 0
+        errors = []
+
+        for payload in payloads:
+            path = payload.get("path")
+            if payload.get("keep"):
+                skipped_count += 1
+                continue
+            if not path or not self.is_user_deletable_file(path):
+                skipped_count += 1
+                continue
+            try:
+                freed_bytes += self.delete_file_path(path, backup_dir=backup_dir)
+                deleted_count += 1
+            except Exception as exc:  # pragma: no cover - filesystem dependent
+                errors.append(f"{path}: {exc}")
+
+        self.refresh_file_tables_after_delete()
+        status = f"已删除 {deleted_count} 个文件，释放 {self.format_size(freed_bytes)}"
+        if skipped_count:
+            status += f"，跳过 {skipped_count} 个受保护/保留项"
+        if errors:
+            status += f"，失败 {len(errors)} 个"
+        self.file_status_label.setText(status)
+        self.animate_status_pulse(self.file_status_label)
+
+    def file_delete_backup_dir(self):
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        backup_dir = os.path.join(self.cleaner.backup_dir, f"file_manager_{timestamp}")
+        os.makedirs(backup_dir, exist_ok=True)
+        return backup_dir
+
+    def delete_file_path(self, path, backup_dir=None):
+        previous_simulate = self.cleaner.options.get("simulate", True)
+        self.cleaner.options["simulate"] = False
+        try:
+            return self.cleaner._clean_file(path, backup_dir)
+        finally:
+            self.cleaner.options["simulate"] = previous_simulate
+
+    def is_user_deletable_file(self, path):
+        if not path or not os.path.isfile(path):
+            return False
+        file_name = os.path.basename(path).lower()
+        if file_name in {"pagefile.sys", "hiberfil.sys", "swapfile.sys"}:
+            return False
+        normalized = path.replace("/", "\\").lower()
+        protected_roots = (
+            "c:\\windows\\",
+            "c:\\program files\\",
+            "c:\\program files (x86)\\",
+        )
+        return not any(normalized.startswith(root) for root in protected_roots)
+
+    def refresh_file_tables_after_delete(self):
+        self.file_large_items = [
+            item for item in self.file_large_items
+            if os.path.exists(item.get("path", ""))
+        ]
+        self.file_duplicate_groups = [
+            (size, [path for path in paths if os.path.exists(path)])
+            for size, paths in self.file_duplicate_groups
+        ]
+        self.file_duplicate_groups = [
+            (size, paths) for size, paths in self.file_duplicate_groups
+            if len(paths) > 1
+        ]
+        self.populate_large_files_table(self.file_large_items)
+        self.populate_duplicate_files_table(self.file_duplicate_groups)
 
     def _find_duplicate_files(self, root_dir, max_files=5000):
         by_size = {}

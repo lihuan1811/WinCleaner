@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from system_repair import RepairRisk, SystemRepairService
 
 
@@ -35,6 +37,14 @@ def test_runs_repair_actions_through_cmd_with_expected_command_line():
 
     assert result.success is True
     assert calls == [["cmd", "/C", "sfc /scannow"]]
+
+
+def test_system_repair_process_runner_hides_windows_cmd_window():
+    source = Path("system_repair.py").read_text(encoding="utf-8")
+
+    assert "CREATE_NO_WINDOW" in source
+    assert "STARTF_USESHOWWINDOW" in source
+    assert "startupinfo" in source
 
 
 def test_reports_unsupported_outside_windows():
