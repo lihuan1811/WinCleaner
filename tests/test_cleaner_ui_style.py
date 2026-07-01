@@ -169,6 +169,22 @@ def test_qt_uninstaller_is_in_app_table():
     assert "render_uninstall_table" in source
 
 
+def test_qt_uninstaller_has_context_menu():
+    source = Path("cleaner_ui.py").read_text(encoding="utf-8")
+
+    assert "show_uninstall_context_menu" in source
+    assert "customContextMenuRequested" in source
+    for label in ("强制删除", "删除条目", "编辑信息", "从列表中隐藏",
+                  "打开注册表项", "安装文件夹", "程序网站", "在线搜索",
+                  "将名称复制到剪贴板", "导出列表"):
+        assert label in source, label
+    assert "force_delete_app" in source
+    assert "delete_uninstall_entry" in source
+    assert "open_app_registry_key" in source
+    assert "export_uninstall_list" in source
+    assert "_is_safe_to_force_delete" in source
+
+
 def test_qt_file_manager_uses_in_app_tables():
     source = Path("cleaner_ui.py").read_text(encoding="utf-8")
     file_page = source.split("def _build_file_page", 1)[1].split("def _open_system_tool", 1)[0]
@@ -183,13 +199,27 @@ def test_qt_file_manager_uses_in_app_tables():
     assert "populate_large_files_table" in source
     assert "populate_duplicate_files_table" in source
     assert "删除选中文件" in file_page
-    assert "删除重复副本" in file_page
+    assert "彻底删除文件" in file_page
     assert "_make_file_action_widget" in source
     assert "delete_selected_files" in source
-    assert "delete_duplicate_copies" in source
+    assert "permanently_delete_selected_files" in source
     assert "delete_file_path" in source
     assert "_select_page(0)" not in large_scan
     assert "QMessageBox.information" not in duplicate_scan
+
+
+def test_qt_file_manager_has_checkbox_batch_delete():
+    source = Path("cleaner_ui.py").read_text(encoding="utf-8")
+
+    assert "_make_file_check_item" in source
+    assert "checked_file_payloads" in source
+    assert "toggle_all_file_checks" in source
+    assert "self.file_select_all" in source
+    # 删除选中文件 → 回收站；彻底删除 → 永久删除
+    delete_selected = source.split("def delete_selected_files", 1)[1].split("\n    def ", 1)[0]
+    assert "to_recycle_bin=True" in delete_selected
+    permanent = source.split("def permanently_delete_selected_files", 1)[1].split("\n    def ", 1)[0]
+    assert "permanent=True" in permanent
 
 
 def test_qt_file_manager_has_fragment_cleanup_tab():

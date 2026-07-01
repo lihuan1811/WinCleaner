@@ -12,6 +12,8 @@ import shutil
 import hashlib
 import datetime
 import re
+import csv
+import webbrowser
 try: 
     import psutil
 except ImportError:  # pragma: no cover - optional runtime dependency
@@ -25,7 +27,7 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QH
                             QTableWidgetItem, QHeaderView, QAbstractItemView,
                             QFileIconProvider, QGraphicsOpacityEffect, QLineEdit,
                             QTextEdit, QAbstractButton, QStyledItemDelegate, QStyle,
-                            QMenu, QDialog, QDialogButtonBox)
+                            QMenu, QDialog, QDialogButtonBox, QInputDialog, QFormLayout)
 from PyQt5.QtCore import (
     Qt, QThread, pyqtSignal, QSize, QFileInfo, QPropertyAnimation, QEasingCurve,
     QTimer, QRect
@@ -1485,6 +1487,7 @@ class CleanerMainWindow(QMainWindow):
         self.uninstall_apps = []
         self.uninstall_sort_column = None
         self.uninstall_sort_ascending = True
+        self.hidden_uninstall_keys = set()
         self.file_scan_root = ""
         self.file_large_items = []
         self.file_duplicate_groups = []
@@ -2859,6 +2862,8 @@ class CleanerMainWindow(QMainWindow):
         header_view.setSectionResizeMode(7, QHeaderView.Fixed)
         self.uninstall_table.setColumnWidth(0, 52)
         self.uninstall_table.setColumnWidth(7, 96)
+        self.uninstall_table.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.uninstall_table.customContextMenuRequested.connect(self.show_uninstall_context_menu)
         outer.addWidget(self.uninstall_table, 1)
 
         self.uninstall_status_label = QLabel("正在读取软件列表...")
@@ -4667,20 +4672,27 @@ class CleanerMainWindow(QMainWindow):
         self.scan_duplicate_button.setMinimumWidth(128)
         self.scan_duplicate_button.clicked.connect(self.scan_duplicate_files)
 
+        self.file_select_all = QCheckBox("全选")
+        self.file_select_all.setToolTip("勾选/取消当前列表内所有文件")
+        self.file_select_all.stateChanged.connect(self.toggle_all_file_checks)
+
         self.delete_selected_file_button = QPushButton("删除选中文件")
         self.delete_selected_file_button.setObjectName("cleanSecondaryButton")
         self.delete_selected_file_button.setMinimumWidth(128)
+        self.delete_selected_file_button.setToolTip("删除已勾选文件到回收站（可从系统回收站恢复）")
         self.delete_selected_file_button.clicked.connect(self.delete_selected_files)
 
-        self.delete_duplicate_copies_button = QPushButton("删除重复副本")
-        self.delete_duplicate_copies_button.setObjectName("cleanSecondaryButton")
+        self.delete_duplicate_copies_button = QPushButton("彻底删除文件")
+        self.delete_duplicate_copies_button.setObjectName("dangerActionButton")
         self.delete_duplicate_copies_button.setMinimumWidth(128)
-        self.delete_duplicate_copies_button.clicked.connect(self.delete_duplicate_copies)
+        self.delete_duplicate_copies_button.setToolTip("彻底删除已勾选文件（不备份、不可恢复）")
+        self.delete_duplicate_copies_button.clicked.connect(self.permanently_delete_selected_files)
 
         toolbar.addWidget(choose_dir_button)
         toolbar.addWidget(self.scan_folders_button)
         toolbar.addWidget(self.scan_large_button)
         toolbar.addWidget(self.scan_duplicate_button)
+        toolbar.addWidget(self.file_select_all)
         toolbar.addWidget(self.delete_selected_file_button)
         toolbar.addWidget(self.delete_duplicate_copies_button)
         toolbar.addStretch(1)
@@ -4695,10 +4707,10 @@ class CleanerMainWindow(QMainWindow):
         self.file_tabs.setObjectName("optimizerTabs")
 
         self.folder_tree = self._make_folder_tree()
-        self.file_large_table = self._make_file_manage_table(["文件名", "大小", "路径", "操作"])
+        self.file_large_table = self._make_file_manage_table(["选择", "文件名", "大小", "路径", "操作"])
         # 大文件“大小”列绘制占用条（相对最大文件）。
-        self.file_large_table.setItemDelegateForColumn(1, UsageBarDelegate(self.file_large_table))
-        self.file_duplicate_table = self._make_file_manage_table(["文件名", "大小", "重复组", "路径", "操作"])
+        self.file_large_table.setItemDelegateForColumn(2, UsageBarDelegate(self.file_large_table))
+        self.file_duplicate_table = self._make_file_manage_table(["选择", "文件名", "大小", "重复组", "路径", "操作"])
         self.fragment_page = self._build_fragment_page()
         self.migration_page = self._build_migration_page()
         self.file_tabs.addTab(self.folder_tree, "文件夹占用")
@@ -4960,21 +4972,32 @@ class CleanerMainWindow(QMainWindow):
         table.setAlternatingRowColors(True)
         table.setIconSize(QSize(20, 20))
         table.setSortingEnabled(True)
+        table.itemChanged.connect(self.on_file_check_item_changed)
 
         header_view = table.horizontalHeader()
-        header_view.setMinimumSectionSize(86)
-        header_view.setSectionResizeMode(0, QHeaderView.Stretch)
-        header_view.setSectionResizeMode(1, QHeaderView.ResizeToContents)
-        if len(headers) == 4:
-            header_view.setSectionResizeMode(2, QHeaderView.Stretch)
-            header_view.setSectionResizeMode(3, QHeaderView.Fixed)
-            table.setColumnWidth(3, 150)
-        else:
-            header_view.setSectionResizeMode(2, QHeaderView.ResizeToContents)
-            header_view.setSectionResizeMode(3, QHeaderView.Stretch)
-            header_view.setSectionResizeMode(4, QHeaderView.Fixed)
-            table.setColumnWidth(4, 150)
+        header_view.setMinimumSectionSize(46)
+        for index, name in enumerate(headers):
+            if name == "选择":
+                header_view.setSectionResizeMode(index, QHeaderView.Fixed)
+                table.setColumnWidth(index, 52)
+            elif name in ("文件名", "路径"):
+                header_view.setSectionResizeMode(index, QHeaderView.Stretch)
+            elif name == "操作":
+                header_view.setSectionResizeMode(index, QHeaderView.Fixed)
+                table.setColumnWidth(index, 150)
+            else:
+                header_view.setSectionResizeMode(index, QHeaderView.ResizeToContents)
         return table
+
+    @staticmethod
+    def _make_file_check_item(payload):
+        """文件管理表格第一列的多选复选框，UserRole 存放该行 payload。"""
+        item = QTableWidgetItem()
+        item.setFlags(Qt.ItemIsUserCheckable | Qt.ItemIsEnabled | Qt.ItemIsSelectable)
+        item.setCheckState(Qt.Unchecked)
+        item.setTextAlignment(Qt.AlignCenter)
+        item.setData(Qt.UserRole, payload)
+        return item
 
     def _build_fragment_page(self):
         page = QWidget()
@@ -5459,6 +5482,8 @@ class CleanerMainWindow(QMainWindow):
 
     def load_installed_apps(self, show_message=False):
         apps = self.installed_apps_from_registry()
+        if self.hidden_uninstall_keys:
+            apps = [a for a in apps if self._app_identity(a) not in self.hidden_uninstall_keys]
         self.uninstall_apps = apps
         if not hasattr(self, "uninstall_table"):
             return
@@ -5467,8 +5492,9 @@ class CleanerMainWindow(QMainWindow):
         self.render_uninstall_table(self.uninstall_apps)
 
         if apps:
+            hidden_note = f"（已隐藏 {len(self.hidden_uninstall_keys)} 项）" if self.hidden_uninstall_keys else ""
             self.uninstall_status_label.setText(
-                f"已读取 {len(apps)} 个已安装软件。点击表头可排序，勾选后可批量卸载。"
+                f"已读取 {len(apps)} 个已安装软件{hidden_note}。右键可查看更多操作，点击表头可排序。"
             )
         else:
             message = "当前环境未读取到软件列表；Windows 上会读取卸载注册表。"
@@ -5582,14 +5608,17 @@ class CleanerMainWindow(QMainWindow):
             return []
 
         locations = [
-            (winreg.HKEY_LOCAL_MACHINE, r"Software\Microsoft\Windows\CurrentVersion\Uninstall"),
-            (winreg.HKEY_LOCAL_MACHINE, r"Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall"),
-            (winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Uninstall"),
+            (winreg.HKEY_LOCAL_MACHINE, "HKEY_LOCAL_MACHINE",
+             r"Software\Microsoft\Windows\CurrentVersion\Uninstall"),
+            (winreg.HKEY_LOCAL_MACHINE, "HKEY_LOCAL_MACHINE",
+             r"Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall"),
+            (winreg.HKEY_CURRENT_USER, "HKEY_CURRENT_USER",
+             r"Software\Microsoft\Windows\CurrentVersion\Uninstall"),
         ]
 
         apps = []
         seen = set()
-        for root, subkey in locations:
+        for root, root_name, subkey in locations:
             try:
                 with winreg.OpenKey(root, subkey) as parent:
                     subkey_count, _value_count, _modified = winreg.QueryInfoKey(parent)
@@ -5602,6 +5631,11 @@ class CleanerMainWindow(QMainWindow):
                             continue
                         if not app.get("name"):
                             continue
+                        app["reg_hive"] = root
+                        app["reg_hive_name"] = root_name
+                        app["reg_subkey"] = subkey
+                        app["reg_child"] = child_name
+                        app["reg_path"] = f"{root_name}\\{subkey}\\{child_name}"
                         dedupe_key = (
                             app.get("name", "").lower(),
                             app.get("publisher", "").lower(),
@@ -5621,6 +5655,11 @@ class CleanerMainWindow(QMainWindow):
         install_date_raw = self._registry_value(key, "InstallDate")
         size_kb = self._registry_int(key, "EstimatedSize")
         size_bytes = size_kb * 1024 if size_kb > 0 else 0
+        website = (
+            self._registry_value(key, "URLInfoAbout")
+            or self._registry_value(key, "HelpLink")
+            or self._registry_value(key, "URLUpdateInfo")
+        )
         return {
             "name": self._registry_value(key, "DisplayName"),
             "publisher": self._registry_value(key, "Publisher"),
@@ -5629,6 +5668,7 @@ class CleanerMainWindow(QMainWindow):
             "install_date": self._format_install_date(install_date_raw),
             "install_date_sort": self._install_date_sort_key(install_date_raw),
             "size_bytes": size_bytes,
+            "website": website,
             "uninstall": self._registry_value(key, "UninstallString"),
             "quiet_uninstall": self._registry_value(key, "QuietUninstallString"),
         }
@@ -5838,6 +5878,330 @@ class CleanerMainWindow(QMainWindow):
             command = command.replace(" /I", " /X").replace(" /i", " /X")
         return command
 
+    # ------------------------------------------------------------------
+    # 软件卸载：右键菜单
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _app_identity(app):
+        """软件的稳定标识，用于隐藏名单等去重。"""
+        if not app:
+            return ""
+        return app.get("reg_path") or "|".join(
+            (app.get("name", ""), app.get("publisher", ""), app.get("version", ""))
+        )
+
+    def _app_at_row(self, row):
+        if row is None or row < 0:
+            return None
+        item = self.uninstall_table.item(row, 0)
+        return item.data(Qt.UserRole) if item else None
+
+    def show_uninstall_context_menu(self, pos):
+        if not hasattr(self, "uninstall_table"):
+            return
+        row = self.uninstall_table.rowAt(pos.y())
+        app = self._app_at_row(row)
+        if app is not None:
+            self.uninstall_table.selectRow(row)
+
+        menu = QMenu(self)
+        has_app = app is not None
+
+        act_uninstall = menu.addAction("卸载")
+        act_uninstall.setEnabled(has_app)
+        act_force = menu.addAction("强制删除")
+        act_force.setEnabled(has_app)
+        act_del_entry = menu.addAction("删除条目")
+        act_del_entry.setEnabled(has_app)
+        act_edit = menu.addAction("编辑信息")
+        act_edit.setEnabled(has_app)
+        act_hide = menu.addAction("从列表中隐藏")
+        act_hide.setEnabled(has_app)
+
+        menu.addSeparator()
+        act_select_all = menu.addAction("全选")
+        act_refresh = menu.addAction("刷新")
+        view_menu = menu.addMenu("查看方式")
+        act_view_name = view_menu.addAction("按名称排序")
+        act_view_size = view_menu.addAction("按大小排序")
+        act_view_date = view_menu.addAction("按安装日期排序")
+        act_view_publisher = view_menu.addAction("按发布者排序")
+
+        menu.addSeparator()
+        act_open_reg = menu.addAction("打开注册表项")
+        act_open_reg.setEnabled(has_app)
+        act_open_folder = menu.addAction("安装文件夹")
+        act_open_folder.setEnabled(has_app and bool(app.get("install_location")))
+        act_website = menu.addAction("程序网站")
+        act_website.setEnabled(has_app and bool(app.get("website")))
+        act_search = menu.addAction("在线搜索")
+        act_search.setEnabled(has_app)
+        act_copy = menu.addAction("将名称复制到剪贴板")
+        act_copy.setEnabled(has_app)
+
+        menu.addSeparator()
+        act_export = menu.addAction("导出列表到…")
+
+        chosen = menu.exec_(self.uninstall_table.viewport().mapToGlobal(pos))
+        if chosen is None:
+            return
+
+        if chosen is act_uninstall:
+            self.run_uninstall_command(app)
+        elif chosen is act_force:
+            self.force_delete_app(app)
+        elif chosen is act_del_entry:
+            self.delete_uninstall_entry(app)
+        elif chosen is act_edit:
+            self.edit_uninstall_entry(app)
+        elif chosen is act_hide:
+            self.hide_uninstall_app(app)
+        elif chosen is act_select_all:
+            self.toggle_all_uninstall_checks(Qt.Checked)
+            if hasattr(self, "uninstall_select_all"):
+                self.uninstall_select_all.setChecked(True)
+        elif chosen is act_refresh:
+            self.load_installed_apps(show_message=False)
+        elif chosen is act_view_name:
+            self._apply_uninstall_sort(1)
+        elif chosen is act_view_size:
+            self._apply_uninstall_sort(5)
+        elif chosen is act_view_date:
+            self._apply_uninstall_sort(4)
+        elif chosen is act_view_publisher:
+            self._apply_uninstall_sort(2)
+        elif chosen is act_open_reg:
+            self.open_app_registry_key(app)
+        elif chosen is act_open_folder:
+            self.open_app_install_folder(app)
+        elif chosen is act_website:
+            self.open_app_website(app)
+        elif chosen is act_search:
+            self.search_app_online(app)
+        elif chosen is act_copy:
+            self.copy_app_name(app)
+        elif chosen is act_export:
+            self.export_uninstall_list()
+
+    def _apply_uninstall_sort(self, column):
+        self.uninstall_sort_column = column
+        self.uninstall_sort_ascending = column not in (4, 5)  # 大小/日期默认降序
+        self._sort_uninstall_apps()
+        self.render_uninstall_table(self.uninstall_apps)
+
+    def hide_uninstall_app(self, app):
+        self.hidden_uninstall_keys.add(self._app_identity(app))
+        self.load_installed_apps(show_message=False)
+
+    def copy_app_name(self, app):
+        clipboard = QApplication.clipboard()
+        if clipboard is not None:
+            clipboard.setText(app.get("name", ""))
+            self.uninstall_status_label.setText(f"已复制软件名称: {app.get('name', '')}")
+
+    def search_app_online(self, app):
+        name = app.get("name", "").strip()
+        if not name:
+            return
+        query = name
+        publisher = app.get("publisher", "").strip()
+        if publisher:
+            query = f"{name} {publisher}"
+        from urllib.parse import quote_plus
+        webbrowser.open(f"https://www.bing.com/search?q={quote_plus(query)}")
+
+    def open_app_website(self, app):
+        url = app.get("website", "").strip()
+        if not url:
+            QMessageBox.information(self, "软件卸载", "该软件未在注册表中登记官网地址。")
+            return
+        if not url.lower().startswith(("http://", "https://")):
+            url = "http://" + url
+        webbrowser.open(url)
+
+    def open_app_install_folder(self, app):
+        location = app.get("install_location", "").strip()
+        if not location:
+            location = os.path.dirname(self.executable_path_from_command(app.get("uninstall", "")))
+        if not location or not os.path.isdir(location):
+            QMessageBox.information(self, "软件卸载", "未找到有效的安装文件夹。")
+            return
+        if sys.platform.startswith("win"):
+            try:
+                os.startfile(location)  # noqa: for Windows explorer
+            except OSError as exc:
+                QMessageBox.warning(self, "软件卸载", f"无法打开文件夹: {exc}")
+        else:
+            self.uninstall_status_label.setText(f"安装文件夹: {location}")
+
+    def open_app_registry_key(self, app):
+        reg_path = app.get("reg_path", "")
+        if not reg_path:
+            QMessageBox.information(self, "软件卸载", "未获取到该软件的注册表项路径。")
+            return
+        if not sys.platform.startswith("win"):
+            self.uninstall_status_label.setText(f"注册表项: {reg_path}")
+            return
+        try:
+            import winreg
+            with winreg.CreateKey(
+                winreg.HKEY_CURRENT_USER,
+                r"Software\Microsoft\Windows\CurrentVersion\Applets\Regedit",
+            ) as key:
+                winreg.SetValueEx(key, "LastKey", 0, winreg.REG_SZ, "计算机\\" + reg_path)
+            subprocess.Popen(["regedit.exe"], **hidden_windows_subprocess_kwargs())
+        except Exception as exc:  # pragma: no cover - Windows dependent
+            QMessageBox.warning(self, "软件卸载", f"无法打开注册表编辑器: {exc}")
+
+    def edit_uninstall_entry(self, app):
+        if not sys.platform.startswith("win"):
+            QMessageBox.information(self, "软件卸载", "编辑注册表信息仅在 Windows 上可用。")
+            return
+        dialog = QDialog(self)
+        dialog.setWindowTitle("编辑软件信息")
+        dialog.setMinimumWidth(380)
+        form = QFormLayout(dialog)
+        name_edit = QLineEdit(app.get("name", ""))
+        publisher_edit = QLineEdit(app.get("publisher", ""))
+        version_edit = QLineEdit(app.get("version", ""))
+        form.addRow("显示名称", name_edit)
+        form.addRow("发布者", publisher_edit)
+        form.addRow("版本", version_edit)
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        form.addRow(buttons)
+        if dialog.exec_() != QDialog.Accepted:
+            return
+
+        updates = {
+            "DisplayName": name_edit.text().strip(),
+            "Publisher": publisher_edit.text().strip(),
+            "DisplayVersion": version_edit.text().strip(),
+        }
+        try:
+            import winreg
+            full_sub = app["reg_subkey"] + "\\" + app["reg_child"]
+            with winreg.OpenKey(
+                app["reg_hive"], full_sub, 0, winreg.KEY_SET_VALUE
+            ) as key:
+                for value_name, value in updates.items():
+                    winreg.SetValueEx(key, value_name, 0, winreg.REG_SZ, value)
+            self.uninstall_status_label.setText(f"已更新注册表信息: {updates['DisplayName']}")
+            self.load_installed_apps(show_message=False)
+        except (OSError, KeyError, PermissionError) as exc:
+            QMessageBox.warning(
+                self, "软件卸载",
+                f"写入注册表失败（可能需要管理员权限）:\n{exc}",
+            )
+
+    def delete_uninstall_entry(self, app):
+        answer = QMessageBox.question(
+            self,
+            "删除条目",
+            f"确定从注册表中删除“{app.get('name', '')}”的卸载条目吗？\n\n"
+            "这只会让它从列表中消失，不会删除程序文件；如果程序仍在，可能无法再从这里卸载。",
+            QMessageBox.Yes | QMessageBox.No,
+        )
+        if answer != QMessageBox.Yes:
+            return
+        if self._delete_registry_entry(app):
+            self.uninstall_status_label.setText(f"已删除注册表条目: {app.get('name', '')}")
+            self.load_installed_apps(show_message=False)
+
+    def force_delete_app(self, app):
+        location = app.get("install_location", "").strip()
+        detail = f"注册表条目：{app.get('reg_path', '')}"
+        if location:
+            detail += f"\n安装目录：{location}"
+        answer = QMessageBox.warning(
+            self,
+            "强制删除",
+            f"【危险操作】确定强制删除“{app.get('name', '')}”吗？\n\n"
+            f"{detail}\n\n"
+            "将删除其注册表卸载条目，并尝试删除安装目录中的所有文件。\n"
+            "此操作不可恢复，且不会调用官方卸载程序，可能残留启动项或服务。",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if answer != QMessageBox.Yes:
+            return
+
+        removed_folder = False
+        if location and os.path.isdir(location) and self._is_safe_to_force_delete(location):
+            try:
+                shutil.rmtree(location, ignore_errors=True)
+                removed_folder = not os.path.isdir(location)
+            except OSError:
+                removed_folder = False
+        self._delete_registry_entry(app)
+        self.load_installed_apps(show_message=False)
+        msg = f"已强制删除“{app.get('name', '')}”的注册表条目"
+        msg += "，并删除了安装目录。" if removed_folder else "。安装目录未删除或不存在。"
+        self.uninstall_status_label.setText(msg)
+
+    @staticmethod
+    def _is_safe_to_force_delete(location):
+        """避免误删系统关键目录。"""
+        normalized = os.path.normpath(location).lower().rstrip("\\/")
+        if len(normalized) < 4:  # 例如 c:\
+            return False
+        unsafe = {
+            "c:\\windows", "c:\\program files", "c:\\program files (x86)",
+            "c:\\programdata", "c:\\users", "c:\\",
+        }
+        if normalized in unsafe:
+            return False
+        return True
+
+    def _delete_registry_entry(self, app):
+        if not sys.platform.startswith("win"):
+            QMessageBox.information(self, "软件卸载", "删除注册表条目仅在 Windows 上可用。")
+            return False
+        try:
+            import winreg
+            with winreg.OpenKey(
+                app["reg_hive"], app["reg_subkey"], 0,
+                winreg.KEY_ALL_ACCESS,
+            ) as parent:
+                winreg.DeleteKey(parent, app["reg_child"])
+            return True
+        except (OSError, KeyError, PermissionError) as exc:
+            QMessageBox.warning(
+                self, "软件卸载",
+                f"删除注册表条目失败（可能需要管理员权限）:\n{exc}",
+            )
+            return False
+
+    def export_uninstall_list(self):
+        if not self.uninstall_apps:
+            QMessageBox.information(self, "软件卸载", "当前列表为空，没有可导出的内容。")
+            return
+        default_name = f"installed_apps_{datetime.datetime.now():%Y%m%d_%H%M%S}.csv"
+        path, _filter = QFileDialog.getSaveFileName(
+            self, "导出软件列表", default_name,
+            "CSV 文件 (*.csv);;文本文件 (*.txt)",
+        )
+        if not path:
+            return
+        try:
+            with open(path, "w", newline="", encoding="utf-8-sig") as handle:
+                writer = csv.writer(handle)
+                writer.writerow(["软件名称", "发布者", "版本", "安装日期", "大小", "安装位置"])
+                for app in self.uninstall_apps:
+                    size_bytes = app.get("size_bytes", 0)
+                    writer.writerow([
+                        app.get("name", ""),
+                        app.get("publisher", ""),
+                        app.get("version", ""),
+                        app.get("install_date", ""),
+                        self.format_size(size_bytes) if size_bytes else "",
+                        app.get("install_location", ""),
+                    ])
+            self.uninstall_status_label.setText(f"已导出 {len(self.uninstall_apps)} 条记录到: {path}")
+        except OSError as exc:
+            QMessageBox.warning(self, "软件卸载", f"导出失败: {exc}")
+
     def _build_account_service(self):
         """根据配置选择远程或本地账号服务；远程不可用时回退到本地。"""
         if USE_REMOTE_ACCOUNT and ACCOUNT_API_BASE_URL:
@@ -6015,6 +6379,7 @@ class CleanerMainWindow(QMainWindow):
 
     def on_file_tab_changed(self, _index):
         """切换标签时不再自动扫描，改由用户点击对应扫描按钮触发，避免卡顿。"""
+        self.sync_file_select_all()
         return
 
     def scan_large_files(self):
@@ -6149,86 +6514,95 @@ class CleanerMainWindow(QMainWindow):
     def populate_large_files_table(self, items):
         if not hasattr(self, "file_large_table"):
             return
+        self.file_large_table.blockSignals(True)
         self.file_large_table.setSortingEnabled(False)
         self.file_large_table.setRowCount(0)
         max_size = max((item["size"] for item in items), default=0) or 1
         for row_index, item in enumerate(items):
             self.file_large_table.insertRow(row_index)
             path = item["path"]
+            payload = {"path": path, "size": item["size"], "mode": "large"}
+
+            self.file_large_table.setItem(row_index, 0, self._make_file_check_item(payload))
+
             name_item = QTableWidgetItem(os.path.basename(path) or path)
             if os.path.exists(path):
                 name_item.setIcon(self.icon_provider.icon(QFileInfo(path)))
             name_item.setToolTip(path)
-            self.file_large_table.setItem(row_index, 0, name_item)
+            self.file_large_table.setItem(row_index, 1, name_item)
 
             size_item = QTableWidgetItem(self.format_size(item["size"]))
             size_item.setData(Qt.UserRole, item["size"])
             size_item.setData(BAR_FRAC_ROLE, item["size"] / max_size)
-            self.file_large_table.setItem(row_index, 1, size_item)
+            self.file_large_table.setItem(row_index, 2, size_item)
 
             path_item = QTableWidgetItem(path)
             path_item.setToolTip(path)
-            path_item.setData(Qt.UserRole, {"path": path, "size": item["size"], "mode": "large"})
-            self.file_large_table.setItem(row_index, 2, path_item)
+            path_item.setData(Qt.UserRole, payload)
+            self.file_large_table.setItem(row_index, 3, path_item)
 
             self.file_large_table.setCellWidget(
                 row_index,
-                3,
-                self._make_file_action_widget({"path": path, "size": item["size"], "mode": "large"}),
+                4,
+                self._make_file_action_widget(payload),
             )
             self.file_large_table.setRowHeight(row_index, 34)
         self.file_large_table.setSortingEnabled(True)
+        self.file_large_table.blockSignals(False)
+        self.sync_file_select_all()
 
     def populate_duplicate_files_table(self, duplicates):
         if not hasattr(self, "file_duplicate_table"):
             return
+        self.file_duplicate_table.blockSignals(True)
         self.file_duplicate_table.setSortingEnabled(False)
         self.file_duplicate_table.setRowCount(0)
         row_index = 0
         for group_index, (size, paths) in enumerate(duplicates, start=1):
             for path_offset, path in enumerate(paths):
                 self.file_duplicate_table.insertRow(row_index)
+                action_payload = {
+                    "path": path,
+                    "size": size,
+                    "mode": "duplicate",
+                    "group": group_index,
+                    "keep": path_offset == 0,
+                }
+                # 复选框用于批量删除，允许勾选任意副本（包括第一份）。
+                check_payload = {
+                    "path": path,
+                    "size": size,
+                    "mode": "duplicate",
+                    "group": group_index,
+                }
+                self.file_duplicate_table.setItem(row_index, 0, self._make_file_check_item(check_payload))
+
                 name_item = QTableWidgetItem(os.path.basename(path) or path)
                 if os.path.exists(path):
                     name_item.setIcon(self.icon_provider.icon(QFileInfo(path)))
                 name_item.setToolTip(path)
-                self.file_duplicate_table.setItem(row_index, 0, name_item)
+                self.file_duplicate_table.setItem(row_index, 1, name_item)
 
                 size_item = QTableWidgetItem(self.format_size(size))
                 size_item.setData(Qt.UserRole, size)
-                self.file_duplicate_table.setItem(row_index, 1, size_item)
-                self.file_duplicate_table.setItem(row_index, 2, QTableWidgetItem(f"第 {group_index} 组"))
+                self.file_duplicate_table.setItem(row_index, 2, size_item)
+                self.file_duplicate_table.setItem(row_index, 3, QTableWidgetItem(f"第 {group_index} 组"))
 
                 path_item = QTableWidgetItem(path)
                 path_item.setToolTip(path)
-                path_item.setData(
-                    Qt.UserRole,
-                    {
-                        "path": path,
-                        "size": size,
-                        "mode": "duplicate",
-                        "group": group_index,
-                        "keep": path_offset == 0,
-                    },
-                )
-                self.file_duplicate_table.setItem(row_index, 3, path_item)
+                path_item.setData(Qt.UserRole, action_payload)
+                self.file_duplicate_table.setItem(row_index, 4, path_item)
 
                 self.file_duplicate_table.setCellWidget(
                     row_index,
-                    4,
-                    self._make_file_action_widget(
-                        {
-                            "path": path,
-                            "size": size,
-                            "mode": "duplicate",
-                            "group": group_index,
-                            "keep": path_offset == 0,
-                        }
-                    ),
+                    5,
+                    self._make_file_action_widget(action_payload),
                 )
                 self.file_duplicate_table.setRowHeight(row_index, 34)
                 row_index += 1
         self.file_duplicate_table.setSortingEnabled(True)
+        self.file_duplicate_table.blockSignals(False)
+        self.sync_file_select_all()
 
     def _make_file_action_widget(self, payload):
         widget = QWidget()
@@ -6285,8 +6659,74 @@ class CleanerMainWindow(QMainWindow):
 
     def current_file_table_config(self):
         if self.file_tabs.currentWidget() is self.file_duplicate_table:
-            return self.file_duplicate_table, 3, "duplicate"
-        return self.file_large_table, 2, "large"
+            return self.file_duplicate_table, 4, "duplicate"
+        return self.file_large_table, 3, "large"
+
+    def _active_file_table(self):
+        """当前处于大文件/重复文件标签时返回对应表格，否则 None。"""
+        if not hasattr(self, "file_tabs") or not hasattr(self, "file_large_table"):
+            return None
+        current = self.file_tabs.currentWidget()
+        if current in (self.file_large_table, self.file_duplicate_table):
+            return current
+        return None
+
+    def toggle_all_file_checks(self, state):
+        """顶部“全选”联动当前文件表格内所有复选框。"""
+        table = self._active_file_table()
+        if table is None:
+            return
+        target = Qt.Checked if state == Qt.Checked else Qt.Unchecked
+        table.blockSignals(True)
+        for row in range(table.rowCount()):
+            check_item = table.item(row, 0)
+            if check_item is not None:
+                check_item.setCheckState(target)
+        table.blockSignals(False)
+        self.update_file_selection_status()
+
+    def on_file_check_item_changed(self, item):
+        if item is None or item.column() != 0:
+            return
+        self.sync_file_select_all()
+        self.update_file_selection_status()
+
+    def sync_file_select_all(self):
+        """根据当前表格勾选状态回写顶部“全选”复选框。"""
+        if not hasattr(self, "file_select_all"):
+            return
+        table = self._active_file_table()
+        self.file_select_all.blockSignals(True)
+        if table is None:
+            self.file_select_all.setChecked(False)
+        else:
+            total = table.rowCount()
+            checked = len(self.checked_file_payloads())
+            self.file_select_all.setChecked(total > 0 and checked == total)
+        self.file_select_all.blockSignals(False)
+
+    def update_file_selection_status(self):
+        if not hasattr(self, "file_status_label"):
+            return
+        count = len(self.checked_file_payloads())
+        if count:
+            self.file_status_label.setText(
+                f"已勾选 {count} 个文件：可“删除选中文件”（进回收站）或“彻底删除文件”（永久）。"
+            )
+
+    def checked_file_payloads(self):
+        """当前表格中被勾选的文件 payload 列表。"""
+        table = self._active_file_table()
+        payloads = []
+        if table is None:
+            return payloads
+        for row in range(table.rowCount()):
+            check_item = table.item(row, 0)
+            if check_item is not None and check_item.checkState() == Qt.Checked:
+                payload = check_item.data(Qt.UserRole)
+                if payload:
+                    payloads.append(payload)
+        return payloads
 
     def selected_file_payloads(self):
         table, path_column, _mode = self.current_file_table_config()
@@ -6302,31 +6742,46 @@ class CleanerMainWindow(QMainWindow):
                 payloads.append(payload)
         return payloads
 
-    def delete_selected_files(self):
-        payloads = self.selected_file_payloads()
-        if not payloads:
-            self.file_status_label.setText("请先选择需要删除的文件。")
-            self.animate_status_pulse(self.file_status_label)
-            return
-        self.delete_file_payloads(payloads)
+    def files_to_delete(self):
+        """优先使用勾选的文件；没有勾选时回退到选中行。"""
+        return self.checked_file_payloads() or self.selected_file_payloads()
 
-    def delete_duplicate_copies(self):
-        payloads = []
-        for group_index, (size, paths) in enumerate(self.file_duplicate_groups, start=1):
-            for path in paths[1:]:
-                payloads.append({
-                    "path": path,
-                    "size": size,
-                    "mode": "duplicate",
-                    "group": group_index,
-                    "keep": False,
-                })
+    def delete_selected_files(self):
+        """删除选中文件 → 移动到回收站（可从回收站恢复）。"""
+        payloads = self.files_to_delete()
         if not payloads:
-            self.file_status_label.setText("没有可删除的重复副本。")
+            self.file_status_label.setText("请先勾选需要删除的文件。")
             self.animate_status_pulse(self.file_status_label)
             return
-        self.file_tabs.setCurrentWidget(self.file_duplicate_table)
-        self.delete_file_payloads(payloads)
+        answer = QMessageBox.question(
+            self,
+            "删除选中文件",
+            f"确定将勾选的 {len(payloads)} 个文件删除到回收站吗？\n\n（可从系统回收站恢复）",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if answer != QMessageBox.Yes:
+            return
+        self.delete_file_payloads(payloads, to_recycle_bin=True)
+
+    def permanently_delete_selected_files(self):
+        """彻底删除文件 → 永久删除，不进回收站、不可恢复。"""
+        payloads = self.files_to_delete()
+        if not payloads:
+            self.file_status_label.setText("请先勾选需要彻底删除的文件。")
+            self.animate_status_pulse(self.file_status_label)
+            return
+        answer = QMessageBox.warning(
+            self,
+            "彻底删除文件",
+            f"【危险操作】确定彻底删除勾选的 {len(payloads)} 个文件吗？\n\n"
+            "文件将被永久删除，不进回收站、无法恢复。",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if answer != QMessageBox.Yes:
+            return
+        self.delete_file_payloads(payloads, force=True, permanent=True)
 
     def request_delete_payload(self, payload):
         """单行“删除”按钮：带确认与受保护提示，确认后强制删除（仍跳过系统关键文件）。"""
@@ -6369,8 +6824,12 @@ class CleanerMainWindow(QMainWindow):
 
         self.delete_file_payloads([payload], force=True)
 
-    def delete_file_payloads(self, payloads, force=False):
-        backup_dir = self.file_delete_backup_dir() if self.cleaner.options.get("backup", True) else None
+    def delete_file_payloads(self, payloads, force=False, to_recycle_bin=False, permanent=False):
+        # 回收站模式不需要备份（可从回收站恢复）；永久删除模式明确不备份。
+        if to_recycle_bin or permanent:
+            backup_dir = None
+        else:
+            backup_dir = self.file_delete_backup_dir() if self.cleaner.options.get("backup", True) else None
         deleted_count = 0
         skipped_protected = 0
         skipped_keep = 0
@@ -6391,7 +6850,22 @@ class CleanerMainWindow(QMainWindow):
                 skipped_protected += 1
                 continue
             try:
-                freed_bytes += self.delete_file_path(path, backup_dir=backup_dir)
+                size = os.path.getsize(path)
+            except OSError:
+                size = payload.get("size", 0)
+            try:
+                if to_recycle_bin:
+                    ok, err = self.move_path_to_recycle_bin(path)
+                    if not ok:
+                        errors.append(f"{path}: {err}")
+                        continue
+                    freed_bytes += size
+                elif permanent:
+                    # 永久删除：直接 os.remove，绝不进回收站、不可恢复。
+                    os.remove(path)
+                    freed_bytes += size
+                else:
+                    freed_bytes += self.delete_file_path(path, backup_dir=backup_dir)
                 deleted_count += 1
             except Exception as exc:  # pragma: no cover - filesystem dependent
                 errors.append(f"{path}: {exc}")
@@ -6399,7 +6873,8 @@ class CleanerMainWindow(QMainWindow):
         self.refresh_file_tables_after_delete()
 
         skipped_total = skipped_protected + skipped_keep
-        status = f"已删除 {deleted_count} 个文件，释放 {self.format_size(freed_bytes)}"
+        verb = "删除到回收站" if to_recycle_bin else ("彻底删除" if permanent else "删除")
+        status = f"已{verb} {deleted_count} 个文件，释放 {self.format_size(freed_bytes)}"
         if skipped_total:
             status += f"，跳过 {skipped_total} 个受保护/保留项"
         if errors:
