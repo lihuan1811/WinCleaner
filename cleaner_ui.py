@@ -46,7 +46,7 @@ from registry_cleaner import RegistryCleanerService
 from system_repair import SystemRepairService, decode_console_output
 
 
-APP_DISPLAY_NAME = "C盘清理精灵"
+APP_DISPLAY_NAME = "C DiskGlow"
 
 
 class BXToggleSwitch(QAbstractButton):
@@ -1568,9 +1568,9 @@ class CleanerMainWindow(QMainWindow):
 
         brand_col = QVBoxLayout()
         brand_col.setSpacing(2)
-        brand_title = QLabel("C盘")
+        brand_title = QLabel("C DiskGlow")
         brand_title.setObjectName("brandTitle")
-        brand_subtitle = QLabel("清理精灵")
+        brand_subtitle = QLabel("磁盘清理")
         brand_subtitle.setObjectName("brandSubtitle")
         brand_col.addWidget(brand_title)
         brand_col.addWidget(brand_subtitle)

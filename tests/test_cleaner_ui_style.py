@@ -19,7 +19,7 @@ def test_qt_ui_keeps_screenshot_like_teal_shell():
     assert "一键扫描" in source
     assert "一键清理" in source
     assert "扫描结果" in source
-    assert "C盘清理精灵" in source
+    assert "C DiskGlow" in source
 
 
 def test_qt_ui_sidebar_navigation_is_wired():

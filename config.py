@@ -9,7 +9,7 @@ C盘清理工具 - 配置文件
 VERSION = "1.0.0"
 
 # 应用程序名称
-APP_NAME = "C盘清理精灵"
+APP_NAME = "C DiskGlow"
 
 # 账号服务配置
 # ACCOUNT_API_BASE_URL 为空字符串时使用本地离线账号，否则调用远程服务器接口。
