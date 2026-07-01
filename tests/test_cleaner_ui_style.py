@@ -351,10 +351,59 @@ def test_qt_has_in_app_account_login_register_and_card_redeem():
     assert "register_account" in source
     assert "login_account" in source
     assert "redeem_account_card" in source
-    assert "WINCLEANER-VIP-30D" in source
+    assert "激活码" in source
+    assert "体验卡" in source
+    assert "RemoteAccountService" in source
     assert "登录" in source
     assert "注册" in source
     assert "兑换卡密" in source
+
+
+def test_qt_core_actions_require_membership():
+    """核心执行动作前必须做会员校验（扫描/查看不拦截）。"""
+    source = Path("cleaner_ui.py").read_text(encoding="utf-8")
+
+    assert "def require_membership" in source
+    assert "def is_membership_active" in source
+
+    def gated(method_name):
+        body = source.split(f"def {method_name}(", 1)[1].split("\n    def ", 1)[0]
+        return "require_membership" in body
+
+    assert gated("start_clean_items")
+    assert gated("apply_bx_optimization")
+    assert gated("apply_current_optimization_tab")
+    assert gated("run_uninstall_command")
+    assert gated("optimize_fragments")
+    assert gated("run_repair_actions")
+
+    # 扫描不应被会员拦截
+    scan_body = source.split("def start_scan(", 1)[1].split("\n    def ", 1)[0]
+    assert "require_membership" not in scan_body
+
+
+def test_qt_has_file_migration_feature():
+    """文件管理页包含“文件迁移”功能，并接入迁移服务与会员校验。"""
+    source = Path("cleaner_ui.py").read_text(encoding="utf-8")
+
+    assert "from file_migration import FileMigrationService" in source
+    assert 'self.file_tabs.addTab(self.migration_page, "文件迁移")' in source
+    assert "def _build_migration_page" in source
+    assert "class MigrationThread" in source
+    assert "class MigrationScanThread" in source
+
+    migrate_body = source.split("def start_migration(", 1)[1].split("\n    def ", 1)[0]
+    assert "require_membership" in migrate_body
+    restore_body = source.split("def restore_migration(", 1)[1].split("\n    def ", 1)[0]
+    assert "require_membership" in restore_body
+
+    # 默认模式 / 全选模式
+    assert "默认模式" in source
+    assert "全选模式" in source
+    assert "def select_migration_mode" in source
+    assert "DEFAULT_MIGRATION_KEYS" in source
+    for key in ["documents", "downloads", "pictures", "videos", "music"]:
+        assert key in source
 
 
 def test_qt_has_system_repair_module_page():

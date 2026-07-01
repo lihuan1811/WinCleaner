@@ -33,8 +33,10 @@ from PyQt5.QtGui import QIcon, QFont, QPixmap, QColor, QPainter
 
 from cleaner_logic import CleanerLogic
 from category_display import category_tree_label
-from config import APP_NAME
-from local_account_service import AccountError, DEMO_CARD_CODES, LocalAccountService
+from file_migration import FileMigrationService, MigrationError
+from config import APP_NAME, ACCOUNT_API_BASE_URL, USE_REMOTE_ACCOUNT
+from local_account_service import AccountError, LocalAccountService
+from remote_account_service import RemoteAccountService
 from qt_backup_manager import QtBackupManagerDialog
 from registry_cleaner import RegistryCleanerService
 from system_repair import SystemRepairService, decode_console_output
@@ -851,6 +853,67 @@ class UsageBarDelegate(QStyledItemDelegate):
         painter.restore()
 
 
+class MigrationScanThread(QThread):
+    """后台统计个人文件夹当前占用与迁移状态。"""
+    scan_finished_signal = pyqtSignal(list)
+    scan_error_signal = pyqtSignal(str)
+
+    def __init__(self, service):
+        super().__init__()
+        self.service = service
+
+    def run(self):
+        try:
+            folders = self.service.list_folders(with_size=True)
+            self.scan_finished_signal.emit(folders)
+        except Exception as exc:  # pragma: no cover - 依赖运行环境
+            self.scan_error_signal.emit(str(exc))
+
+
+class MigrationThread(QThread):
+    """执行个人文件夹迁移 / 还原。"""
+    progress_signal = pyqtSignal(str)
+    item_signal = pyqtSignal(dict)
+    finished_signal = pyqtSignal(str, dict)
+    error_signal = pyqtSignal(str)
+
+    def __init__(self, service, mode, keys, target_root="", move_files=True):
+        super().__init__()
+        self.service = service
+        self.mode = mode  # "migrate" | "restore"
+        self.keys = list(keys)
+        self.target_root = target_root
+        self.move_files = move_files
+
+    def run(self):
+        summary = {"done": 0, "failed": 0, "errors": []}
+        try:
+            for key in self.keys:
+                try:
+                    if self.mode == "migrate":
+                        info = self.service.migrate_folder(
+                            key, self.target_root, move_files=self.move_files
+                        )
+                        self.progress_signal.emit(f"已迁移: {info['name']} → {info['dst']}")
+                    else:
+                        info = self.service.restore_folder(key)
+                        self.progress_signal.emit(f"已还原: {info['name']}")
+                    summary["done"] += 1
+                    self.item_signal.emit({"key": key, "ok": True})
+                except MigrationError as exc:
+                    summary["failed"] += 1
+                    summary["errors"].append(str(exc))
+                    self.progress_signal.emit(f"跳过: {exc}")
+                    self.item_signal.emit({"key": key, "ok": False, "error": str(exc)})
+                except Exception as exc:  # pragma: no cover - 运行环境相关
+                    summary["failed"] += 1
+                    summary["errors"].append(str(exc))
+                    self.item_signal.emit({"key": key, "ok": False, "error": str(exc)})
+            self.finished_signal.emit(self.mode, summary)
+        except Exception as exc:  # pragma: no cover
+            self.error_signal.emit(str(exc))
+
+
 class DefragThread(QThread):
     """Windows 磁盘碎片扫描/整理线程。"""
     defrag_progress_signal = pyqtSignal(str)
@@ -1070,6 +1133,11 @@ class CleanerMainWindow(QMainWindow):
         self.folder_scan_done_root = None
         self.file_scan_thread = None
         self.defrag_thread = None
+        self.migration_service = FileMigrationService()
+        self.migration_scan_thread = None
+        self.migration_thread = None
+        self.migration_loaded = False
+        self.migration_rows = {}
         self.fragment_grid_cells = []
         self.bx_mode = "basic"
         self.bx_active_category = "基础"
@@ -1079,7 +1147,7 @@ class CleanerMainWindow(QMainWindow):
         self.bx_rows = []
         self._prime_process_cpu()
         self.active_animations = []
-        self.account_service = LocalAccountService()
+        self.account_service = self._build_account_service()
         self.account_state = self.account_service.current_state()
         
         self.init_ui()
@@ -2300,6 +2368,9 @@ class CleanerMainWindow(QMainWindow):
             self.animate_status_pulse(self.bx_status_label)
             return
 
+        if not self.require_membership("系统优化"):
+            return
+
         items = self.selected_bx_items()
         if not items:
             self.bx_status_label.setText("请先开启需要应用的 BX 优化项（蓝色开关）。")
@@ -2515,16 +2586,16 @@ class CleanerMainWindow(QMainWindow):
         card_layout.setContentsMargins(18, 16, 18, 16)
         card_layout.setSpacing(9)
 
-        card_title = QLabel("会员卡密")
+        card_title = QLabel("激活码兑换")
         card_title.setObjectName("featureCardTitle")
-        card_desc = QLabel("登录后输入卡密兑换会员。测试卡密: " + " / ".join(DEMO_CARD_CODES.keys()))
+        card_desc = QLabel("新账号注册即赠送一次体验卡；体验到期后，请输入激活码开通会员（体验卡 / 周卡 / 月卡 / 季卡 / 年卡）。")
         card_desc.setObjectName("featureCardDesc")
         card_desc.setWordWrap(True)
 
         card_row = QHBoxLayout()
         card_row.setSpacing(10)
         self.card_code_input = QLineEdit()
-        self.card_code_input.setPlaceholderText("输入会员卡密，例如 WINCLEANER-VIP-30D")
+        self.card_code_input.setPlaceholderText("输入激活码，例如 WINCLEANER-XXXX-XXXX-XXXX")
         redeem_button = QPushButton("兑换卡密")
         redeem_button.setObjectName("scanPrimaryButton")
         redeem_button.setMinimumWidth(112)
@@ -2532,7 +2603,7 @@ class CleanerMainWindow(QMainWindow):
         card_row.addWidget(self.card_code_input, 1)
         card_row.addWidget(redeem_button)
 
-        self.account_message_label = QLabel("本地测试卡密可直接兑换，后续可切换为后端 API 授权。")
+        self.account_message_label = QLabel("已连接服务器授权：注册送体验卡，到期后用激活码续期。")
         self.account_message_label.setObjectName("statusLabel")
         self.account_message_label.setWordWrap(True)
 
@@ -2719,6 +2790,9 @@ class CleanerMainWindow(QMainWindow):
         if self.repair_thread and self.repair_thread.isRunning():
             self.repair_status_label.setText("系统修复正在执行，请稍后。")
             self.animate_status_pulse(self.repair_status_label)
+            return
+
+        if not self.require_membership("系统修复"):
             return
 
         self.set_repair_busy(True)
@@ -3939,6 +4013,8 @@ class CleanerMainWindow(QMainWindow):
         if not rows:
             QMessageBox.information(self, "一键优化", "请先勾选需要处理的项目。")
             return
+        if not self.require_membership(tab_name or "系统优化"):
+            return
 
         executed = 0
         skipped = 0
@@ -3957,6 +4033,8 @@ class CleanerMainWindow(QMainWindow):
 
     def run_optimizer_row_action_from_button(self, row, confirm=False):
         label = row.get("columns", ["系统优化"])[0]
+        if not self.require_membership(label or "系统优化"):
+            return False
         handled = self.run_optimizer_row_action(row, confirm=confirm, quiet=False)
         if hasattr(self, "optimizer_status_label"):
             if handled:
@@ -4281,10 +4359,12 @@ class CleanerMainWindow(QMainWindow):
         self.file_large_table.setItemDelegateForColumn(1, UsageBarDelegate(self.file_large_table))
         self.file_duplicate_table = self._make_file_manage_table(["文件名", "大小", "重复组", "路径", "操作"])
         self.fragment_page = self._build_fragment_page()
+        self.migration_page = self._build_migration_page()
         self.file_tabs.addTab(self.folder_tree, "文件夹占用")
         self.file_tabs.addTab(self.file_large_table, "大文件")
         self.file_tabs.addTab(self.file_duplicate_table, "重复文件")
         self.file_tabs.addTab(self.fragment_page, "碎片整理")
+        self.file_tabs.addTab(self.migration_page, "文件迁移")
         self.file_tabs.currentChanged.connect(self.on_file_tab_changed)
         outer.addWidget(self.file_tabs, 1)
 
@@ -4621,6 +4701,295 @@ class CleanerMainWindow(QMainWindow):
         self.paint_fragment_grid(0)
         return page
 
+    def _build_migration_page(self):
+        page = QWidget()
+        outer = QVBoxLayout(page)
+        outer.setContentsMargins(16, 16, 16, 16)
+        outer.setSpacing(12)
+
+        tip = QLabel(
+            "将桌面、文档、下载、图片等个人文件夹迁移到其它磁盘以释放 C 盘空间。"
+            "迁移后会在原位置创建连接点，程序与系统仍按原路径访问，数据实际存放在目标磁盘。"
+        )
+        tip.setObjectName("pageSubtitle")
+        tip.setWordWrap(True)
+        outer.addWidget(tip)
+
+        target_row = QHBoxLayout()
+        target_row.setSpacing(8)
+        target_label = QLabel("目标文件夹:")
+        target_label.setObjectName("statusLabel")
+        self.migration_target_input = QLineEdit()
+        self.migration_target_input.setPlaceholderText("例如 D:\\Personal")
+        self.migration_target_input.setText("D:\\Personal")
+        browse_button = QPushButton("浏览")
+        browse_button.setObjectName("cleanSecondaryButton")
+        browse_button.clicked.connect(self.select_migration_target)
+        self.migration_move_checkbox = QCheckBox("转移已有文件")
+        self.migration_move_checkbox.setChecked(True)
+        target_row.addWidget(target_label)
+        target_row.addWidget(self.migration_target_input, 1)
+        target_row.addWidget(browse_button)
+        target_row.addWidget(self.migration_move_checkbox)
+        outer.addLayout(target_row)
+
+        self.migration_table = QTableWidget(0, 5)
+        self.migration_table.setObjectName("appTable")
+        self.migration_table.setHorizontalHeaderLabels(["选择", "文件夹", "当前路径", "占用大小", "状态"])
+        self.migration_table.verticalHeader().setVisible(False)
+        self.migration_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.migration_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        header_view = self.migration_table.horizontalHeader()
+        header_view.setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        header_view.setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        header_view.setSectionResizeMode(2, QHeaderView.Stretch)
+        header_view.setSectionResizeMode(3, QHeaderView.ResizeToContents)
+        header_view.setSectionResizeMode(4, QHeaderView.ResizeToContents)
+        outer.addWidget(self.migration_table, 1)
+
+        self.migration_progress = QProgressBar()
+        self.migration_progress.setRange(0, 100)
+        self.migration_progress.setValue(0)
+        self.migration_progress.setTextVisible(False)
+        outer.addWidget(self.migration_progress)
+
+        actions = QHBoxLayout()
+        mode_label = QLabel("快速选择:")
+        mode_label.setObjectName("statusLabel")
+        self.migration_default_button = QPushButton("默认模式")
+        self.migration_default_button.setObjectName("cleanSecondaryButton")
+        self.migration_default_button.setToolTip("勾选：文档、下载、图片、视频、音乐")
+        self.migration_default_button.clicked.connect(lambda: self.select_migration_mode("default"))
+        self.migration_all_button = QPushButton("全选模式")
+        self.migration_all_button.setObjectName("cleanSecondaryButton")
+        self.migration_all_button.setToolTip("勾选全部个人文件夹")
+        self.migration_all_button.clicked.connect(lambda: self.select_migration_mode("all"))
+        actions.addWidget(mode_label)
+        actions.addWidget(self.migration_default_button)
+        actions.addWidget(self.migration_all_button)
+        actions.addStretch(1)
+        self.migration_refresh_button = QPushButton("刷新")
+        self.migration_refresh_button.setObjectName("cleanSecondaryButton")
+        self.migration_refresh_button.clicked.connect(self.refresh_migration_folders)
+        self.migration_migrate_button = QPushButton("开始迁移")
+        self.migration_migrate_button.setObjectName("scanPrimaryButton")
+        self.migration_migrate_button.setMinimumWidth(112)
+        self.migration_migrate_button.clicked.connect(self.start_migration)
+        self.migration_restore_button = QPushButton("还原选中")
+        self.migration_restore_button.setObjectName("cleanSecondaryButton")
+        self.migration_restore_button.clicked.connect(self.restore_migration)
+        actions.addWidget(self.migration_refresh_button)
+        actions.addWidget(self.migration_migrate_button)
+        actions.addWidget(self.migration_restore_button)
+        outer.addLayout(actions)
+
+        self.migration_status_label = QLabel("点击“刷新”列出可迁移的个人文件夹。")
+        self.migration_status_label.setObjectName("statusLabel")
+        self.migration_status_label.setWordWrap(True)
+        outer.addWidget(self.migration_status_label)
+
+        return page
+
+    def select_migration_target(self):
+        directory = QFileDialog.getExistingDirectory(self, "选择目标文件夹", "")
+        if directory:
+            self.migration_target_input.setText(os.path.normpath(directory))
+
+    # 默认模式勾选的文件夹：文档、下载、图片、视频、音乐
+    DEFAULT_MIGRATION_KEYS = {"documents", "downloads", "pictures", "videos", "music"}
+
+    def select_migration_mode(self, mode):
+        """默认模式=文档/下载/图片/视频/音乐；全选模式=全部文件夹。"""
+        for row in range(self.migration_table.rowCount()):
+            item = self.migration_table.item(row, 0)
+            if not item or not (item.flags() & Qt.ItemIsUserCheckable):
+                continue
+            key = item.data(Qt.UserRole)
+            if mode == "all":
+                checked = True
+            else:
+                checked = key in self.DEFAULT_MIGRATION_KEYS
+            item.setCheckState(Qt.Checked if checked else Qt.Unchecked)
+        if hasattr(self, "migration_status_label"):
+            label = "全选模式：已勾选全部文件夹。" if mode == "all" else "默认模式：已勾选 文档 / 下载 / 图片 / 视频 / 音乐。"
+            self.migration_status_label.setText(label)
+
+    def refresh_migration_folders(self):
+        if self.migration_scan_thread and self.migration_scan_thread.isRunning():
+            return
+        self.migration_status_label.setText("正在统计个人文件夹占用，请稍候...")
+        self.animate_status_pulse(self.migration_status_label)
+        self.migration_progress.setRange(0, 0)
+        self.migration_refresh_button.setEnabled(False)
+        self.migration_scan_thread = MigrationScanThread(self.migration_service)
+        self.migration_scan_thread.scan_finished_signal.connect(self.on_migration_scan_finished)
+        self.migration_scan_thread.scan_error_signal.connect(self.on_migration_scan_error)
+        self.migration_scan_thread.start()
+
+    def on_migration_scan_finished(self, folders):
+        self.migration_loaded = True
+        self.migration_progress.setRange(0, 100)
+        self.migration_progress.setValue(0)
+        self.migration_refresh_button.setEnabled(True)
+        self.migration_rows = {}
+        table = self.migration_table
+        table.setRowCount(0)
+        migrated = 0
+        for folder in folders:
+            row = table.rowCount()
+            table.insertRow(row)
+            check_item = QTableWidgetItem()
+            check_item.setFlags(Qt.ItemIsUserCheckable | Qt.ItemIsEnabled)
+            # 默认模式：预勾选 文档/下载/图片/视频/音乐（且存在、未迁移）
+            default_checked = (
+                folder["key"] in self.DEFAULT_MIGRATION_KEYS
+                and folder["exists"]
+                and not folder["migrated"]
+            )
+            check_item.setCheckState(Qt.Checked if default_checked else Qt.Unchecked)
+            check_item.setData(Qt.UserRole, folder["key"])
+            table.setItem(row, 0, check_item)
+            table.setItem(row, 1, QTableWidgetItem(folder["name"]))
+            path_text = folder["path"]
+            if folder["migrated"] and folder.get("target"):
+                path_text = f"{folder['path']}  →  {folder['target']}"
+            table.setItem(row, 2, QTableWidgetItem(path_text))
+            size_text = self.format_size(folder["size"]) if folder["exists"] else "不存在"
+            table.setItem(row, 3, QTableWidgetItem(size_text))
+            if folder["migrated"]:
+                status = "已迁移"
+                migrated += 1
+            elif not folder["exists"]:
+                status = "不存在"
+            else:
+                status = "未迁移"
+            table.setItem(row, 4, QTableWidgetItem(status))
+            self.migration_rows[folder["key"]] = folder
+        self.migration_status_label.setText(
+            f"共 {len(folders)} 个个人文件夹，其中 {migrated} 个已迁移。勾选后可迁移或还原。"
+        )
+
+    def on_migration_scan_error(self, message):
+        self.migration_progress.setRange(0, 100)
+        self.migration_refresh_button.setEnabled(True)
+        self.migration_status_label.setText(f"统计失败: {message}")
+
+    def checked_migration_keys(self):
+        keys = []
+        for row in range(self.migration_table.rowCount()):
+            item = self.migration_table.item(row, 0)
+            if item and item.checkState() == Qt.Checked:
+                keys.append(item.data(Qt.UserRole))
+        return keys
+
+    def set_migration_busy(self, busy):
+        self.migration_migrate_button.setEnabled(not busy)
+        self.migration_restore_button.setEnabled(not busy)
+        self.migration_refresh_button.setEnabled(not busy)
+        self.migration_progress.setRange(0, 0 if busy else 100)
+        if not busy:
+            self.migration_progress.setValue(100)
+
+    def start_migration(self):
+        if not self.require_membership("文件迁移"):
+            return
+        keys = self.checked_migration_keys()
+        if not keys:
+            QMessageBox.information(self, "文件迁移", "请先勾选需要迁移的文件夹。")
+            return
+        target_root = self.migration_target_input.text().strip()
+        if not target_root:
+            QMessageBox.information(self, "文件迁移", "请先填写目标文件夹。")
+            return
+
+        pending = [k for k in keys if not (self.migration_rows.get(k, {}).get("migrated"))]
+        if not pending:
+            QMessageBox.information(self, "文件迁移", "所选文件夹均已迁移。")
+            return
+
+        drive = os.path.splitdrive(os.path.abspath(target_root))[0].upper()
+        warn = ""
+        if drive in ("", "C:"):
+            warn = "\n\n注意：目标位于系统盘（C:），迁移后并不会释放 C 盘空间。"
+        answer = QMessageBox.question(
+            self,
+            "确认迁移",
+            f"将把选中的 {len(pending)} 个文件夹迁移到:\n{target_root}\n\n"
+            "原位置会保留连接点，程序仍可正常访问。此操作会移动真实文件。" + warn,
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if answer != QMessageBox.Yes:
+            return
+
+        self.set_migration_busy(True)
+        self.migration_status_label.setText("正在迁移，请勿关闭软件...")
+        self.animate_status_pulse(self.migration_status_label)
+        self.migration_thread = MigrationThread(
+            self.migration_service,
+            "migrate",
+            pending,
+            target_root=target_root,
+            move_files=self.migration_move_checkbox.isChecked(),
+        )
+        self.migration_thread.progress_signal.connect(self.on_migration_progress)
+        self.migration_thread.finished_signal.connect(self.on_migration_finished)
+        self.migration_thread.error_signal.connect(self.on_migration_error)
+        self.migration_thread.finished.connect(self.migration_thread.deleteLater)
+        self.migration_thread.start()
+
+    def restore_migration(self):
+        if not self.require_membership("文件迁移"):
+            return
+        keys = self.checked_migration_keys()
+        if not keys:
+            QMessageBox.information(self, "文件迁移", "请先勾选需要还原的文件夹。")
+            return
+        pending = [k for k in keys if self.migration_rows.get(k, {}).get("migrated")]
+        if not pending:
+            QMessageBox.information(self, "文件迁移", "所选文件夹均未处于迁移状态。")
+            return
+
+        answer = QMessageBox.question(
+            self,
+            "确认还原",
+            f"将把选中的 {len(pending)} 个文件夹的数据移回原位置并删除连接点。是否继续？",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if answer != QMessageBox.Yes:
+            return
+
+        self.set_migration_busy(True)
+        self.migration_status_label.setText("正在还原，请勿关闭软件...")
+        self.animate_status_pulse(self.migration_status_label)
+        self.migration_thread = MigrationThread(self.migration_service, "restore", pending)
+        self.migration_thread.progress_signal.connect(self.on_migration_progress)
+        self.migration_thread.finished_signal.connect(self.on_migration_finished)
+        self.migration_thread.error_signal.connect(self.on_migration_error)
+        self.migration_thread.finished.connect(self.migration_thread.deleteLater)
+        self.migration_thread.start()
+
+    def on_migration_progress(self, message):
+        self.migration_status_label.setText(message)
+
+    def on_migration_finished(self, mode, summary):
+        self.set_migration_busy(False)
+        action = "迁移" if mode == "migrate" else "还原"
+        text = f"{action}完成：成功 {summary.get('done', 0)} 个"
+        if summary.get("failed"):
+            text += f"，失败 {summary['failed']} 个"
+        self.migration_status_label.setText(text)
+        if summary.get("errors"):
+            QMessageBox.warning(
+                self, f"文件{action}", "部分项目未完成：\n\n" + "\n".join(summary["errors"][:10])
+            )
+        self.refresh_migration_folders()
+
+    def on_migration_error(self, message):
+        self.set_migration_busy(False)
+        self.migration_status_label.setText(f"操作失败: {message}")
+
     def _make_fragment_stat(self, parent_layout, title, value):
         card = QFrame()
         card.setObjectName("featureCard")
@@ -4659,6 +5028,8 @@ class CleanerMainWindow(QMainWindow):
         self.start_defrag_thread("scan")
 
     def optimize_fragments(self):
+        if not self.require_membership("磁盘碎片整理"):
+            return
         self.start_defrag_thread("optimize")
 
     def start_defrag_thread(self, mode):
@@ -4928,6 +5299,8 @@ class CleanerMainWindow(QMainWindow):
             self.uninstall_status_label.setText(f"已勾选 {count} 个软件，点击“卸载选中”批量卸载。")
 
     def uninstall_selected_app(self):
+        if not self.require_membership("软件卸载"):
+            return
         apps = self.checked_uninstall_apps()
         if not apps:
             row = self.uninstall_table.currentRow()
@@ -4988,6 +5361,8 @@ class CleanerMainWindow(QMainWindow):
             return False
 
     def run_uninstall_command(self, app):
+        if not self.require_membership("软件卸载"):
+            return
         command = app.get("quiet_uninstall") or app.get("uninstall")
         if not command:
             QMessageBox.warning(self, "软件卸载", f"“{app.get('name', '')}”没有可用卸载命令。")
@@ -5021,6 +5396,68 @@ class CleanerMainWindow(QMainWindow):
         if "msiexec" in lowered and " /i" in lowered:
             command = command.replace(" /I", " /X").replace(" /i", " /X")
         return command
+
+    def _build_account_service(self):
+        """根据配置选择远程或本地账号服务；远程不可用时回退到本地。"""
+        if USE_REMOTE_ACCOUNT and ACCOUNT_API_BASE_URL:
+            try:
+                return RemoteAccountService(ACCOUNT_API_BASE_URL)
+            except Exception:
+                pass
+        return LocalAccountService()
+
+    def navigate_to_account_page(self):
+        """切换到“账号会员”页面。"""
+        for index, (label, _method) in enumerate(NAV_ITEMS):
+            if label == "账号会员":
+                self._select_page(index)
+                return
+
+    def is_membership_active(self):
+        """当前账号是否为有效会员（含未过期的体验卡）。"""
+        state = getattr(self, "account_state", None) or {}
+        user = state.get("user")
+        return bool(user and user.get("isPremium"))
+
+    def _refresh_account_state_quiet(self):
+        """静默刷新账号状态；离线且此前已登录时保留旧状态，避免误判为未激活。"""
+        try:
+            new_state = self.account_service.current_state()
+        except Exception:
+            return
+        if not new_state:
+            return
+        if new_state.get("offline") and (getattr(self, "account_state", None) or {}).get("user"):
+            return
+        self.account_state = new_state
+
+    def require_membership(self, feature="该功能"):
+        """核心功能前置校验：无有效会员时提示激活并返回 False。"""
+        self._refresh_account_state_quiet()
+        if self.is_membership_active():
+            return True
+
+        user = (getattr(self, "account_state", None) or {}).get("user")
+        if user:
+            text = (
+                f"{feature}需要有效会员。\n\n"
+                "你的体验卡 / 会员已到期，请输入激活码开通后再使用。"
+            )
+        else:
+            text = (
+                f"{feature}需要登录并激活会员后使用。\n\n"
+                "新账号注册即赠送一次体验卡，体验到期后可用激活码开通。"
+            )
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Information)
+        box.setWindowTitle("需要会员")
+        box.setText(text)
+        go_button = box.addButton("前往激活", QMessageBox.AcceptRole)
+        box.addButton("取消", QMessageBox.RejectRole)
+        box.exec_()
+        if box.clickedButton() is go_button:
+            self.navigate_to_account_page()
+        return False
 
     def refresh_account_state(self, message=None):
         self.account_state = self.account_service.current_state()
@@ -5097,6 +5534,16 @@ class CleanerMainWindow(QMainWindow):
     def on_file_tab_changed(self, _index):
         """切换到“文件夹占用”标签且尚未统计时自动扫描一次。"""
         if not hasattr(self, "file_tabs") or not hasattr(self, "folder_tree"):
+            return
+        # 首次进入“文件迁移”标签时自动列出个人文件夹
+        if (
+            hasattr(self, "migration_page")
+            and self.file_tabs.currentWidget() is self.migration_page
+        ):
+            if not self.migration_loaded and not (
+                self.migration_scan_thread and self.migration_scan_thread.isRunning()
+            ):
+                self.refresh_migration_folders()
             return
         if self.file_tabs.currentWidget() is not self.folder_tree:
             return
@@ -6172,6 +6619,8 @@ class CleanerMainWindow(QMainWindow):
 
     def start_clean_items(self, items, action_label):
         """启动清理线程，items 必须已经过滤为当前模式可清理项。"""
+        if not self.require_membership("文件清理"):
+            return
         clean_items = [item for item in items if self.is_cleanable_item(item)]
         if not clean_items:
             QMessageBox.information(self, action_label, "没有可清理项目")

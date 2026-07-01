@@ -11,6 +11,11 @@ VERSION = "1.0.0"
 # 应用程序名称
 APP_NAME = "C盘清理精灵"
 
+# 账号服务配置
+# ACCOUNT_API_BASE_URL 为空字符串时使用本地离线账号，否则调用远程服务器接口。
+ACCOUNT_API_BASE_URL = "http://47.93.103.220"
+USE_REMOTE_ACCOUNT = True
+
 # 默认配置
 DEFAULT_CONFIG = {
     # 安全选项

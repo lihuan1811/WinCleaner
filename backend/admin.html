@@ -1,0 +1,317 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>WinCleaner 管理后台</title>
+  <style>
+    :root {
+      --teal: #12b5a5;
+      --teal-dark: #0e9488;
+      --bg: #f3f7f7;
+      --card: #ffffff;
+      --line: #e4ecec;
+      --text: #1f2d2c;
+      --muted: #6b807e;
+      --danger: #e5484d;
+      --used: #b78103;
+      --avail: #0e9488;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: -apple-system, "PingFang SC", "Microsoft YaHei", Segoe UI, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+    }
+    header {
+      background: linear-gradient(120deg, var(--teal), var(--teal-dark));
+      color: #fff;
+      padding: 20px 28px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 12px;
+    }
+    header h1 { font-size: 20px; margin: 0; font-weight: 600; }
+    header .sub { opacity: .85; font-size: 13px; margin-top: 4px; }
+    .token-bar { display: flex; gap: 8px; align-items: center; }
+    .token-bar input {
+      padding: 8px 12px; border-radius: 8px; border: none; min-width: 220px; font-size: 13px;
+    }
+    button {
+      cursor: pointer; border: none; border-radius: 8px; padding: 8px 14px;
+      font-size: 13px; font-weight: 600; background: #fff; color: var(--teal-dark);
+      transition: transform .05s ease, opacity .2s;
+    }
+    button:hover { opacity: .9; }
+    button:active { transform: translateY(1px); }
+    button.primary { background: var(--teal); color: #fff; }
+    button.ghost { background: rgba(255,255,255,.18); color:#fff; }
+    button.mini { padding: 5px 10px; font-size: 12px; }
+    button.danger { background: #fff; color: var(--danger); }
+    main { padding: 24px 28px 60px; max-width: 1180px; margin: 0 auto; }
+    .tabs { display: flex; gap: 8px; margin-bottom: 20px; }
+    .tabs button { background: transparent; color: var(--muted); padding: 10px 16px; border-radius: 10px; }
+    .tabs button.active { background: var(--card); color: var(--teal-dark); box-shadow: 0 2px 8px rgba(0,0,0,.05); }
+    .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px,1fr)); gap: 14px; margin-bottom: 24px; }
+    .stat {
+      background: var(--card); border: 1px solid var(--line); border-radius: 14px;
+      padding: 16px 18px;
+    }
+    .stat .n { font-size: 26px; font-weight: 700; color: var(--teal-dark); }
+    .stat .l { font-size: 13px; color: var(--muted); margin-top: 4px; }
+    .panel {
+      background: var(--card); border: 1px solid var(--line); border-radius: 14px;
+      padding: 4px; overflow: hidden; margin-bottom: 20px;
+    }
+    .panel-head { display:flex; align-items:center; justify-content: space-between; padding: 14px 16px; flex-wrap: wrap; gap: 10px; }
+    .panel-head h2 { font-size: 15px; margin: 0; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th, td { text-align: left; padding: 11px 16px; border-top: 1px solid var(--line); }
+    th { color: var(--muted); font-weight: 600; background: #fafcfc; }
+    td.code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .badge { display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: 12px; font-weight: 600; }
+    .badge.free { background:#eef2f2; color:#6b807e; }
+    .badge.pro { background:#e2f6f2; color: var(--teal-dark); }
+    .badge.used { background:#fdf1d6; color: var(--used); }
+    .badge.avail { background:#e2f6f2; color: var(--avail); }
+    .toolbar { display:flex; gap:8px; align-items:center; flex-wrap: wrap; }
+    .toolbar select, .toolbar input {
+      padding: 7px 10px; border-radius: 8px; border: 1px solid var(--line); font-size: 13px;
+    }
+    .empty { padding: 30px; text-align:center; color: var(--muted); font-size: 13px; }
+    .msg { font-size: 13px; padding: 8px 12px; border-radius: 8px; margin-left:auto; }
+    .msg.ok { background:#e2f6f2; color: var(--teal-dark); }
+    .msg.err { background:#fdecec; color: var(--danger); }
+    .hide { display: none !important; }
+    .gen-out { font-family: ui-monospace, monospace; font-size:12px; background:#f7fafa; border:1px dashed var(--line); border-radius:8px; padding:10px 12px; margin: 0 16px 12px; white-space: pre-wrap; word-break: break-all; }
+    .row-actions { text-align: right; }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <h1>WinCleaner 管理后台</h1>
+      <div class="sub">用户管理 · 激活码管理</div>
+    </div>
+    <div class="token-bar">
+      <input id="token" type="password" placeholder="管理口令 (ADMIN_TOKEN)" />
+      <button class="ghost" onclick="saveToken()">连接</button>
+    </div>
+  </header>
+
+  <main>
+    <div class="cards" id="stats"></div>
+
+    <div class="tabs">
+      <button data-tab="users" class="active" onclick="switchTab('users')">用户管理</button>
+      <button data-tab="cards" onclick="switchTab('cards')">激活码管理</button>
+    </div>
+
+    <!-- USERS -->
+    <section id="tab-users">
+      <div class="panel">
+        <div class="panel-head">
+          <h2>注册用户</h2>
+          <div class="toolbar">
+            <button class="primary mini" onclick="loadUsers()">刷新</button>
+            <span id="users-msg"></span>
+          </div>
+        </div>
+        <table>
+          <thead>
+            <tr><th>邮箱</th><th>昵称</th><th>级别</th><th>剩余天数</th><th>到期时间</th><th>注册时间</th></tr>
+          </thead>
+          <tbody id="users-body"><tr><td colspan="6" class="empty">请输入管理口令后点击“连接”。</td></tr></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- CARDS -->
+    <section id="tab-cards" class="hide">
+      <div class="panel">
+        <div class="panel-head">
+          <h2>生成激活码</h2>
+        </div>
+        <div style="padding: 0 16px 16px;">
+          <div class="toolbar">
+            <select id="gen-plan" onchange="onTierChange()">
+              <option value="体验卡" data-days="3">体验卡（3天）</option>
+              <option value="周卡" data-days="7">周卡（7天）</option>
+              <option value="月卡" data-days="30" selected>月卡（30天）</option>
+              <option value="季卡" data-days="90">季卡（90天）</option>
+              <option value="年卡" data-days="365">年卡（365天）</option>
+            </select>
+            <input id="gen-days" type="number" value="30" min="1" style="width:90px" title="有效天数" />
+            <input id="gen-count" type="number" value="5" min="1" max="200" style="width:80px" title="数量" />
+            <input id="gen-prefix" type="text" value="WINCLEANER" style="width:150px" title="前缀" />
+            <button class="primary" onclick="generateCards()">生成</button>
+            <span id="gen-msg"></span>
+          </div>
+          <div class="l" style="color:var(--muted);font-size:12px;margin-top:8px;">选择卡种会自动填充天数，也可手动调整。</div>
+        </div>
+        <pre id="gen-out" class="gen-out hide"></pre>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head">
+          <h2>激活码列表</h2>
+          <div class="toolbar">
+            <select id="card-filter" onchange="loadCards()">
+              <option value="">全部</option>
+              <option value="available">未使用</option>
+              <option value="used">已使用</option>
+            </select>
+            <button class="primary mini" onclick="loadCards()">刷新</button>
+            <span id="cards-msg"></span>
+          </div>
+        </div>
+        <table>
+          <thead>
+            <tr><th>激活码</th><th>套餐</th><th>天数</th><th>状态</th><th>兑换人</th><th>兑换时间</th><th></th></tr>
+          </thead>
+          <tbody id="cards-body"><tr><td colspan="7" class="empty">请输入管理口令后点击“连接”。</td></tr></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    let TOKEN = localStorage.getItem("wc_admin_token") || "";
+    $("token").value = TOKEN;
+
+    function headers() { return { "X-Admin-Token": TOKEN, "Content-Type": "application/json" }; }
+
+    async function api(path, opts = {}) {
+      const res = await fetch(path, { headers: headers(), ...opts });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.detail || ("请求失败 " + res.status));
+      return data;
+    }
+
+    function setMsg(el, text, ok) {
+      el.className = "msg " + (ok ? "ok" : "err");
+      el.textContent = text || "";
+      if (!text) el.className = "";
+    }
+
+    function saveToken() {
+      TOKEN = $("token").value.trim();
+      localStorage.setItem("wc_admin_token", TOKEN);
+      refreshAll();
+    }
+
+    function switchTab(tab) {
+      document.querySelectorAll(".tabs button").forEach(b =>
+        b.classList.toggle("active", b.dataset.tab === tab));
+      $("tab-users").classList.toggle("hide", tab !== "users");
+      $("tab-cards").classList.toggle("hide", tab !== "cards");
+    }
+
+    async function loadOverview() {
+      try {
+        const d = await api("/api/admin/overview");
+        $("stats").innerHTML = [
+          ["注册用户", d.users], ["有效会员", d.activeMembers], ["免费用户", d.freeUsers],
+          ["激活码总数", d.totalCards], ["已使用", d.usedCards], ["未使用", d.availableCards],
+        ].map(([l, n]) => `<div class="stat"><div class="n">${n}</div><div class="l">${l}</div></div>`).join("");
+      } catch (e) {
+        $("stats").innerHTML = `<div class="stat"><div class="l" style="color:var(--danger)">${e.message}</div></div>`;
+      }
+    }
+
+    async function loadUsers() {
+      try {
+        const d = await api("/api/admin/users");
+        const body = $("users-body");
+        if (!d.users.length) { body.innerHTML = `<tr><td colspan="6" class="empty">暂无注册用户。</td></tr>`; return; }
+        body.innerHTML = d.users.map(u => {
+          const lvl = u.isActive
+            ? `<span class="badge pro">${u.level}</span>`
+            : `<span class="badge free">Free</span>`;
+          return `<tr>
+            <td class="code">${u.email}</td>
+            <td>${u.displayName || "-"}</td>
+            <td>${lvl}</td>
+            <td>${u.isActive ? u.remainingDays + " 天" : "-"}</td>
+            <td>${u.expiresAt ? u.expiresAt.replace("T", " ").slice(0, 16) : "-"}</td>
+            <td>${(u.createdAt || "").replace("T", " ").slice(0, 16)}</td>
+          </tr>`;
+        }).join("");
+        setMsg($("users-msg"), `共 ${d.count} 位用户`, true);
+      } catch (e) {
+        setMsg($("users-msg"), e.message, false);
+      }
+    }
+
+    async function loadCards() {
+      try {
+        const f = $("card-filter").value;
+        const d = await api("/api/admin/cards" + (f ? "?status=" + f : ""));
+        const body = $("cards-body");
+        if (!d.cards.length) { body.innerHTML = `<tr><td colspan="7" class="empty">暂无激活码。</td></tr>`; return; }
+        body.innerHTML = d.cards.map(c => {
+          const st = c.status === "used"
+            ? `<span class="badge used">已使用</span>`
+            : `<span class="badge avail">未使用</span>`;
+          const del = c.status === "used" ? "" :
+            `<button class="danger mini" onclick="deleteCard('${c.code}')">删除</button>`;
+          return `<tr>
+            <td class="code">${c.code}</td>
+            <td>${c.planName}</td>
+            <td>${c.days}</td>
+            <td>${st}</td>
+            <td class="code">${c.redeemedBy || "-"}</td>
+            <td>${c.redeemedAt ? c.redeemedAt.replace("T", " ").slice(0, 16) : "-"}</td>
+            <td class="row-actions">${del}</td>
+          </tr>`;
+        }).join("");
+        setMsg($("cards-msg"), `共 ${d.count} 张`, true);
+      } catch (e) {
+        setMsg($("cards-msg"), e.message, false);
+      }
+    }
+
+    function onTierChange() {
+      const opt = $("gen-plan").selectedOptions[0];
+      if (opt && opt.dataset.days) $("gen-days").value = opt.dataset.days;
+    }
+
+    async function generateCards() {
+      try {
+        const payload = {
+          planName: $("gen-plan").value,
+          days: parseInt($("gen-days").value, 10),
+          count: parseInt($("gen-count").value, 10),
+          prefix: $("gen-prefix").value.trim() || "WINCLEANER",
+        };
+        const d = await api("/api/admin/cards/generate", { method: "POST", body: JSON.stringify(payload) });
+        const out = $("gen-out");
+        out.classList.remove("hide");
+        out.textContent = d.created.join("\n");
+        setMsg($("gen-msg"), `成功生成 ${d.count} 张`, true);
+        loadCards(); loadOverview();
+      } catch (e) {
+        setMsg($("gen-msg"), e.message, false);
+      }
+    }
+
+    async function deleteCard(code) {
+      if (!confirm("确定删除未使用的激活码 " + code + " ？")) return;
+      try {
+        await api("/api/admin/cards/" + encodeURIComponent(code), { method: "DELETE" });
+        loadCards(); loadOverview();
+      } catch (e) {
+        setMsg($("cards-msg"), e.message, false);
+      }
+    }
+
+    function refreshAll() { loadOverview(); loadUsers(); loadCards(); }
+
+    if (TOKEN) refreshAll();
+  </script>
+</body>
+</html>

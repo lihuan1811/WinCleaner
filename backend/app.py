@@ -2,13 +2,16 @@ from __future__ import annotations
 
 import hashlib
 import os
+import secrets
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Iterator
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse
 from psycopg import Connection
 from psycopg.rows import DictRow, dict_row
 from psycopg_pool import ConnectionPool
@@ -17,11 +20,34 @@ from pydantic import BaseModel, Field
 
 DEFAULT_DATABASE_URL = "postgresql://wincleaner:wincleaner@127.0.0.1:5432/wincleaner"
 
-DEFAULT_CARD_PLANS = {
-    "WINCLEANER-VIP-30D": ("专业会员", 30),
-    "WINCLEANER-VIP-365D": ("专业会员", 365),
-    "WINCLEANER-TEAM-365D": ("企业会员", 365),
+ADMIN_PAGE_PATH = Path(__file__).with_name("admin.html")
+
+# 会员套餐（卡种）与对应有效天数
+PLAN_TIERS = {
+    "体验卡": 3,
+    "周卡": 7,
+    "月卡": 30,
+    "季卡": 90,
+    "年卡": 365,
 }
+
+# 注册赠送的体验卡套餐名
+TRIAL_PLAN_NAME = "体验卡"
+
+# 启动时不再预置演示卡密，改由管理后台生成真实激活码
+DEFAULT_CARD_PLANS: dict[str, tuple[str, int]] = {}
+
+
+def trial_days() -> int:
+    raw = os.environ.get("WINCLEANER_TRIAL_DAYS")
+    if raw:
+        try:
+            value = int(raw)
+            if value > 0:
+                return value
+        except ValueError:
+            pass
+    return PLAN_TIERS[TRIAL_PLAN_NAME]
 
 
 def default_database_url() -> str:
@@ -30,6 +56,31 @@ def default_database_url() -> str:
         or os.environ.get("WINCLEANER_DATABASE_URL")
         or DEFAULT_DATABASE_URL
     )
+
+
+def admin_token() -> str:
+    return (
+        os.environ.get("WINCLEANER_ADMIN_TOKEN")
+        or os.environ.get("ADMIN_TOKEN")
+        or ""
+    )
+
+
+def require_admin(token: str | None) -> None:
+    expected = admin_token()
+    if not expected:
+        raise HTTPException(status_code=503, detail="管理后台未配置口令（ADMIN_TOKEN）。")
+    if not token or not secrets.compare_digest(token, expected):
+        raise HTTPException(status_code=401, detail="管理口令不正确。")
+
+
+_CARD_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+
+
+def generate_card_code(prefix: str = "WINCLEANER") -> str:
+    body = "".join(secrets.choice(_CARD_ALPHABET) for _ in range(12))
+    cleaned = "".join(ch for ch in prefix.upper() if ch.isalnum()) or "WINCLEANER"
+    return f"{cleaned}-{body[:4]}-{body[4:8]}-{body[8:12]}"
 
 
 def utc_now() -> datetime:
@@ -197,6 +248,13 @@ class RedeemCardRequest(BaseModel):
     device_id: str = Field(alias="deviceId")
 
 
+class GenerateCardsRequest(BaseModel):
+    plan_name: str = Field(default="专业会员", alias="planName")
+    days: int = Field(default=365, gt=0, le=36500)
+    count: int = Field(default=1, gt=0, le=200)
+    prefix: str = Field(default="WINCLEANER")
+
+
 def create_app(database_url: str | None = None) -> FastAPI:
     selected_database_url = database_url or default_database_url()
     database = Database(selected_database_url)
@@ -235,6 +293,14 @@ def create_app(database_url: str | None = None) -> FastAPI:
     def health() -> dict[str, str]:
         return {"status": "ok", "database": "postgresql"}
 
+    @app.get("/api/plans")
+    def plans() -> dict[str, object]:
+        return {
+            "tiers": [{"name": name, "days": days} for name, days in PLAN_TIERS.items()],
+            "trialPlan": TRIAL_PLAN_NAME,
+            "trialDays": trial_days(),
+        }
+
     @app.get("/api/account/state/{device_id}")
     def account_state(device_id: str) -> dict[str, object | None]:
         with active_database().connect() as connection:
@@ -261,6 +327,18 @@ def create_app(database_url: str | None = None) -> FastAPI:
             ).fetchone()
             if inserted is None:
                 raise HTTPException(status_code=409, detail="这个邮箱已经注册，请直接登录。")
+            # 新账号赠送一次体验卡；后续到期需用激活码续期
+            trial_expires = now + timedelta(days=trial_days())
+            connection.execute(
+                """
+                INSERT INTO subscriptions (
+                    user_email, plan_name, activated_at, expires_at
+                )
+                VALUES (%s, %s, %s, %s)
+                ON CONFLICT (user_email) DO NOTHING
+                """,
+                (email, TRIAL_PLAN_NAME, now, trial_expires),
+            )
             save_session(connection, request.device_id, email)
             return load_state(connection, request.device_id)
 
@@ -359,6 +437,156 @@ def create_app(database_url: str | None = None) -> FastAPI:
             state = load_state(connection, request.device_id)
             state["message"] = f"{card['plan_name']}已开通，有效期 {card['days']} 天。"
             return state
+
+    @app.get("/admin", response_class=HTMLResponse)
+    def admin_page() -> str:
+        try:
+            return ADMIN_PAGE_PATH.read_text(encoding="utf-8")
+        except OSError:
+            raise HTTPException(status_code=404, detail="管理页面不存在。")
+
+    @app.get("/api/admin/overview")
+    def admin_overview(x_admin_token: str | None = Header(default=None)):
+        require_admin(x_admin_token)
+        now = utc_now()
+        with active_database().connect() as connection:
+            users = connection.execute("SELECT count(*) AS c FROM users").fetchone()["c"]
+            active = connection.execute(
+                "SELECT count(*) AS c FROM subscriptions WHERE expires_at > %s",
+                (now,),
+            ).fetchone()["c"]
+            total_cards = connection.execute(
+                "SELECT count(*) AS c FROM card_codes"
+            ).fetchone()["c"]
+            used_cards = connection.execute(
+                "SELECT count(*) AS c FROM card_codes WHERE redeemed_by IS NOT NULL"
+            ).fetchone()["c"]
+        return {
+            "users": users,
+            "activeMembers": active,
+            "freeUsers": max(0, users - active),
+            "totalCards": total_cards,
+            "usedCards": used_cards,
+            "availableCards": max(0, total_cards - used_cards),
+        }
+
+    @app.get("/api/admin/users")
+    def admin_users(x_admin_token: str | None = Header(default=None)):
+        require_admin(x_admin_token)
+        now = utc_now()
+        with active_database().connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT u.email, u.display_name, u.created_at,
+                       s.plan_name, s.activated_at, s.expires_at
+                FROM users u
+                LEFT JOIN subscriptions s ON s.user_email = u.email
+                ORDER BY u.created_at DESC
+                """
+            ).fetchall()
+        users = []
+        for row in rows:
+            expires_at = row_datetime(row["expires_at"]) if row["expires_at"] else None
+            is_active = bool(expires_at and expires_at > now)
+            users.append(
+                {
+                    "email": row["email"],
+                    "displayName": row["display_name"],
+                    "createdAt": iso(row_datetime(row["created_at"])),
+                    "level": row["plan_name"] if is_active else "Free",
+                    "planName": row["plan_name"],
+                    "activatedAt": iso(row_datetime(row["activated_at"]))
+                    if row["activated_at"]
+                    else None,
+                    "expiresAt": iso(expires_at) if expires_at else None,
+                    "remainingDays": max(0, (expires_at - now).days) if is_active else 0,
+                    "isActive": is_active,
+                }
+            )
+        return {"users": users, "count": len(users)}
+
+    @app.get("/api/admin/cards")
+    def admin_cards(
+        x_admin_token: str | None = Header(default=None),
+        status: str | None = None,
+    ):
+        require_admin(x_admin_token)
+        clause = ""
+        if status == "used":
+            clause = "WHERE redeemed_by IS NOT NULL"
+        elif status == "available":
+            clause = "WHERE redeemed_by IS NULL"
+        with active_database().connect() as connection:
+            rows = connection.execute(
+                f"""
+                SELECT code, plan_name, days, redeemed_by, redeemed_at
+                FROM card_codes
+                {clause}
+                ORDER BY (redeemed_by IS NOT NULL), redeemed_at DESC NULLS LAST, code
+                """
+            ).fetchall()
+        cards = [
+            {
+                "code": row["code"],
+                "planName": row["plan_name"],
+                "days": row["days"],
+                "status": "used" if row["redeemed_by"] else "available",
+                "redeemedBy": row["redeemed_by"],
+                "redeemedAt": iso(row_datetime(row["redeemed_at"]))
+                if row["redeemed_at"]
+                else None,
+            }
+            for row in rows
+        ]
+        return {"cards": cards, "count": len(cards)}
+
+    @app.post("/api/admin/cards/generate")
+    def admin_generate_cards(
+        request: GenerateCardsRequest,
+        x_admin_token: str | None = Header(default=None),
+    ):
+        require_admin(x_admin_token)
+        created: list[str] = []
+        with active_database().connect() as connection:
+            attempts = 0
+            while len(created) < request.count and attempts < request.count * 20:
+                attempts += 1
+                code = generate_card_code(request.prefix)
+                inserted = connection.execute(
+                    """
+                    INSERT INTO card_codes (code, plan_name, days)
+                    VALUES (%s, %s, %s)
+                    ON CONFLICT (code) DO NOTHING
+                    RETURNING code
+                    """,
+                    (code, request.plan_name, request.days),
+                ).fetchone()
+                if inserted is not None:
+                    created.append(code)
+        return {
+            "created": created,
+            "count": len(created),
+            "planName": request.plan_name,
+            "days": request.days,
+        }
+
+    @app.delete("/api/admin/cards/{code}")
+    def admin_delete_card(
+        code: str,
+        x_admin_token: str | None = Header(default=None),
+    ):
+        require_admin(x_admin_token)
+        with active_database().connect() as connection:
+            row = connection.execute(
+                "SELECT redeemed_by FROM card_codes WHERE code = %s",
+                (code,),
+            ).fetchone()
+            if row is None:
+                raise HTTPException(status_code=404, detail="卡密不存在。")
+            if row["redeemed_by"]:
+                raise HTTPException(status_code=409, detail="已兑换的卡密不能删除。")
+            connection.execute("DELETE FROM card_codes WHERE code = %s", (code,))
+        return {"deleted": code}
 
     return app
 

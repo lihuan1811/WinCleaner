@@ -13,10 +13,25 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 
+# 会员套餐（卡种）与有效天数
+PLAN_TIERS = {
+    "体验卡": 3,
+    "周卡": 7,
+    "月卡": 30,
+    "季卡": 90,
+    "年卡": 365,
+}
+
+# 注册赠送的体验卡
+TRIAL_PLAN_NAME = "体验卡"
+TRIAL_DAYS = PLAN_TIERS[TRIAL_PLAN_NAME]
+
+# 离线兜底用的演示激活码（真实激活码由服务端管理后台生成）
 DEMO_CARD_CODES = {
-    "WINCLEANER-VIP-30D": ("专业会员", 30),
-    "WINCLEANER-VIP-365D": ("专业会员", 365),
-    "WINCLEANER-TEAM-365D": ("企业会员", 365),
+    "WINCLEANER-WEEK-DEMO": ("周卡", 7),
+    "WINCLEANER-MONTH-DEMO": ("月卡", 30),
+    "WINCLEANER-QUARTER-DEMO": ("季卡", 90),
+    "WINCLEANER-YEAR-DEMO": ("年卡", 365),
 }
 
 
@@ -163,12 +178,18 @@ class LocalAccountService:
         if self.user_by_email(store, email):
             raise AccountError("这个邮箱已经注册，请直接登录。")
 
+        now = self.now()
         user = {
             "email": email,
             "displayName": display_name,
             "passwordHash": self.hash_password(email, password),
-            "createdAt": self.iso(self.now()),
-            "subscription": None,
+            "createdAt": self.iso(now),
+            # 新账号赠送一次体验卡
+            "subscription": {
+                "planName": TRIAL_PLAN_NAME,
+                "activatedAt": self.iso(now),
+                "expiresAt": self.iso(now + timedelta(days=TRIAL_DAYS)),
+            },
             "redeemedCodes": [],
         }
         store["users"].append(user)
