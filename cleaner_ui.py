@@ -11,7 +11,7 @@ import subprocess
 import hashlib
 import datetime
 import re
-try:
+try: 
     import psutil
 except ImportError:  # pragma: no cover - optional runtime dependency
     psutil = None
