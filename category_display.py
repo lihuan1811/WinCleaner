@@ -69,6 +69,9 @@ CATEGORY_NAMES = {
     "winsxs_catalogs": "WinSxS Catalogs",
     "winsxs_onedrive_setup": "WinSxS OneDrive安装程序",
     "winsxs_component_store": "WinSxS组件存储",
+    # 专项清理
+    "wechat_special_clean": "微信专清",
+    "qq_special_clean": "QQ专清",
     # 大文件扫描
     "large_files": "大文件 (>100MB)",
 }

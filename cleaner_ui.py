@@ -480,6 +480,24 @@ QLabel#bxCardTitle {
     font-weight: 600;
 }
 
+QPushButton#bxCardTitleButton {
+    color: #0F2E2A;
+    font-size: 14px;
+    font-weight: 600;
+    background: transparent;
+    border: none;
+    padding: 2px 0;
+    text-align: left;
+}
+
+QPushButton#bxCardTitleButton:hover {
+    color: #0D9488;
+}
+
+QPushButton#bxCardTitleButton:checked {
+    color: #0D9488;
+}
+
 QLabel#bxCardWarning {
     color: #B8860B;
     font-size: 11px;
@@ -488,6 +506,32 @@ QLabel#bxCardWarning {
 QLabel#bxStateLabel {
     font-size: 12px;
     min-width: 64px;
+}
+
+QWidget#bxDetailBox {
+    background: transparent;
+}
+
+QLabel#bxDetailDesc {
+    color: #4A5B57;
+    font-size: 12px;
+}
+
+QFrame#bxRecommendBox {
+    background: #F1FAF8;
+    border: 1px solid #CDE9E3;
+    border-radius: 8px;
+}
+
+QLabel#bxRecommendTitle {
+    color: #0D9488;
+    font-size: 12px;
+    font-weight: 700;
+}
+
+QLabel#bxRecommendText {
+    color: #3C4D49;
+    font-size: 12px;
 }
 """
 
@@ -959,7 +1003,6 @@ class BXOptimizationThread(QThread):
 NAV_ITEMS = [
     ("C盘清理", "_build_clean_page"),
     ("系统优化", "_build_optimize_page"),
-    ("BX(优化)", "_build_bx_page"),
     ("软件卸载", "_build_uninstall_page"),
     ("文件管理", "_build_file_page"),
     ("系统修复", "_build_repair_page"),
@@ -1482,7 +1525,7 @@ class CleanerMainWindow(QMainWindow):
         header.setSpacing(5)
         page_title = QLabel("系统优化")
         page_title.setObjectName("pageTitle")
-        page_subtitle = QLabel("开机启动、运行内存、系统优化、隐私清理、注册表清理都在软件内查看和处理。")
+        page_subtitle = QLabel("开机启动、运行内存、系统优化(含 BX 一键优化)、隐私清理、N卡/A卡一键调优都在软件内查看和处理。")
         page_subtitle.setObjectName("pageSubtitle")
         page_subtitle.setWordWrap(True)
         header.addWidget(page_title)
@@ -1496,20 +1539,29 @@ class CleanerMainWindow(QMainWindow):
         tab_specs = [
             ("开机加速", ["启动项", "启动位置", "操作"], self.populate_startup_items()),
             ("运行内存", ["进程名称", "内存使用率", "CPU使用率", "操作"], self.populate_memory_items()),
-            ("系统优化", ["系统优化项", "操作"], self.populate_optimization_items()),
+            ("系统优化", None, None),  # BX 卡片式一键优化界面
             ("隐私清理", ["电脑隐私记录", "操作"], self.populate_privacy_items()),
-            ("注册表清理", ["注册表清理项", "操作"], self.populate_registry_items()),
+            ("N卡一键调优", ["NVIDIA 优化项", "操作"], self.populate_nvidia_items()),
+            ("A卡一键调优", ["AMD 优化项", "操作"], self.populate_amd_items()),
         ]
 
+        self.optimizer_bx_tab_index = -1
         for tab_name, headers, rows in tab_specs:
+            if tab_name == "系统优化":
+                bx_widget = self._build_bx_widget()
+                self.optimizer_bx_tab_index = self.optimizer_tabs.addTab(bx_widget, tab_name)
+                continue
             table = self._make_optimizer_table(headers)
             self.optimizer_tables[tab_name] = table
             self._populate_optimizer_table(table, rows)
             self.optimizer_tabs.addTab(table, tab_name)
 
+        self.optimizer_tabs.currentChanged.connect(self.on_optimizer_tab_changed)
         outer.addWidget(self.optimizer_tabs, 1)
 
-        action_bar = QHBoxLayout()
+        self.optimizer_action_bar = QWidget()
+        action_bar = QHBoxLayout(self.optimizer_action_bar)
+        action_bar.setContentsMargins(0, 0, 0, 0)
         action_bar.setSpacing(12)
         self.optimizer_select_all = QCheckBox("全选")
         self.optimizer_select_all.stateChanged.connect(self.set_current_optimizer_checked)
@@ -1530,33 +1582,29 @@ class CleanerMainWindow(QMainWindow):
         action_bar.addStretch(1)
         action_bar.addWidget(refresh_button)
         action_bar.addWidget(optimize_button)
-        outer.addLayout(action_bar)
+        outer.addWidget(self.optimizer_action_bar)
 
         self.optimizer_status_label = QLabel("准备处理系统优化项。")
         self.optimizer_status_label.setObjectName("statusLabel")
         outer.addWidget(self.optimizer_status_label)
 
+        self.on_optimizer_tab_changed(self.optimizer_tabs.currentIndex())
         return page
 
-    def _build_bx_page(self):
-        page = QWidget()
-        page.setObjectName("contentArea")
-        outer = QVBoxLayout(page)
-        outer.setContentsMargins(20, 18, 20, 18)
-        outer.setSpacing(12)
+    def on_optimizer_tab_changed(self, index):
+        """切到「系统优化」(BX 卡片界面)时隐藏共享操作栏，BX 有自己的预设与应用按钮。"""
+        if not hasattr(self, "optimizer_action_bar"):
+            return
+        is_bx = index == getattr(self, "optimizer_bx_tab_index", -1)
+        self.optimizer_action_bar.setVisible(not is_bx)
+        if hasattr(self, "optimizer_status_label"):
+            self.optimizer_status_label.setVisible(not is_bx)
 
-        header = QVBoxLayout()
-        header.setSpacing(5)
-        page_title = QLabel("BX(优化)")
-        page_title.setObjectName("pageTitle")
-        page_subtitle = QLabel("参考 BoosterX 的基础设置工作流，提供基本和最佳两个模式，直接在软件内应用 Windows 优化项。")
-        page_subtitle.setObjectName("pageSubtitle")
-        page_subtitle.setWordWrap(True)
-        header.addWidget(page_title)
-        header.addWidget(page_subtitle)
-        outer.addLayout(header)
-
-        body = QHBoxLayout()
+    def _build_bx_widget(self):
+        container = QWidget()
+        container.setObjectName("bxTabContainer")
+        body = QHBoxLayout(container)
+        body.setContentsMargins(0, 0, 0, 0)
         body.setSpacing(14)
 
         category_panel = QFrame()
@@ -1664,16 +1712,16 @@ class CleanerMainWindow(QMainWindow):
 
         body.addWidget(category_panel)
         body.addLayout(main_panel, 1)
-        outer.addLayout(body, 1)
 
         self.update_bx_mode_buttons()
         self.apply_bx_preset(self.bx_mode, refresh_only=False)
-        return page
+        return container
 
     def bx_category_order(self):
         return [
             "我的调整",
             "基础",
+            "系统维护",
             "安全性",
             "自定义",
             "Nvidia 面板",
@@ -1692,13 +1740,56 @@ class CleanerMainWindow(QMainWindow):
         ]
 
     def bx_catalog(self):
+        return self._bx_base_catalog() + self._bx_system_maintenance_items()
+
+    def _bx_system_maintenance_items(self):
+        """把原「系统优化」标签里的命令项合并成 BX 卡片，统一在系统优化里展示。"""
+        cached = getattr(self, "_bx_maintenance_cache", None)
+        if cached is not None:
+            return cached
+
+        items = []
+        seen_titles = set()
+        for row in self.populate_optimization_items():
+            command = row.get("command")
+            if not command:
+                continue
+            title = (row.get("columns") or ["系统优化项"])[0]
+            if title in seen_titles:
+                continue
+            seen_titles.add(title)
+            action = row.get("action", "优化")
+            target_state = "将被执行" if action == "执行" else "将被调整"
+            detail = ""
+            children = row.get("children") or []
+            if children:
+                detail_cols = children[0].get("columns") or []
+                if detail_cols:
+                    detail = str(detail_cols[0])
+            items.append({
+                "category": "系统维护",
+                "title": title,
+                "target_state": target_state,
+                "risk": "基础" if row.get("recommended", True) else "谨慎",
+                "description": detail or f"{title}。",
+                "command": command,
+                "icon_hint": row.get("icon_hint", "windows"),
+                "basic": bool(row.get("recommended", True)),
+                "best": True,
+            })
+
+        self._bx_maintenance_cache = items
+        return items
+
+    def _bx_base_catalog(self):
         return [
             {
                 "category": "基础",
                 "title": "鼠标加速",
                 "target_state": "将被禁用",
                 "risk": "基础",
-                "description": "关闭“增强指针精确度”，让鼠标移动更线性，适合游戏。",
+                "description": "移除鼠标指针的加速，保持严格的线性 1:1 鼠标移动。",
+                "recommend": "在任何竞技游戏中禁用；如果主要使用触控板，则保持默认。",
                 "command": (
                     r'reg add "HKCU\Control Panel\Mouse" /v MouseSpeed /t REG_SZ /d 0 /f & '
                     r'reg add "HKCU\Control Panel\Mouse" /v MouseThreshold1 /t REG_SZ /d 0 /f & '
@@ -1713,7 +1804,8 @@ class CleanerMainWindow(QMainWindow):
                 "title": "系统启动时自动更新驱动程序",
                 "target_state": "将被禁用",
                 "risk": "基础",
-                "description": "禁止 Windows 在启动时自动搜索并安装驱动。",
+                "description": "禁止 Windows 通过更新自动安装新版本的驱动程序。",
+                "recommend": "如果手动安装驱动程序或固定一个版本，请禁用；可避免更新有争议的驱动后的“突然”重启，并节省每月约 200MB 流量。",
                 "command": r'reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\DriverSearching" /v SearchOrderConfig /t REG_DWORD /d 0 /f',
                 "icon_hint": "driver",
                 "basic": True,
@@ -2030,37 +2122,53 @@ class CleanerMainWindow(QMainWindow):
         self.populate_bx_categories()
         self.update_bx_status()
 
+    def bx_item_recommend(self, item):
+        """返回展开卡片时显示的“推荐”文字：优先用条目自带，否则按风险生成默认。"""
+        if item.get("recommend"):
+            return item["recommend"]
+        if not item.get("command"):
+            return "安全相关项目，默认仅检查、不自动更改，避免降低系统防护。"
+        if item.get("risk") == "谨慎":
+            return "如无相关需求可开启；若你依赖该功能，请保持默认（关闭）。"
+        return "推荐在所选预设下开启；如遇到异常，可在此处关闭。"
+
     def _make_bx_card(self, item):
         card = QFrame()
         card.setObjectName("bxCard")
-        card_layout = QHBoxLayout(card)
-        card_layout.setContentsMargins(16, 12, 16, 12)
-        card_layout.setSpacing(12)
+        card_v = QVBoxLayout(card)
+        card_v.setContentsMargins(16, 10, 16, 10)
+        card_v.setSpacing(0)
+
+        header = QHBoxLayout()
+        header.setSpacing(12)
 
         icon_label = QLabel()
         icon = self.category_icon_for_name(item.get("icon_hint") or item["title"])
         if not icon.isNull():
             icon_label.setPixmap(icon.pixmap(22, 22))
         icon_label.setFixedWidth(26)
-        card_layout.addWidget(icon_label, 0, Qt.AlignVCenter)
+        header.addWidget(icon_label, 0, Qt.AlignVCenter)
 
         text_box = QVBoxLayout()
         text_box.setSpacing(2)
-        title_label = QLabel(f"{item['title']}  ⌄")
-        title_label.setObjectName("bxCardTitle")
-        title_label.setToolTip(item.get("description", ""))
-        text_box.addWidget(title_label)
+        # 用可点击按钮做标题，点击展开/收起详情。
+        title_button = QPushButton(f"{item['title']}  ⌄")
+        title_button.setObjectName("bxCardTitleButton")
+        title_button.setCursor(Qt.PointingHandCursor)
+        title_button.setCheckable(True)
+        title_button.setFlat(True)
+        text_box.addWidget(title_button, 0, Qt.AlignLeft)
         if item.get("warning"):
             warning_label = QLabel(f"⚠ {item['warning']}")
             warning_label.setObjectName("bxCardWarning")
             warning_label.setWordWrap(True)
             text_box.addWidget(warning_label)
-        card_layout.addLayout(text_box, 1)
+        header.addLayout(text_box, 1)
 
         state_label = QLabel()
         state_label.setObjectName("bxStateLabel")
         state_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        card_layout.addWidget(state_label, 0, Qt.AlignVCenter)
+        header.addWidget(state_label, 0, Qt.AlignVCenter)
 
         toggle = BXToggleSwitch()
         has_command = bool(item.get("command"))
@@ -2068,7 +2176,43 @@ class CleanerMainWindow(QMainWindow):
         toggle.toggled.connect(
             lambda checked, it=item, tg=toggle, sl=state_label: self._on_bx_toggle(it, tg, sl, checked)
         )
-        card_layout.addWidget(toggle, 0, Qt.AlignVCenter)
+        header.addWidget(toggle, 0, Qt.AlignVCenter)
+        card_v.addLayout(header)
+
+        # 展开详情区域：详细描述 + 推荐。
+        detail = QWidget()
+        detail.setObjectName("bxDetailBox")
+        detail_layout = QVBoxLayout(detail)
+        detail_layout.setContentsMargins(38, 8, 4, 4)
+        detail_layout.setSpacing(8)
+
+        desc_label = QLabel(item.get("description", ""))
+        desc_label.setObjectName("bxDetailDesc")
+        desc_label.setWordWrap(True)
+        detail_layout.addWidget(desc_label)
+
+        recommend_box = QFrame()
+        recommend_box.setObjectName("bxRecommendBox")
+        recommend_layout = QVBoxLayout(recommend_box)
+        recommend_layout.setContentsMargins(12, 8, 12, 8)
+        recommend_layout.setSpacing(3)
+        recommend_title = QLabel("推荐")
+        recommend_title.setObjectName("bxRecommendTitle")
+        recommend_text = QLabel(self.bx_item_recommend(item))
+        recommend_text.setObjectName("bxRecommendText")
+        recommend_text.setWordWrap(True)
+        recommend_layout.addWidget(recommend_title)
+        recommend_layout.addWidget(recommend_text)
+        detail_layout.addWidget(recommend_box)
+
+        detail.setVisible(False)
+        card_v.addWidget(detail)
+
+        def _toggle_detail(checked, btn=title_button, dt=detail, it=item):
+            dt.setVisible(checked)
+            btn.setText(f"{it['title']}  {'⌃' if checked else '⌄'}")
+
+        title_button.toggled.connect(_toggle_detail)
 
         self._bx_apply_row_visual(item, toggle, state_label)
         self.bx_rows.append({"item": item, "toggle": toggle, "state_label": state_label})
@@ -2188,6 +2332,8 @@ class CleanerMainWindow(QMainWindow):
 
         toolbar = QHBoxLayout()
         toolbar.setSpacing(10)
+        self.uninstall_select_all = QCheckBox("全选")
+        self.uninstall_select_all.stateChanged.connect(self.toggle_all_uninstall_checks)
         reload_button = QPushButton("刷新列表")
         reload_button.setObjectName("cleanSecondaryButton")
         reload_button.setMinimumWidth(96)
@@ -2196,6 +2342,7 @@ class CleanerMainWindow(QMainWindow):
         uninstall_button.setObjectName("scanPrimaryButton")
         uninstall_button.setMinimumWidth(96)
         uninstall_button.clicked.connect(self.uninstall_selected_app)
+        toolbar.addWidget(self.uninstall_select_all)
         toolbar.addStretch(1)
         toolbar.addWidget(reload_button)
         toolbar.addWidget(uninstall_button)
@@ -2203,22 +2350,25 @@ class CleanerMainWindow(QMainWindow):
 
         self.uninstall_table = QTableWidget()
         self.uninstall_table.setObjectName("uninstallTable")
-        self.uninstall_table.setColumnCount(5)
-        self.uninstall_table.setHorizontalHeaderLabels(["软件名称", "发布者", "版本", "安装位置", "操作"])
+        self.uninstall_table.setColumnCount(6)
+        self.uninstall_table.setHorizontalHeaderLabels(["选择", "软件名称", "发布者", "版本", "安装位置", "操作"])
         self.uninstall_table.verticalHeader().setVisible(False)
         self.uninstall_table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.uninstall_table.setSelectionMode(QAbstractItemView.SingleSelection)
         self.uninstall_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.uninstall_table.setAlternatingRowColors(True)
         self.uninstall_table.setIconSize(QSize(20, 20))
+        self.uninstall_table.itemChanged.connect(self.on_uninstall_item_changed)
         header_view = self.uninstall_table.horizontalHeader()
-        header_view.setMinimumSectionSize(86)
-        header_view.setSectionResizeMode(0, QHeaderView.Stretch)
-        header_view.setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        header_view.setMinimumSectionSize(46)
+        header_view.setSectionResizeMode(0, QHeaderView.Fixed)
+        header_view.setSectionResizeMode(1, QHeaderView.Stretch)
         header_view.setSectionResizeMode(2, QHeaderView.ResizeToContents)
-        header_view.setSectionResizeMode(3, QHeaderView.Stretch)
-        header_view.setSectionResizeMode(4, QHeaderView.Fixed)
-        self.uninstall_table.setColumnWidth(4, 96)
+        header_view.setSectionResizeMode(3, QHeaderView.ResizeToContents)
+        header_view.setSectionResizeMode(4, QHeaderView.Stretch)
+        header_view.setSectionResizeMode(5, QHeaderView.Fixed)
+        self.uninstall_table.setColumnWidth(0, 52)
+        self.uninstall_table.setColumnWidth(5, 96)
         outer.addWidget(self.uninstall_table, 1)
 
         self.uninstall_status_label = QLabel("正在读取软件列表...")
@@ -3539,8 +3689,15 @@ class CleanerMainWindow(QMainWindow):
             })
         return rows
 
+    def current_optimizer_table(self):
+        """返回当前标签页对应的表格；BX 卡片界面没有表格时返回 None。"""
+        widget = self.optimizer_tabs.currentWidget()
+        if widget in self.optimizer_tables.values():
+            return widget
+        return None
+
     def set_current_optimizer_checked(self, state):
-        table = self.optimizer_tabs.currentWidget()
+        table = self.current_optimizer_table()
         if not table:
             return
         check_state = Qt.Checked if state == Qt.Checked else Qt.Unchecked
@@ -3549,7 +3706,7 @@ class CleanerMainWindow(QMainWindow):
                 item.setCheckState(0, check_state)
 
     def apply_optimizer_recommended_filter(self, state):
-        table = self.optimizer_tabs.currentWidget()
+        table = self.current_optimizer_table()
         if not table or state != Qt.Checked:
             return
         for item in self.optimizer_top_level_items(table):
@@ -3558,7 +3715,7 @@ class CleanerMainWindow(QMainWindow):
                 item.setCheckState(0, Qt.Checked if payload.get("recommended", True) else Qt.Unchecked)
 
     def selected_optimizer_rows(self):
-        table = self.optimizer_tabs.currentWidget()
+        table = self.current_optimizer_table()
         if not table:
             return []
         rows = []
@@ -3569,6 +3726,153 @@ class CleanerMainWindow(QMainWindow):
                     rows.append(payload)
         return rows
 
+    def _gpu_common_tuning_rows(self):
+        """N/A 卡通用的游戏向优化项（对两家显卡都适用且相对安全）。"""
+        return [
+            {
+                "columns": ["启用硬件加速 GPU 调度 (HAGS)"],
+                "icon_hint": "nvidia",
+                "action": "优化",
+                "action_type": "command",
+                "command": r'reg add "HKLM\SYSTEM\CurrentControlSet\Control\GraphicsDrivers" /v HwSchMode /t REG_DWORD /d 2 /f',
+                "recommended": True,
+                "children": self.optimizer_detail_children(
+                    [r"HKLM\SYSTEM\CurrentControlSet\Control\GraphicsDrivers\HwSchMode = 2", "重启后生效"],
+                    2, icon_hint="registry",
+                ),
+            },
+            {
+                "columns": ["关闭全屏优化 (FSO)"],
+                "icon_hint": "game",
+                "action": "优化",
+                "action_type": "command",
+                "command": r'reg add "HKCU\System\GameConfigStore" /v GameDVR_FSEBehaviorMode /t REG_DWORD /d 2 /f',
+                "recommended": True,
+                "children": self.optimizer_detail_children(
+                    [r"HKCU\System\GameConfigStore\GameDVR_FSEBehaviorMode = 2"],
+                    2, icon_hint="registry",
+                ),
+            },
+            {
+                "columns": ["关闭 Game DVR 后台录制"],
+                "icon_hint": "game",
+                "action": "优化",
+                "action_type": "command",
+                "command": (
+                    r'reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\GameDVR" /v AppCaptureEnabled /t REG_DWORD /d 0 /f & '
+                    r'reg add "HKCU\System\GameConfigStore" /v GameDVR_Enabled /t REG_DWORD /d 0 /f'
+                ),
+                "recommended": True,
+                "children": self.optimizer_detail_children(
+                    ["GameDVR\\AppCaptureEnabled = 0", "GameConfigStore\\GameDVR_Enabled = 0"],
+                    2, icon_hint="registry",
+                ),
+            },
+            {
+                "columns": ["开启 Windows 游戏模式"],
+                "icon_hint": "game",
+                "action": "优化",
+                "action_type": "command",
+                "command": r'reg add "HKCU\Software\Microsoft\GameBar" /v AutoGameModeEnabled /t REG_DWORD /d 1 /f',
+                "recommended": True,
+                "children": self.optimizer_detail_children(
+                    [r"HKCU\Software\Microsoft\GameBar\AutoGameModeEnabled = 1"],
+                    2, icon_hint="registry",
+                ),
+            },
+            {
+                "columns": ["增大显卡驱动超时时间 (TdrDelay)"],
+                "icon_hint": "nvidia",
+                "action": "优化",
+                "action_type": "command",
+                "command": r'reg add "HKLM\SYSTEM\CurrentControlSet\Control\GraphicsDrivers" /v TdrDelay /t REG_DWORD /d 10 /f',
+                "recommended": False,
+                "children": self.optimizer_detail_children(
+                    [r"HKLM\SYSTEM\CurrentControlSet\Control\GraphicsDrivers\TdrDelay = 10", "减少高负载下的驱动重置"],
+                    2, icon_hint="registry",
+                ),
+            },
+        ]
+
+    def populate_nvidia_items(self):
+        """N卡一键调优：NVIDIA 专属 + 通用游戏向优化项（Windows 上真实执行）。"""
+        rows = [
+            {
+                "columns": ["禁用 NVIDIA 遥测服务"],
+                "icon_hint": "nvidia",
+                "action": "优化",
+                "action_type": "command",
+                "command": r'cmd /c "sc stop NvTelemetryContainer & sc config NvTelemetryContainer start= disabled"',
+                "recommended": True,
+                "children": self.optimizer_detail_children(
+                    ["sc stop NvTelemetryContainer", "sc config NvTelemetryContainer start= disabled"],
+                    2, icon_hint="cmd",
+                ),
+            },
+            {
+                "columns": ["禁用 NVIDIA 遥测计划任务"],
+                "icon_hint": "nvidia",
+                "action": "优化",
+                "action_type": "command",
+                "command": (
+                    r'cmd /c "schtasks /Change /DISABLE /TN NvTmRep_CrashReport1_{B2FE1952-0186-46C3-BAEC-A80AA35AC5B8} & '
+                    r'schtasks /Change /DISABLE /TN NvTmRep_CrashReport2_{B2FE1952-0186-46C3-BAEC-A80AA35AC5B8} & '
+                    r'schtasks /Change /DISABLE /TN NvTmRep_CrashReport3_{B2FE1952-0186-46C3-BAEC-A80AA35AC5B8} & '
+                    r'schtasks /Change /DISABLE /TN NvTmRep_CrashReport4_{B2FE1952-0186-46C3-BAEC-A80AA35AC5B8}"'
+                ),
+                "recommended": True,
+                "children": self.optimizer_detail_children(
+                    ["schtasks /Change /DISABLE /TN NvTmRep_CrashReport*"],
+                    2, icon_hint="cmd",
+                ),
+            },
+            {
+                "columns": ["NVIDIA 电源管理设为最高性能"],
+                "icon_hint": "nvidia",
+                "action": "优化",
+                "action_type": "command",
+                "command": r'reg add "HKLM\SYSTEM\CurrentControlSet\Services\nvlddmkm\Global\NVTweak" /v DisplayPowerSaving /t REG_DWORD /d 0 /f',
+                "recommended": False,
+                "children": self.optimizer_detail_children(
+                    [r"nvlddmkm\Global\NVTweak\DisplayPowerSaving = 0", "关闭显卡节能，偏向性能"],
+                    2, icon_hint="registry",
+                ),
+            },
+        ]
+        rows.extend(self._gpu_common_tuning_rows())
+        return rows
+
+    def populate_amd_items(self):
+        """A卡一键调优：AMD 专属 + 通用游戏向优化项（Windows 上真实执行）。"""
+        rows = [
+            {
+                "columns": ["禁用 AMD ULPS 超低功耗状态"],
+                "icon_hint": "driver",
+                "action": "优化",
+                "action_type": "command",
+                "command": r'reg add "HKLM\SYSTEM\CurrentControlSet\Control\Class\{4d36e968-e325-11ce-bfc1-08002be10318}\0000" /v EnableUlps /t REG_DWORD /d 0 /f',
+                "recommended": True,
+                "children": self.optimizer_detail_children(
+                    [r"Class\{4d36e968-...}\0000\EnableUlps = 0", "减少显卡频繁降频，提升稳定性"],
+                    2, icon_hint="registry",
+                ),
+            },
+            {
+                "columns": ["禁用 AMD 用户体验遥测计划任务"],
+                "icon_hint": "driver",
+                "action": "优化",
+                "action_type": "command",
+                "command": r'cmd /c "schtasks /Change /DISABLE /TN \"StartCN\" & schtasks /Change /DISABLE /TN \"AMD Notifications\ SoftwareUpdate\""',
+                "recommended": False,
+                "children": self.optimizer_detail_children(
+                    ["schtasks /Change /DISABLE /TN StartCN", "schtasks /Change /DISABLE /TN 'AMD Notifications SoftwareUpdate'"],
+                    2, icon_hint="cmd",
+                ),
+            },
+        ]
+        rows.extend(self._gpu_common_tuning_rows())
+        return rows
+
     def refresh_optimizer_tab(self):
         tab_name = self.optimizer_tabs.tabText(self.optimizer_tabs.currentIndex())
         loaders = {
@@ -3576,7 +3880,8 @@ class CleanerMainWindow(QMainWindow):
             "运行内存": self.populate_memory_items,
             "系统优化": self.populate_optimization_items,
             "隐私清理": self.populate_privacy_items,
-            "注册表清理": self.populate_registry_items,
+            "N卡一键调优": self.populate_nvidia_items,
+            "A卡一键调优": self.populate_amd_items,
         }
         table = self.optimizer_tables.get(tab_name)
         loader = loaders.get(tab_name)
@@ -4398,19 +4703,29 @@ class CleanerMainWindow(QMainWindow):
         if not hasattr(self, "uninstall_table"):
             return
 
+        self.uninstall_table.blockSignals(True)
         self.uninstall_table.setRowCount(0)
         for row_index, app in enumerate(apps):
             self.uninstall_table.insertRow(row_index)
+
+            check_item = QTableWidgetItem()
+            check_item.setFlags(
+                (Qt.ItemIsUserCheckable | Qt.ItemIsEnabled | Qt.ItemIsSelectable)
+            )
+            check_item.setCheckState(Qt.Unchecked)
+            check_item.setTextAlignment(Qt.AlignCenter)
+            check_item.setData(Qt.UserRole, app)
+            self.uninstall_table.setItem(row_index, 0, check_item)
 
             name_item = QTableWidgetItem(app.get("name", ""))
             icon = self.icon_for_installed_app(app)
             if not icon.isNull():
                 name_item.setIcon(icon)
             name_item.setData(Qt.UserRole, app)
-            self.uninstall_table.setItem(row_index, 0, name_item)
-            self.uninstall_table.setItem(row_index, 1, QTableWidgetItem(app.get("publisher", "")))
-            self.uninstall_table.setItem(row_index, 2, QTableWidgetItem(app.get("version", "")))
-            self.uninstall_table.setItem(row_index, 3, QTableWidgetItem(app.get("install_location", "")))
+            self.uninstall_table.setItem(row_index, 1, name_item)
+            self.uninstall_table.setItem(row_index, 2, QTableWidgetItem(app.get("publisher", "")))
+            self.uninstall_table.setItem(row_index, 3, QTableWidgetItem(app.get("version", "")))
+            self.uninstall_table.setItem(row_index, 4, QTableWidgetItem(app.get("install_location", "")))
 
             uninstall_button = QPushButton("卸载")
             uninstall_button.setObjectName("miniActionButton")
@@ -4419,11 +4734,17 @@ class CleanerMainWindow(QMainWindow):
             uninstall_button.clicked.connect(
                 lambda _checked=False, target=dict(app): self.run_uninstall_command(target)
             )
-            self.uninstall_table.setCellWidget(row_index, 4, uninstall_button)
+            self.uninstall_table.setCellWidget(row_index, 5, uninstall_button)
             self.uninstall_table.setRowHeight(row_index, 34)
 
+        self.uninstall_table.blockSignals(False)
+        if hasattr(self, "uninstall_select_all"):
+            self.uninstall_select_all.blockSignals(True)
+            self.uninstall_select_all.setChecked(False)
+            self.uninstall_select_all.blockSignals(False)
+
         if apps:
-            self.uninstall_status_label.setText(f"已读取 {len(apps)} 个已安装软件。")
+            self.uninstall_status_label.setText(f"已读取 {len(apps)} 个已安装软件。勾选后可批量卸载。")
         else:
             message = "当前环境未读取到软件列表；Windows 上会读取卸载注册表。"
             self.uninstall_status_label.setText(message)
@@ -4513,15 +4834,113 @@ class CleanerMainWindow(QMainWindow):
             return command.split('"', 2)[1] if '"' in command[1:] else command.strip('"')
         return command.split(" ", 1)[0]
 
-    def uninstall_selected_app(self):
-        row = self.uninstall_table.currentRow()
-        if row < 0:
-            QMessageBox.information(self, "软件卸载", "请先在列表中选择一个软件。")
+    def toggle_all_uninstall_checks(self, state):
+        """顶部“全选”联动整张卸载列表的复选框。"""
+        if not hasattr(self, "uninstall_table"):
             return
-        item = self.uninstall_table.item(row, 0)
-        app = item.data(Qt.UserRole) if item else None
-        if app:
-            self.run_uninstall_command(app)
+        target = Qt.Checked if state == Qt.Checked else Qt.Unchecked
+        self.uninstall_table.blockSignals(True)
+        for row in range(self.uninstall_table.rowCount()):
+            check_item = self.uninstall_table.item(row, 0)
+            if check_item is not None:
+                check_item.setCheckState(target)
+        self.uninstall_table.blockSignals(False)
+        self.update_uninstall_selection_status()
+
+    def on_uninstall_item_changed(self, item):
+        if item is None or item.column() != 0:
+            return
+        self.sync_uninstall_select_all()
+        self.update_uninstall_selection_status()
+
+    def sync_uninstall_select_all(self):
+        """根据每行勾选状态回写顶部“全选”复选框（不触发联动）。"""
+        if not hasattr(self, "uninstall_select_all"):
+            return
+        total = self.uninstall_table.rowCount()
+        checked = len(self.checked_uninstall_apps())
+        self.uninstall_select_all.blockSignals(True)
+        self.uninstall_select_all.setChecked(total > 0 and checked == total)
+        self.uninstall_select_all.blockSignals(False)
+
+    def checked_uninstall_apps(self):
+        apps = []
+        if not hasattr(self, "uninstall_table"):
+            return apps
+        for row in range(self.uninstall_table.rowCount()):
+            check_item = self.uninstall_table.item(row, 0)
+            if check_item is not None and check_item.checkState() == Qt.Checked:
+                app = check_item.data(Qt.UserRole)
+                if app:
+                    apps.append(app)
+        return apps
+
+    def update_uninstall_selection_status(self):
+        if not hasattr(self, "uninstall_status_label"):
+            return
+        count = len(self.checked_uninstall_apps())
+        if count:
+            self.uninstall_status_label.setText(f"已勾选 {count} 个软件，点击“卸载选中”批量卸载。")
+
+    def uninstall_selected_app(self):
+        apps = self.checked_uninstall_apps()
+        if not apps:
+            row = self.uninstall_table.currentRow()
+            if row >= 0:
+                item = self.uninstall_table.item(row, 1) or self.uninstall_table.item(row, 0)
+                app = item.data(Qt.UserRole) if item else None
+                if app:
+                    apps = [app]
+        if not apps:
+            QMessageBox.information(self, "软件卸载", "请先勾选需要卸载的软件。")
+            return
+
+        if len(apps) == 1:
+            self.run_uninstall_command(apps[0])
+            return
+
+        names = "\n".join(f"· {app.get('name', '')}" for app in apps)
+        answer = QMessageBox.question(
+            self,
+            "批量卸载",
+            f"确定依次卸载以下 {len(apps)} 个软件吗？\n\n{names}\n\n将逐个调用各自的卸载程序。",
+            QMessageBox.Yes | QMessageBox.No,
+        )
+        if answer != QMessageBox.Yes:
+            return
+
+        launched = 0
+        skipped = []
+        for app in apps:
+            if self._launch_uninstall(app):
+                launched += 1
+            else:
+                skipped.append(app.get("name", ""))
+
+        if not sys.platform.startswith("win"):
+            QMessageBox.information(self, "软件卸载", f"以下命令将在 Windows 上依次执行，共 {len(apps)} 个。")
+            return
+
+        message = f"已启动 {launched} 个卸载程序，完成后将自动刷新列表。"
+        if skipped:
+            message += f" 跳过 {len(skipped)} 个（无可用卸载命令）。"
+        self.uninstall_status_label.setText(message)
+        QTimer.singleShot(4000, lambda: self.load_installed_apps(show_message=False))
+        QTimer.singleShot(12000, lambda: self.load_installed_apps(show_message=False))
+
+    def _launch_uninstall(self, app):
+        """执行单个软件的卸载命令（不再单独确认，供批量卸载复用）。"""
+        command = app.get("quiet_uninstall") or app.get("uninstall")
+        if not command:
+            return False
+        command = self.normalize_uninstall_command(command)
+        if not sys.platform.startswith("win"):
+            return True
+        try:
+            subprocess.Popen(command, shell=True)
+            return True
+        except Exception:  # pragma: no cover - Windows shell dependent
+            return False
 
     def run_uninstall_command(self, app):
         command = app.get("quiet_uninstall") or app.get("uninstall")
@@ -5549,6 +5968,41 @@ class CleanerMainWindow(QMainWindow):
         self.results_tree.blockSignals(False)
         self.results_tree.setUpdatesEnabled(True)
 
+    def remove_cleaned_items_from_tree(self, cleaned_paths):
+        """清理后不再整棵重新扫描，只把已清理/已消失的行从树里去掉。"""
+        if not hasattr(self, "results_tree"):
+            return
+        cleaned = set()
+        for path in cleaned_paths or []:
+            try:
+                cleaned.add(os.path.normcase(os.path.abspath(path)))
+            except Exception:
+                pass
+
+        self.results_tree.setUpdatesEnabled(False)
+        self.results_tree.blockSignals(True)
+        try:
+            for i in range(self.results_tree.topLevelItemCount() - 1, -1, -1):
+                category_item = self.results_tree.topLevelItem(i)
+                for j in range(category_item.childCount() - 1, -1, -1):
+                    child = category_item.child(j)
+                    data = child.data(0, Qt.UserRole) or {}
+                    path = data.get("path", "")
+                    if not path:
+                        continue
+                    try:
+                        norm = os.path.normcase(os.path.abspath(path))
+                    except Exception:
+                        norm = ""
+                    if norm in cleaned or not os.path.exists(path):
+                        category_item.removeChild(child)
+                if category_item.childCount() == 0:
+                    self.results_tree.takeTopLevelItem(i)
+        finally:
+            self.results_tree.blockSignals(False)
+            self.results_tree.setUpdatesEnabled(True)
+        self.update_selected_items()
+
     def uncheck_items_outside_current_mode(self):
         self.results_tree.setUpdatesEnabled(False)
         self.results_tree.blockSignals(True)
@@ -5773,10 +6227,9 @@ class CleanerMainWindow(QMainWindow):
             error_msg.setDetailedText(error_details)
             error_msg.exec_()
         
-        # 更新磁盘信息；真实清理后重新扫描，避免树里残留已删除路径。
+        # 只更新磁盘信息，不自动重新扫描（用户如需刷新可手动点“重新扫描”）。
         self.update_disk_info()
-        self.status_label.setText(f"{message}，正在重新扫描...")
-        self.start_scan()
+        self.remove_cleaned_items_from_tree(results.get("cleaned_items", []))
 
     def on_clean_error(self, message):
         """清理线程异常回传。"""

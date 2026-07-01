@@ -143,6 +143,9 @@ class CleanerLogic:
         local_app_data = os.environ.get('LOCALAPPDATA') or cls._win_join(
             user_profile, 'AppData', 'Local'
         )
+        app_data = os.environ.get('APPDATA') or cls._win_join(
+            user_profile, 'AppData', 'Roaming'
+        )
         local_low_app_data = cls._win_join(user_profile, 'AppData', 'LocalLow')
         program_data = os.environ.get('ProgramData') or r'C:\ProgramData'
         program_files = os.environ.get('ProgramFiles') or r'C:\Program Files'
@@ -362,7 +365,91 @@ class CleanerLogic:
                 [cls._win_join(system_root, 'WinSxS')],
                 path_contains=[r'\amd64_', r'\wow64_', r'\x86_'],
             ),
+            target(
+                'wechat_special_clean',
+                cls._resolve_account_cache_dirs(
+                    [
+                        cls._win_join(user_profile, 'Documents', 'WeChat Files'),
+                        cls._win_join(user_profile, 'Documents', 'xwechat_files'),
+                        cls._win_join(user_profile, 'Documents', 'WXWork'),
+                        cls._win_join(local_app_data, 'Tencent', 'WeChat'),
+                        cls._win_join(app_data, 'Tencent', 'WeChat'),
+                    ],
+                    [
+                        r'FileStorage\Cache',
+                        r'FileStorage\Temp',
+                        r'FileStorage\Image',
+                        r'FileStorage\Video',
+                        r'FileStorage\File',
+                        r'FileStorage\Applet',
+                        'Cache',
+                        'cache',
+                    ],
+                ),
+                scan_only=False,
+            ),
+            target(
+                'qq_special_clean',
+                cls._resolve_account_cache_dirs(
+                    [
+                        cls._win_join(user_profile, 'Documents', 'Tencent Files'),
+                        cls._win_join(app_data, 'Tencent', 'QQ'),
+                        cls._win_join(local_app_data, 'Tencent', 'QQ'),
+                        cls._win_join(local_app_data, 'Tencent', 'QQNT'),
+                    ],
+                    [
+                        'Image', 'image',
+                        'Video', 'video',
+                        'ShortVideo', 'shortvideo',
+                        'FileRecv', 'filerecv',
+                        'Cache', 'cache',
+                        'Temp', 'temp',
+                    ],
+                ),
+                scan_only=False,
+            ),
         ]
+
+    @classmethod
+    def _resolve_account_cache_dirs(cls, base_dirs, sub_dirs):
+        """把“基目录 + 账号子目录 + 缓存子目录”解析成实际存在的缓存文件夹。
+
+        微信/QQ 的缓存位于以账号(如 wxid_xxx / QQ号)命名的动态目录下，运行时用
+        glob 展开这些账号目录，返回真实存在的缓存目录，供“专清”按目录聚合清理。
+        """
+        resolved = []
+        seen = set()
+
+        def add(candidate):
+            if not candidate:
+                return
+            try:
+                if os.path.isdir(candidate):
+                    key = os.path.normcase(os.path.abspath(candidate))
+                    if key not in seen:
+                        seen.add(key)
+                        resolved.append(candidate)
+            except OSError:
+                pass
+
+        for base in base_dirs:
+            if not base or not os.path.isdir(base):
+                continue
+            # 基目录下直接命中的缓存目录
+            for sub in sub_dirs:
+                add(cls._win_join(base, *sub.split('\\')))
+            # 每个账号子目录下的缓存目录
+            try:
+                accounts = glob.glob(os.path.join(base, '*'))
+            except OSError:
+                accounts = []
+            for account in accounts:
+                if not os.path.isdir(account):
+                    continue
+                for sub in sub_dirs:
+                    add(cls._win_join(account, *sub.split('\\')))
+
+        return resolved
 
     def get_disk_info(self):
         """获取C盘信息"""

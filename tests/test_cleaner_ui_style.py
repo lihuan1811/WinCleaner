@@ -143,12 +143,14 @@ def test_qt_system_optimizer_matches_tabbed_internal_tooling():
     assert "运行内存" in source
     assert "系统优化" in source
     assert "隐私清理" in source
-    assert "注册表清理" in source
+    assert "N卡一键调优" in source
+    assert "A卡一键调优" in source
     assert "populate_startup_items" in source
     assert "populate_memory_items" in source
     assert "populate_optimization_items" in source
     assert "populate_privacy_items" in source
-    assert "populate_registry_items" in source
+    assert "populate_nvidia_items" in source
+    assert "populate_amd_items" in source
     assert "一键优化" in source
 
 
@@ -231,8 +233,10 @@ def test_qt_uses_lightweight_opacity_animations():
 def test_qt_sidebar_has_bx_optimization_module():
     source = Path("cleaner_ui.py").read_text(encoding="utf-8")
 
-    assert '("BX(优化)", "_build_bx_page")' in source
-    assert "def _build_bx_page" in source
+    # BX 优化已合并进「系统优化」页的「系统优化」标签，不再是独立侧边栏页
+    assert '("BX(优化)", "_build_bx_page")' not in source
+    assert "def _build_bx_widget" in source
+    assert "self.optimizer_bx_tab_index" in source
     assert "self.bx_mode" in source
     assert "self.bx_active_category" in source
     assert "def page_index_for_label" in source
@@ -309,14 +313,14 @@ def test_qt_bx_best_preset_is_superset_of_basic():
     catalog_fn = next(
         node
         for node in ast.walk(tree)
-        if isinstance(node, ast.FunctionDef) and node.name == "bx_catalog"
+        if isinstance(node, ast.FunctionDef) and node.name == "_bx_base_catalog"
     )
     list_node = next(
         stmt.value for stmt in catalog_fn.body if isinstance(stmt, ast.Return)
     )
     items = [ast.literal_eval(element) for element in list_node.elts]
 
-    assert items, "bx_catalog 不应为空"
+    assert items, "_bx_base_catalog 不应为空"
     for item in items:
         if item.get("basic"):
             assert item.get("best"), f"基本项 {item['title']} 必须也属于最佳预设"
