@@ -466,10 +466,11 @@ def test_qt_file_manager_opens_without_autoscan_and_has_drive_picker():
     select_body = source.split("def select_file_scan_root(", 1)[1].split("\n    def ", 1)[0]
     assert "DriveSelectDialog" in select_body
 
-    # 切换标签不再自动扫描，避免打开卡顿
+    # 切换标签不再自动做重型文件扫描（文件夹/大文件/重复），避免打开卡顿
     tab_body = source.split("def on_file_tab_changed(", 1)[1].split("\n    def ", 1)[0]
     assert "scan_folder_usage" not in tab_body
-    assert "refresh_migration_folders" not in tab_body
+    # 但“文件迁移”标签首次打开会自动列出个人文件夹（后台线程），属预期行为
+    assert "refresh_migration_folders" in tab_body
 
 
 def test_qt_has_system_repair_module_page():
