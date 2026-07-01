@@ -163,6 +163,10 @@ def test_qt_uninstaller_is_in_app_table():
     assert "QuietUninstallString" in source
     assert "UninstallString" in source
     assert "QTableWidget" in source
+    assert "安装日期" in source
+    assert "EstimatedSize" in source
+    assert "on_uninstall_header_clicked" in source
+    assert "render_uninstall_table" in source
 
 
 def test_qt_file_manager_uses_in_app_tables():
@@ -344,9 +348,12 @@ def test_qt_has_in_app_account_login_register_and_card_redeem():
     source = Path("cleaner_ui.py").read_text(encoding="utf-8")
 
     assert '("账号会员", "_build_account_page")' in source
+    assert "class AccountAuthDialog" in source
+    assert "show_account_auth_dialog" in source
     assert "LocalAccountService" in source
     assert "self.account_email_input" in source
     assert "self.account_password_input" in source
+    assert "self.register_name_input" in source
     assert "self.card_code_input" in source
     assert "register_account" in source
     assert "login_account" in source
@@ -404,6 +411,27 @@ def test_qt_has_file_migration_feature():
     assert "DEFAULT_MIGRATION_KEYS" in source
     for key in ["documents", "downloads", "pictures", "videos", "music"]:
         assert key in source
+
+    # 文件夹悬停提示（中文名+用途+清理建议）
+    assert "from folder_hints import folder_tooltip" in source
+    assert "folder_tooltip(dir_path)" in source
+
+
+def test_qt_file_manager_opens_without_autoscan_and_has_drive_picker():
+    source = Path("cleaner_ui.py").read_text(encoding="utf-8")
+
+    # 磁盘选择对话框
+    assert "class DriveSelectDialog" in source
+    assert "def list_system_drives" in source
+
+    # 选择目录使用磁盘选择对话框
+    select_body = source.split("def select_file_scan_root(", 1)[1].split("\n    def ", 1)[0]
+    assert "DriveSelectDialog" in select_body
+
+    # 切换标签不再自动扫描，避免打开卡顿
+    tab_body = source.split("def on_file_tab_changed(", 1)[1].split("\n    def ", 1)[0]
+    assert "scan_folder_usage" not in tab_body
+    assert "refresh_migration_folders" not in tab_body
 
 
 def test_qt_has_system_repair_module_page():

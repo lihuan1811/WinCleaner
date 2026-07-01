@@ -8,6 +8,7 @@ C盘清理工具 - 用户界面
 import os
 import sys
 import subprocess
+import shutil
 import hashlib
 import datetime
 import re
@@ -24,7 +25,7 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QH
                             QTableWidgetItem, QHeaderView, QAbstractItemView,
                             QFileIconProvider, QGraphicsOpacityEffect, QLineEdit,
                             QTextEdit, QAbstractButton, QStyledItemDelegate, QStyle,
-                            QMenu)
+                            QMenu, QDialog, QDialogButtonBox)
 from PyQt5.QtCore import (
     Qt, QThread, pyqtSignal, QSize, QFileInfo, QPropertyAnimation, QEasingCurve,
     QTimer, QRect
@@ -34,6 +35,7 @@ from PyQt5.QtGui import QIcon, QFont, QPixmap, QColor, QPainter
 from cleaner_logic import CleanerLogic
 from category_display import category_tree_label
 from file_migration import FileMigrationService, MigrationError
+from folder_hints import folder_tooltip
 from config import APP_NAME, ACCOUNT_API_BASE_URL, USE_REMOTE_ACCOUNT
 from local_account_service import AccountError, LocalAccountService
 from remote_account_service import RemoteAccountService
@@ -84,6 +86,190 @@ def hidden_windows_subprocess_kwargs():
         "creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0),
         "startupinfo": startupinfo,
     }
+
+
+def _windows_volume_label(root):
+    """获取 Windows 卷标（如“软件”“文档”），失败返回空串。"""
+    if not sys.platform.startswith("win"):
+        return ""
+    try:
+        import ctypes
+
+        buf = ctypes.create_unicode_buffer(261)
+        fs = ctypes.create_unicode_buffer(261)
+        ctypes.windll.kernel32.GetVolumeInformationW(
+            ctypes.c_wchar_p(root),
+            buf,
+            len(buf),
+            None,
+            None,
+            None,
+            fs,
+            len(fs),
+        )
+        return buf.value or ""
+    except Exception:
+        return ""
+
+
+def list_system_drives():
+    """列出磁盘分区及容量信息，用于目录选择对话框。
+
+    返回列表，元素为 {device, label, mountpoint, total, used, free, percent}。
+    """
+    drives = []
+    seen = set()
+
+    def add(mountpoint):
+        try:
+            root = os.path.abspath(mountpoint)
+        except Exception:
+            return
+        if root in seen or not os.path.exists(root):
+            return
+        try:
+            usage = shutil.disk_usage(root)
+        except OSError:
+            return
+        seen.add(root)
+        total = usage.total
+        used = usage.used
+        free = usage.free
+        percent = (used / total * 100) if total else 0
+        label = _windows_volume_label(root)
+        drives.append(
+            {
+                "device": root,
+                "label": label,
+                "mountpoint": root,
+                "total": total,
+                "used": used,
+                "free": free,
+                "percent": percent,
+            }
+        )
+
+    if psutil is not None:
+        try:
+            for part in psutil.disk_partitions(all=False):
+                add(part.mountpoint)
+        except Exception:
+            pass
+
+    if not drives:
+        if sys.platform.startswith("win"):
+            try:
+                import ctypes
+
+                bitmask = ctypes.windll.kernel32.GetLogicalDrives()
+                for i in range(26):
+                    if bitmask & (1 << i):
+                        add(f"{chr(65 + i)}:\\")
+            except Exception:
+                pass
+        else:
+            add("/")
+
+    return drives
+
+
+def _format_capacity(num_bytes):
+    value = float(num_bytes or 0)
+    for unit in ["B", "KB", "MB", "GB", "TB", "PB"]:
+        if value < 1024 or unit == "PB":
+            return f"{value:.1f} {unit}" if unit not in ("B", "KB") else f"{value:.0f} {unit}"
+        value /= 1024
+    return f"{value:.1f} PB"
+
+
+class DriveSelectDialog(QDialog):
+    """磁盘/目录选择对话框：列出各盘符的名称、总计、可用、已用占比。"""
+
+    def __init__(self, parent=None, current=""):
+        super().__init__(parent)
+        self.setWindowTitle("选择磁盘 / 目录")
+        self.resize(560, 360)
+        self.selected_path = ""
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(14, 14, 14, 14)
+        layout.setSpacing(10)
+
+        tip = QLabel("选择要扫描的磁盘（双击直接进入），或点击“浏览文件夹”选择具体目录。")
+        tip.setObjectName("pageSubtitle")
+        tip.setWordWrap(True)
+        layout.addWidget(tip)
+
+        self.table = QTableWidget(0, 4)
+        self.table.setObjectName("appTable")
+        self.table.setHorizontalHeaderLabels(["名称", "总计", "可用", "已用 / 总计"])
+        self.table.verticalHeader().setVisible(False)
+        self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.table.setSelectionMode(QAbstractItemView.SingleSelection)
+        header = self.table.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.Stretch)
+        header.setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(3, QHeaderView.Fixed)
+        self.table.setColumnWidth(3, 150)
+        self.table.setItemDelegateForColumn(3, UsageBarDelegate(self.table))
+        self.table.doubleClicked.connect(self._accept_selection)
+        layout.addWidget(self.table, 1)
+
+        self._populate(current)
+
+        button_row = QHBoxLayout()
+        browse_button = QPushButton("浏览文件夹…")
+        browse_button.setObjectName("cleanSecondaryButton")
+        browse_button.clicked.connect(self._browse_folder)
+        button_row.addWidget(browse_button)
+        button_row.addStretch(1)
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.button(QDialogButtonBox.Ok).setText("确定")
+        buttons.button(QDialogButtonBox.Cancel).setText("取消")
+        buttons.accepted.connect(self._accept_selection)
+        buttons.rejected.connect(self.reject)
+        button_row.addWidget(buttons)
+        layout.addLayout(button_row)
+
+    def _populate(self, current):
+        drives = list_system_drives()
+        self.table.setRowCount(0)
+        for drive in drives:
+            row = self.table.rowCount()
+            self.table.insertRow(row)
+            name = drive["label"]
+            device = drive["device"].rstrip("\\/")
+            display = f"{name} ({device})" if name else device
+            name_item = QTableWidgetItem(display)
+            name_item.setData(Qt.UserRole, drive["device"])
+            self.table.setItem(row, 0, name_item)
+            self.table.setItem(row, 1, QTableWidgetItem(_format_capacity(drive["total"])))
+            self.table.setItem(row, 2, QTableWidgetItem(_format_capacity(drive["free"])))
+            pct_item = QTableWidgetItem(f"{drive['percent']:.1f}%")
+            pct_item.setData(BAR_FRAC_ROLE, drive["percent"] / 100.0)
+            pct_item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            self.table.setItem(row, 3, pct_item)
+            if current and os.path.abspath(current).startswith(os.path.abspath(drive["device"])):
+                self.table.selectRow(row)
+        if self.table.currentRow() < 0 and self.table.rowCount():
+            self.table.selectRow(0)
+
+    def _accept_selection(self):
+        row = self.table.currentRow()
+        if row < 0:
+            return
+        item = self.table.item(row, 0)
+        if item:
+            self.selected_path = item.data(Qt.UserRole)
+            self.accept()
+
+    def _browse_folder(self):
+        directory = QFileDialog.getExistingDirectory(self, "选择文件夹", "")
+        if directory:
+            self.selected_path = directory
+            self.accept()
 
 
 # 主题主色（青绿 teal），从旧版绿色 #35C878 切换而来
@@ -620,6 +806,18 @@ class FileScanThread(QThread):
     file_scan_error_signal = pyqtSignal(str, str)
     file_scan_progress_signal = pyqtSignal(str, str)
 
+    # 扫描时跳过的重解析点 / 系统 / 超大低价值目录，避免遍历过慢或死循环
+    SKIP_DIR_NAMES = {
+        "$recycle.bin",
+        "system volume information",
+        "windowsapps",
+        "winsxs",
+        "$windows.~ws",
+        "$windows.~bt",
+        "config.msi",
+        "driverstore",
+    }
+
     def __init__(self, mode, root_dir, min_size=100 * 1024 * 1024, max_files=5000):
         super().__init__()
         self.mode = mode
@@ -630,9 +828,13 @@ class FileScanThread(QThread):
     def run(self):
         try:
             if self.mode == "large":
-                payload = self.find_large_files(self.root_dir, self.min_size, self.max_files)
+                payload = self.find_large_files(
+                    self.root_dir, self.min_size, self.max_files, self._emit_progress
+                )
             elif self.mode == "duplicates":
-                payload = self.find_duplicate_files(self.root_dir, self.max_files)
+                payload = self.find_duplicate_files(
+                    self.root_dir, self.max_files, self._emit_progress
+                )
             elif self.mode == "folders":
                 payload = self.scan_folder_sizes(self.root_dir, self._emit_progress)
             else:
@@ -665,6 +867,11 @@ class FileScanThread(QThread):
         count = 0
         for dirpath, dirnames, filenames in os.walk(root_dir, topdown=True,
                                                      onerror=lambda _e: None):
+            # 不进入符号链接/连接点，避免死循环与重复统计。
+            dirnames[:] = [
+                d for d in dirnames
+                if not FileScanThread._is_link_safe(os.path.join(dirpath, d))
+            ]
             order.append(dirpath)
             count += 1
             if progress is not None and count % 300 == 0:
@@ -720,16 +927,40 @@ class FileScanThread(QThread):
         }
 
     @staticmethod
-    def find_large_files(root_dir, min_size=100 * 1024 * 1024, max_files=5000):
+    def _is_link_safe(path):
+        try:
+            return os.path.islink(path)
+        except OSError:
+            return True
+
+    @classmethod
+    def _prune_dirs(cls, root, dirs):
+        """就地修改 os.walk 的目录列表：跳过连接点/符号链接与系统重目录，避免遍历过慢或死循环。"""
+        kept = []
+        for name in dirs:
+            full = os.path.join(root, name)
+            try:
+                if os.path.islink(full):
+                    continue
+            except OSError:
+                continue
+            if name.lower() in cls.SKIP_DIR_NAMES:
+                continue
+            kept.append(name)
+        dirs[:] = kept
+
+    @classmethod
+    def find_large_files(cls, root_dir, min_size=100 * 1024 * 1024, max_files=5000, progress=None):
         large_files = []
         scanned = 0
-        for root, _dirs, files in os.walk(root_dir):
+        for root, dirs, files in os.walk(root_dir, topdown=True, onerror=lambda _e: None):
+            cls._prune_dirs(root, dirs)
             for file_name in files:
                 if scanned >= max_files:
                     break
                 path = os.path.join(root, file_name)
                 try:
-                    if not os.path.isfile(path):
+                    if os.path.islink(path) or not os.path.isfile(path):
                         continue
                     scanned += 1
                     size = os.path.getsize(path)
@@ -741,22 +972,27 @@ class FileScanThread(QThread):
                         })
                 except (OSError, PermissionError):
                     continue
+            if progress is not None and scanned and scanned % 1000 == 0:
+                progress(f"正在扫描大文件: 已检查 {scanned} 个文件 ...")
             if scanned >= max_files:
                 break
         large_files.sort(key=lambda item: item["size"], reverse=True)
         return large_files[:200]
 
-    @staticmethod
-    def find_duplicate_files(root_dir, max_files=5000):
+    @classmethod
+    def find_duplicate_files(cls, root_dir, max_files=5000, progress=None):
         by_size = {}
         scanned = 0
-        for root, _dirs, files in os.walk(root_dir):
+        stop = False
+        for root, dirs, files in os.walk(root_dir, topdown=True, onerror=lambda _e: None):
+            cls._prune_dirs(root, dirs)
             for file_name in files:
                 if scanned >= max_files:
+                    stop = True
                     break
                 path = os.path.join(root, file_name)
                 try:
-                    if not os.path.isfile(path):
+                    if os.path.islink(path) or not os.path.isfile(path):
                         continue
                     size = os.path.getsize(path)
                     if size <= 0:
@@ -765,30 +1001,49 @@ class FileScanThread(QThread):
                     scanned += 1
                 except (OSError, PermissionError):
                     continue
+            if progress is not None and scanned and scanned % 500 == 0:
+                progress(f"正在收集文件: 已扫描 {scanned} 个 ...")
+            if stop:
+                break
 
+        # 仅对“大小相同”的候选做哈希；先用部分哈希（头部 64KB）预筛，
+        # 再对通过预筛的做完整哈希，避免对大量大文件做全量 SHA256 造成卡顿。
+        candidates = [(size, paths) for size, paths in by_size.items() if len(paths) >= 2]
         duplicates = []
-        for size, paths in by_size.items():
-            if len(paths) < 2:
-                continue
-            by_digest = {}
+        total_groups = len(candidates)
+        for index, (size, paths) in enumerate(candidates, start=1):
+            if progress is not None and (index == 1 or index % 20 == 0 or index == total_groups):
+                progress(f"正在比对重复文件: {index}/{total_groups} 组 ...")
+            by_partial = {}
             for path in paths:
-                digest = FileScanThread.file_digest(path)
-                if digest:
-                    by_digest.setdefault(digest, []).append(path)
-            for digest_paths in by_digest.values():
-                if len(digest_paths) > 1:
-                    duplicates.append((size, digest_paths))
+                partial = cls.file_digest(path, partial=True)
+                if partial:
+                    by_partial.setdefault(partial, []).append(path)
+            for partial_group in by_partial.values():
+                if len(partial_group) < 2:
+                    continue
+                by_full = {}
+                for path in partial_group:
+                    full = cls.file_digest(path)
+                    if full:
+                        by_full.setdefault(full, []).append(path)
+                for full_group in by_full.values():
+                    if len(full_group) > 1:
+                        duplicates.append((size, full_group))
 
         duplicates.sort(key=lambda group: group[0] * (len(group[1]) - 1), reverse=True)
         return duplicates
 
     @staticmethod
-    def file_digest(path):
+    def file_digest(path, partial=False, partial_bytes=64 * 1024):
         digest = hashlib.sha256()
         try:
             with open(path, "rb") as handle:
-                for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-                    digest.update(chunk)
+                if partial:
+                    digest.update(handle.read(partial_bytes))
+                else:
+                    for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                        digest.update(chunk)
             return digest.hexdigest()
         except (OSError, PermissionError):
             return None
@@ -1110,6 +1365,108 @@ NAV_ITEMS = [
 ]
 
 
+class AccountAuthDialog(QDialog):
+    """独立登录/注册窗口，避免与会员中心挤在同一页。"""
+
+    def __init__(self, parent, initial_tab=0):
+        super().__init__(parent)
+        self.setWindowTitle("登录 / 注册")
+        self.setModal(True)
+        self.setMinimumWidth(420)
+        self.setObjectName("accountAuthDialog")
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(24, 22, 24, 20)
+        outer.setSpacing(14)
+
+        title = QLabel("账号登录")
+        title.setObjectName("pageTitle")
+        subtitle = QLabel("登录或注册后兑换会员卡；新用户注册即赠送体验卡。")
+        subtitle.setObjectName("pageSubtitle")
+        subtitle.setWordWrap(True)
+        outer.addWidget(title)
+        outer.addWidget(subtitle)
+
+        self.tabs = QTabWidget()
+        self.tabs.setObjectName("accountAuthTabs")
+
+        login_tab = QWidget()
+        login_layout = QVBoxLayout(login_tab)
+        login_layout.setContentsMargins(12, 16, 12, 12)
+        login_layout.setSpacing(10)
+        self.account_email_input = QLineEdit()
+        self.account_email_input.setPlaceholderText("邮箱")
+        self.account_password_input = QLineEdit()
+        self.account_password_input.setPlaceholderText("密码，至少 6 位")
+        self.account_password_input.setEchoMode(QLineEdit.Password)
+        login_button = QPushButton("登录")
+        login_button.setObjectName("scanPrimaryButton")
+        login_button.setMinimumHeight(36)
+        login_button.clicked.connect(parent.login_account)
+        login_layout.addWidget(self.account_email_input)
+        login_layout.addWidget(self.account_password_input)
+        login_layout.addWidget(login_button)
+        login_layout.addStretch(1)
+
+        register_tab = QWidget()
+        register_layout = QVBoxLayout(register_tab)
+        register_layout.setContentsMargins(12, 16, 12, 12)
+        register_layout.setSpacing(10)
+        self.register_email_input = QLineEdit()
+        self.register_email_input.setPlaceholderText("邮箱")
+        self.register_name_input = QLineEdit()
+        self.register_name_input.setPlaceholderText("昵称")
+        self.register_password_input = QLineEdit()
+        self.register_password_input.setPlaceholderText("密码，至少 6 位")
+        self.register_password_input.setEchoMode(QLineEdit.Password)
+        register_button = QPushButton("注册并登录")
+        register_button.setObjectName("scanPrimaryButton")
+        register_button.setMinimumHeight(36)
+        register_button.clicked.connect(parent.register_account_from_dialog)
+        register_layout.addWidget(self.register_email_input)
+        register_layout.addWidget(self.register_name_input)
+        register_layout.addWidget(self.register_password_input)
+        register_layout.addWidget(register_button)
+        register_layout.addStretch(1)
+
+        self.tabs.addTab(login_tab, "登录")
+        self.tabs.addTab(register_tab, "注册")
+        outer.addWidget(self.tabs)
+
+        self.message_label = QLabel("")
+        self.message_label.setObjectName("statusLabel")
+        self.message_label.setWordWrap(True)
+        outer.addWidget(self.message_label)
+
+        close_row = QHBoxLayout()
+        close_row.addStretch(1)
+        close_button = QPushButton("关闭")
+        close_button.setObjectName("cleanSecondaryButton")
+        close_button.clicked.connect(self.reject)
+        close_row.addWidget(close_button)
+        outer.addLayout(close_row)
+
+        if 0 <= initial_tab < self.tabs.count():
+            self.tabs.setCurrentIndex(initial_tab)
+
+    def set_message(self, text):
+        self.message_label.setText(text or "")
+
+    def login_credentials(self):
+        return (
+            self.account_email_input.text().strip(),
+            self.account_password_input.text(),
+            "",
+        )
+
+    def register_credentials(self):
+        return (
+            self.register_email_input.text().strip(),
+            self.register_password_input.text(),
+            self.register_name_input.text().strip(),
+        )
+
+
 class CleanerMainWindow(QMainWindow):
     """主窗口类"""
     
@@ -1126,6 +1483,8 @@ class CleanerMainWindow(QMainWindow):
         self.optimizer_tables = {}
         self.optimizer_handled_keys = set()
         self.uninstall_apps = []
+        self.uninstall_sort_column = None
+        self.uninstall_sort_ascending = True
         self.file_scan_root = ""
         self.file_large_items = []
         self.file_duplicate_groups = []
@@ -1149,6 +1508,7 @@ class CleanerMainWindow(QMainWindow):
         self.active_animations = []
         self.account_service = self._build_account_service()
         self.account_state = self.account_service.current_state()
+        self.account_auth_dialog = None
         
         self.init_ui()
 
@@ -1222,6 +1582,14 @@ class CleanerMainWindow(QMainWindow):
             layout.addWidget(button)
             self.nav_buttons.append(button)
 
+        layout.addSpacing(6)
+        self.account_sidebar_button = QPushButton("登录 / 注册")
+        self.account_sidebar_button.setObjectName("sidebarButton")
+        self.account_sidebar_button.setCursor(Qt.PointingHandCursor)
+        self.account_sidebar_button.setMinimumWidth(148)
+        self.account_sidebar_button.clicked.connect(self.on_account_sidebar_clicked)
+        layout.addWidget(self.account_sidebar_button)
+
         layout.addStretch(1)
 
         self.sidebar_footer_label = QLabel("等待扫描…")
@@ -1268,9 +1636,7 @@ class CleanerMainWindow(QMainWindow):
             self.animate_page_transition(self.stack.currentWidget())
             if 0 <= index < len(self.nav_buttons):
                 self.animate_status_pulse(self.nav_buttons[index])
-            # 首次进入“文件管理”时自动统计文件夹占用（默认标签页不会触发 currentChanged）。
-            if index == self.page_index_for_label("文件管理") and hasattr(self, "file_tabs"):
-                self.on_file_tab_changed(self.file_tabs.currentIndex())
+            # 文件管理页不再自动扫描，改为用户点击“扫描文件夹”后再统计，避免打开卡顿。
 
     def page_index_for_label(self, label):
         for index, (text, _builder) in enumerate(NAV_ITEMS):
@@ -2466,25 +2832,33 @@ class CleanerMainWindow(QMainWindow):
 
         self.uninstall_table = QTableWidget()
         self.uninstall_table.setObjectName("uninstallTable")
-        self.uninstall_table.setColumnCount(6)
-        self.uninstall_table.setHorizontalHeaderLabels(["选择", "软件名称", "发布者", "版本", "安装位置", "操作"])
+        self.uninstall_table.setColumnCount(8)
+        self.uninstall_table.setHorizontalHeaderLabels(
+            ["选择", "软件名称", "发布者", "版本", "安装日期", "大小", "安装位置", "操作"]
+        )
         self.uninstall_table.verticalHeader().setVisible(False)
         self.uninstall_table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.uninstall_table.setSelectionMode(QAbstractItemView.SingleSelection)
         self.uninstall_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.uninstall_table.setAlternatingRowColors(True)
         self.uninstall_table.setIconSize(QSize(20, 20))
+        self.uninstall_table.setSortingEnabled(False)
         self.uninstall_table.itemChanged.connect(self.on_uninstall_item_changed)
         header_view = self.uninstall_table.horizontalHeader()
         header_view.setMinimumSectionSize(46)
+        header_view.setSortIndicatorShown(True)
+        header_view.setSectionsClickable(True)
+        header_view.sectionClicked.connect(self.on_uninstall_header_clicked)
         header_view.setSectionResizeMode(0, QHeaderView.Fixed)
         header_view.setSectionResizeMode(1, QHeaderView.Stretch)
         header_view.setSectionResizeMode(2, QHeaderView.ResizeToContents)
         header_view.setSectionResizeMode(3, QHeaderView.ResizeToContents)
-        header_view.setSectionResizeMode(4, QHeaderView.Stretch)
-        header_view.setSectionResizeMode(5, QHeaderView.Fixed)
+        header_view.setSectionResizeMode(4, QHeaderView.ResizeToContents)
+        header_view.setSectionResizeMode(5, QHeaderView.ResizeToContents)
+        header_view.setSectionResizeMode(6, QHeaderView.Stretch)
+        header_view.setSectionResizeMode(7, QHeaderView.Fixed)
         self.uninstall_table.setColumnWidth(0, 52)
-        self.uninstall_table.setColumnWidth(5, 96)
+        self.uninstall_table.setColumnWidth(7, 96)
         outer.addWidget(self.uninstall_table, 1)
 
         self.uninstall_status_label = QLabel("正在读取软件列表...")
@@ -2505,15 +2879,12 @@ class CleanerMainWindow(QMainWindow):
         header.setSpacing(5)
         page_title = QLabel("账号会员")
         page_title.setObjectName("pageTitle")
-        page_subtitle = QLabel("在软件内登录、注册并兑换会员卡密；离线时使用本地账号状态保存。")
+        page_subtitle = QLabel("会员中心：查看权益、兑换激活码；登录与注册请使用侧边栏「登录 / 注册」按钮。")
         page_subtitle.setObjectName("pageSubtitle")
         page_subtitle.setWordWrap(True)
         header.addWidget(page_title)
         header.addWidget(page_subtitle)
         outer.addLayout(header)
-
-        cards_row = QHBoxLayout()
-        cards_row.setSpacing(14)
 
         status_card = QFrame()
         status_card.setObjectName("featureCard")
@@ -2523,62 +2894,32 @@ class CleanerMainWindow(QMainWindow):
 
         self.account_status_title = QLabel("未登录")
         self.account_status_title.setObjectName("featureCardTitle")
-        self.account_status_detail = QLabel("登录后可兑换会员卡密。")
+        self.account_status_detail = QLabel("请先登录或注册账户，再兑换会员卡。")
         self.account_status_detail.setObjectName("featureCardDesc")
         self.account_status_detail.setWordWrap(True)
         self.account_plan_label = QLabel("当前权益: Guest")
         self.account_plan_label.setObjectName("statusLabel")
         self.account_plan_label.setWordWrap(True)
 
+        auth_actions = QHBoxLayout()
+        auth_actions.setSpacing(10)
+        self.account_open_auth_button = QPushButton("登录 / 注册")
+        self.account_open_auth_button.setObjectName("scanPrimaryButton")
+        self.account_open_auth_button.setMinimumWidth(120)
+        self.account_open_auth_button.clicked.connect(lambda: self.show_account_auth_dialog(0))
         self.account_logout_button = QPushButton("退出登录")
         self.account_logout_button.setObjectName("cleanSecondaryButton")
         self.account_logout_button.setMinimumWidth(96)
         self.account_logout_button.clicked.connect(self.logout_account)
+        auth_actions.addWidget(self.account_open_auth_button)
+        auth_actions.addWidget(self.account_logout_button)
+        auth_actions.addStretch(1)
 
         status_layout.addWidget(self.account_status_title)
         status_layout.addWidget(self.account_status_detail)
         status_layout.addWidget(self.account_plan_label)
-        status_layout.addStretch(1)
-        status_layout.addWidget(self.account_logout_button, 0, Qt.AlignLeft)
-
-        auth_card = QFrame()
-        auth_card.setObjectName("featureCard")
-        auth_layout = QVBoxLayout(auth_card)
-        auth_layout.setContentsMargins(18, 16, 18, 16)
-        auth_layout.setSpacing(9)
-
-        auth_title = QLabel("登录 / 注册")
-        auth_title.setObjectName("featureCardTitle")
-        self.account_email_input = QLineEdit()
-        self.account_email_input.setPlaceholderText("邮箱")
-        self.account_name_input = QLineEdit()
-        self.account_name_input.setPlaceholderText("昵称（注册时使用）")
-        self.account_password_input = QLineEdit()
-        self.account_password_input.setPlaceholderText("密码，至少 6 位")
-        self.account_password_input.setEchoMode(QLineEdit.Password)
-
-        auth_actions = QHBoxLayout()
-        login_button = QPushButton("登录")
-        login_button.setObjectName("scanPrimaryButton")
-        login_button.setMinimumWidth(96)
-        login_button.clicked.connect(self.login_account)
-        register_button = QPushButton("注册")
-        register_button.setObjectName("cleanSecondaryButton")
-        register_button.setMinimumWidth(96)
-        register_button.clicked.connect(self.register_account)
-        auth_actions.addWidget(login_button)
-        auth_actions.addWidget(register_button)
-        auth_actions.addStretch(1)
-
-        auth_layout.addWidget(auth_title)
-        auth_layout.addWidget(self.account_email_input)
-        auth_layout.addWidget(self.account_name_input)
-        auth_layout.addWidget(self.account_password_input)
-        auth_layout.addLayout(auth_actions)
-
-        cards_row.addWidget(status_card, 1)
-        cards_row.addWidget(auth_card, 1)
-        outer.addLayout(cards_row)
+        status_layout.addLayout(auth_actions)
+        outer.addWidget(status_card)
 
         card_box = QFrame()
         card_box.setObjectName("featureCard")
@@ -4368,7 +4709,7 @@ class CleanerMainWindow(QMainWindow):
         self.file_tabs.currentChanged.connect(self.on_file_tab_changed)
         outer.addWidget(self.file_tabs, 1)
 
-        self.file_status_label = QLabel("准备扫描文件。")
+        self.file_status_label = QLabel("点击“扫描文件夹”开始统计当前目录占用（可先用“选择目录”切换磁盘）。")
         self.file_status_label.setObjectName("statusLabel")
         outer.addWidget(self.file_status_label)
 
@@ -4414,7 +4755,10 @@ class CleanerMainWindow(QMainWindow):
         item.setTextAlignment(2, Qt.AlignRight | Qt.AlignVCenter)
         item.setData(0, Qt.UserRole, dir_path)
         item.setData(3, BAR_FRAC_ROLE, pct / 100.0)  # 供占用条委托绘制
-        item.setToolTip(0, dir_path)
+        # 悬停提示：中文名 + 用途 + 是否可清理建议
+        tooltip = folder_tooltip(dir_path)
+        for column in range(4):
+            item.setToolTip(column, tooltip)
         try:
             item.setIcon(0, self.icon_provider.icon(QFileInfo(dir_path)))
         except Exception:
@@ -5118,6 +5462,23 @@ class CleanerMainWindow(QMainWindow):
         self.uninstall_apps = apps
         if not hasattr(self, "uninstall_table"):
             return
+        if self.uninstall_sort_column is not None:
+            self._sort_uninstall_apps()
+        self.render_uninstall_table(self.uninstall_apps)
+
+        if apps:
+            self.uninstall_status_label.setText(
+                f"已读取 {len(apps)} 个已安装软件。点击表头可排序，勾选后可批量卸载。"
+            )
+        else:
+            message = "当前环境未读取到软件列表；Windows 上会读取卸载注册表。"
+            self.uninstall_status_label.setText(message)
+            if show_message:
+                QMessageBox.information(self, "软件卸载", message)
+
+    def render_uninstall_table(self, apps):
+        if not hasattr(self, "uninstall_table"):
+            return
 
         self.uninstall_table.blockSignals(True)
         self.uninstall_table.setRowCount(0)
@@ -5141,7 +5502,18 @@ class CleanerMainWindow(QMainWindow):
             self.uninstall_table.setItem(row_index, 1, name_item)
             self.uninstall_table.setItem(row_index, 2, QTableWidgetItem(app.get("publisher", "")))
             self.uninstall_table.setItem(row_index, 3, QTableWidgetItem(app.get("version", "")))
-            self.uninstall_table.setItem(row_index, 4, QTableWidgetItem(app.get("install_location", "")))
+
+            date_item = QTableWidgetItem(app.get("install_date", ""))
+            date_item.setData(Qt.UserRole, app.get("install_date_sort", 0))
+            self.uninstall_table.setItem(row_index, 4, date_item)
+
+            size_bytes = app.get("size_bytes", 0)
+            size_item = QTableWidgetItem(self.format_size(size_bytes) if size_bytes else "-")
+            size_item.setData(Qt.UserRole, size_bytes)
+            size_item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            self.uninstall_table.setItem(row_index, 5, size_item)
+
+            self.uninstall_table.setItem(row_index, 6, QTableWidgetItem(app.get("install_location", "")))
 
             uninstall_button = QPushButton("卸载")
             uninstall_button.setObjectName("miniActionButton")
@@ -5150,7 +5522,7 @@ class CleanerMainWindow(QMainWindow):
             uninstall_button.clicked.connect(
                 lambda _checked=False, target=dict(app): self.run_uninstall_command(target)
             )
-            self.uninstall_table.setCellWidget(row_index, 5, uninstall_button)
+            self.uninstall_table.setCellWidget(row_index, 7, uninstall_button)
             self.uninstall_table.setRowHeight(row_index, 34)
 
         self.uninstall_table.blockSignals(False)
@@ -5159,13 +5531,46 @@ class CleanerMainWindow(QMainWindow):
             self.uninstall_select_all.setChecked(False)
             self.uninstall_select_all.blockSignals(False)
 
-        if apps:
-            self.uninstall_status_label.setText(f"已读取 {len(apps)} 个已安装软件。勾选后可批量卸载。")
+        if self.uninstall_sort_column is not None:
+            order = Qt.AscendingOrder if self.uninstall_sort_ascending else Qt.DescendingOrder
+            self.uninstall_table.horizontalHeader().setSortIndicator(
+                self.uninstall_sort_column, order
+            )
+
+    def on_uninstall_header_clicked(self, column):
+        if column in (0, 7):
+            return
+        if self.uninstall_sort_column == column:
+            self.uninstall_sort_ascending = not self.uninstall_sort_ascending
         else:
-            message = "当前环境未读取到软件列表；Windows 上会读取卸载注册表。"
-            self.uninstall_status_label.setText(message)
-            if show_message:
-                QMessageBox.information(self, "软件卸载", message)
+            self.uninstall_sort_column = column
+            self.uninstall_sort_ascending = True
+        self._sort_uninstall_apps()
+        self.render_uninstall_table(self.uninstall_apps)
+
+    def _uninstall_sort_key(self, app):
+        column = self.uninstall_sort_column
+        if column == 1:
+            return app.get("name", "").lower()
+        if column == 2:
+            return app.get("publisher", "").lower()
+        if column == 3:
+            return app.get("version", "").lower()
+        if column == 4:
+            return app.get("install_date_sort", 0)
+        if column == 5:
+            return app.get("size_bytes", 0)
+        if column == 6:
+            return app.get("install_location", "").lower()
+        return app.get("name", "").lower()
+
+    def _sort_uninstall_apps(self):
+        if self.uninstall_sort_column is None:
+            return
+        self.uninstall_apps.sort(
+            key=self._uninstall_sort_key,
+            reverse=not self.uninstall_sort_ascending,
+        )
 
     def installed_apps_from_registry(self):
         if not sys.platform.startswith("win"):
@@ -5213,14 +5618,50 @@ class CleanerMainWindow(QMainWindow):
         return apps
 
     def _installed_app_from_key(self, key):
+        install_date_raw = self._registry_value(key, "InstallDate")
+        size_kb = self._registry_int(key, "EstimatedSize")
+        size_bytes = size_kb * 1024 if size_kb > 0 else 0
         return {
             "name": self._registry_value(key, "DisplayName"),
             "publisher": self._registry_value(key, "Publisher"),
             "version": self._registry_value(key, "DisplayVersion"),
             "install_location": self._registry_value(key, "InstallLocation"),
+            "install_date": self._format_install_date(install_date_raw),
+            "install_date_sort": self._install_date_sort_key(install_date_raw),
+            "size_bytes": size_bytes,
             "uninstall": self._registry_value(key, "UninstallString"),
             "quiet_uninstall": self._registry_value(key, "QuietUninstallString"),
         }
+
+    @staticmethod
+    def _registry_int(key, name):
+        try:
+            import winreg
+            value, _value_type = winreg.QueryValueEx(key, name)
+            return int(value)
+        except (OSError, ValueError, TypeError):
+            return 0
+
+    @staticmethod
+    def _format_install_date(raw):
+        text = str(raw or "").strip()
+        if len(text) == 8 and text.isdigit():
+            try:
+                parsed = datetime.datetime.strptime(text, "%Y%m%d")
+                return parsed.strftime("%Y-%m-%d")
+            except ValueError:
+                pass
+        return text
+
+    @staticmethod
+    def _install_date_sort_key(raw):
+        text = str(raw or "").strip()
+        if len(text) == 8 and text.isdigit():
+            try:
+                return int(datetime.datetime.strptime(text, "%Y%m%d").timestamp())
+            except ValueError:
+                pass
+        return 0
 
     @staticmethod
     def _registry_value(key, name):
@@ -5407,11 +5848,26 @@ class CleanerMainWindow(QMainWindow):
         return LocalAccountService()
 
     def navigate_to_account_page(self):
-        """切换到“账号会员”页面。"""
+        """切换到“账号会员”页面；未登录时先弹出独立登录窗口。"""
+        if not (getattr(self, "account_state", None) or {}).get("user"):
+            self.show_account_auth_dialog(0)
         for index, (label, _method) in enumerate(NAV_ITEMS):
             if label == "账号会员":
                 self._select_page(index)
                 return
+
+    def on_account_sidebar_clicked(self):
+        user = (getattr(self, "account_state", None) or {}).get("user")
+        if user:
+            self.navigate_to_account_page()
+        else:
+            self.show_account_auth_dialog(0)
+
+    def show_account_auth_dialog(self, initial_tab=0):
+        dialog = AccountAuthDialog(self, initial_tab=initial_tab)
+        self.account_auth_dialog = dialog
+        dialog.exec_()
+        self.account_auth_dialog = None
 
     def is_membership_active(self):
         """当前账号是否为有效会员（含未过期的体验卡）。"""
@@ -5456,7 +5912,10 @@ class CleanerMainWindow(QMainWindow):
         box.addButton("取消", QMessageBox.RejectRole)
         box.exec_()
         if box.clickedButton() is go_button:
-            self.navigate_to_account_page()
+            if not user:
+                self.show_account_auth_dialog(0)
+            else:
+                self.navigate_to_account_page()
         return False
 
     def refresh_account_state(self, message=None):
@@ -5482,34 +5941,57 @@ class CleanerMainWindow(QMainWindow):
             self.account_plan_label.setText("当前权益: Guest")
             self.account_logout_button.setEnabled(False)
 
+        if hasattr(self, "account_open_auth_button"):
+            self.account_open_auth_button.setVisible(not bool(user))
+        if hasattr(self, "account_logout_button"):
+            self.account_logout_button.setVisible(bool(user))
+        if hasattr(self, "account_sidebar_button"):
+            self.account_sidebar_button.setText("账号中心" if user else "登录 / 注册")
+
         if message:
             self.account_message_label.setText(message)
             self.animate_status_pulse(self.account_message_label)
 
     def account_credentials(self):
-        return (
-            self.account_email_input.text().strip(),
-            self.account_password_input.text(),
-            self.account_name_input.text().strip(),
-        )
+        dialog = getattr(self, "account_auth_dialog", None)
+        if dialog is not None and dialog.tabs.currentIndex() == 1:
+            return dialog.register_credentials()
+        if dialog is not None:
+            return dialog.login_credentials()
+        return ("", "", "")
 
-    def register_account(self):
-        email, password, display_name = self.account_credentials()
+    def register_account_from_dialog(self):
+        dialog = getattr(self, "account_auth_dialog", None)
+        if dialog is None:
+            return
+        email, password, display_name = dialog.register_credentials()
         try:
             self.account_service.register(email, password, display_name)
-            self.account_password_input.clear()
+            dialog.register_password_input.clear()
             self.refresh_account_state("注册并登录成功。")
+            dialog.set_message("注册并登录成功。")
+            dialog.accept()
         except AccountError as exc:
-            self.refresh_account_state(str(exc))
+            dialog.set_message(str(exc))
+
+    def register_account(self):
+        self.register_account_from_dialog()
 
     def login_account(self):
         email, password, _display_name = self.account_credentials()
+        dialog = getattr(self, "account_auth_dialog", None)
         try:
             self.account_service.login(email, password)
-            self.account_password_input.clear()
+            if dialog is not None:
+                dialog.account_password_input.clear()
+                dialog.set_message("登录成功。")
+                dialog.accept()
             self.refresh_account_state("登录成功。")
         except AccountError as exc:
-            self.refresh_account_state(str(exc))
+            if dialog is not None:
+                dialog.set_message(str(exc))
+            else:
+                self.refresh_account_state(str(exc))
 
     def logout_account(self):
         self.account_service.logout()
@@ -5532,27 +6014,8 @@ class CleanerMainWindow(QMainWindow):
         self.start_file_scan_thread("folders", root_dir)
 
     def on_file_tab_changed(self, _index):
-        """切换到“文件夹占用”标签且尚未统计时自动扫描一次。"""
-        if not hasattr(self, "file_tabs") or not hasattr(self, "folder_tree"):
-            return
-        # 首次进入“文件迁移”标签时自动列出个人文件夹
-        if (
-            hasattr(self, "migration_page")
-            and self.file_tabs.currentWidget() is self.migration_page
-        ):
-            if not self.migration_loaded and not (
-                self.migration_scan_thread and self.migration_scan_thread.isRunning()
-            ):
-                self.refresh_migration_folders()
-            return
-        if self.file_tabs.currentWidget() is not self.folder_tree:
-            return
-        root_dir = self.current_file_scan_root()
-        if self.folder_scan_done_root == root_dir:
-            return
-        if self.file_scan_thread and self.file_scan_thread.isRunning():
-            return
-        self.scan_folder_usage()
+        """切换标签时不再自动扫描，改由用户点击对应扫描按钮触发，避免卡顿。"""
+        return
 
     def scan_large_files(self):
         """在文件管理页内扫描大文件并填充表格。"""
@@ -5650,15 +6113,12 @@ class CleanerMainWindow(QMainWindow):
         return self.file_scan_root or self.default_file_scan_root()
 
     def select_file_scan_root(self):
-        selected = QFileDialog.getExistingDirectory(
-            self,
-            "选择文件扫描目录",
-            self.current_file_scan_root(),
-        )
-        if selected:
+        dialog = DriveSelectDialog(self, current=self.current_file_scan_root())
+        if dialog.exec_() == QDialog.Accepted and dialog.selected_path:
+            selected = dialog.selected_path
             self.file_scan_root = selected
             self.file_root_label.setText(f"扫描目录: {selected}")
-            self.file_status_label.setText("已更新扫描目录。")
+            self.file_status_label.setText("已更新扫描目录，点击“扫描文件夹”开始统计。")
 
     def find_large_files(self, root_dir, min_size=100 * 1024 * 1024, max_files=5000):
         large_files = []
@@ -6026,52 +6486,6 @@ class CleanerMainWindow(QMainWindow):
         self.populate_large_files_table(self.file_large_items)
         self.populate_duplicate_files_table(self.file_duplicate_groups)
 
-    def _find_duplicate_files(self, root_dir, max_files=5000):
-        by_size = {}
-        scanned = 0
-        for root, _dirs, files in os.walk(root_dir):
-            for file_name in files:
-                if scanned >= max_files:
-                    break
-                path = os.path.join(root, file_name)
-                try:
-                    if not os.path.isfile(path):
-                        continue
-                    size = os.path.getsize(path)
-                    if size <= 0:
-                        continue
-                    by_size.setdefault(size, []).append(path)
-                    scanned += 1
-                except (OSError, PermissionError):
-                    continue
-
-        duplicates = []
-        for size, paths in by_size.items():
-            if len(paths) < 2:
-                continue
-            by_digest = {}
-            for path in paths:
-                digest = self._file_digest(path)
-                if digest:
-                    by_digest.setdefault(digest, []).append(path)
-            for digest_paths in by_digest.values():
-                if len(digest_paths) > 1:
-                    duplicates.append((size, digest_paths))
-
-        duplicates.sort(key=lambda group: group[0] * (len(group[1]) - 1), reverse=True)
-        return duplicates
-
-    @staticmethod
-    def _file_digest(path):
-        digest = hashlib.sha256()
-        try:
-            with open(path, "rb") as handle:
-                for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-                    digest.update(chunk)
-            return digest.hexdigest()
-        except (OSError, PermissionError):
-            return None
-    
     def update_disk_info(self):
         """更新磁盘信息"""
         disk_info = self.cleaner.get_disk_info()

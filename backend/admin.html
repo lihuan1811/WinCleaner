@@ -163,6 +163,7 @@
               <option value="">全部</option>
               <option value="available">未使用</option>
               <option value="used">已使用</option>
+              <option value="disabled">已禁用</option>
             </select>
             <button class="primary mini" onclick="loadCards()">刷新</button>
             <span id="cards-msg"></span>
@@ -217,6 +218,7 @@
         $("stats").innerHTML = [
           ["注册用户", d.users], ["有效会员", d.activeMembers], ["免费用户", d.freeUsers],
           ["激活码总数", d.totalCards], ["已使用", d.usedCards], ["未使用", d.availableCards],
+          ["已禁用", d.disabledCards || 0],
         ].map(([l, n]) => `<div class="stat"><div class="n">${n}</div><div class="l">${l}</div></div>`).join("");
       } catch (e) {
         $("stats").innerHTML = `<div class="stat"><div class="l" style="color:var(--danger)">${e.message}</div></div>`;
@@ -256,9 +258,16 @@
         body.innerHTML = d.cards.map(c => {
           const st = c.status === "used"
             ? `<span class="badge used">已使用</span>`
+            : c.status === "disabled"
+            ? `<span class="badge" style="background:#4a5568;color:#fff;">已禁用</span>`
             : `<span class="badge avail">未使用</span>`;
-          const del = c.status === "used" ? "" :
-            `<button class="danger mini" onclick="deleteCard('${c.code}')">删除</button>`;
+          let actions = "";
+          if (c.status === "available") {
+            actions = `<button class="danger mini" onclick="disableCard('${c.code}')">禁用</button>`
+              + `<button class="danger mini" onclick="deleteCard('${c.code}')">删除</button>`;
+          } else if (c.status === "disabled") {
+            actions = `<button class="danger mini" onclick="deleteCard('${c.code}')">删除</button>`;
+          }
           return `<tr>
             <td class="code">${c.code}</td>
             <td>${c.planName}</td>
@@ -266,7 +275,7 @@
             <td>${st}</td>
             <td class="code">${c.redeemedBy || "-"}</td>
             <td>${c.redeemedAt ? c.redeemedAt.replace("T", " ").slice(0, 16) : "-"}</td>
-            <td class="row-actions">${del}</td>
+            <td class="row-actions">${actions}</td>
           </tr>`;
         }).join("");
         setMsg($("cards-msg"), `共 ${d.count} 张`, true);
@@ -303,6 +312,16 @@
       if (!confirm("确定删除未使用的激活码 " + code + " ？")) return;
       try {
         await api("/api/admin/cards/" + encodeURIComponent(code), { method: "DELETE" });
+        loadCards(); loadOverview();
+      } catch (e) {
+        setMsg($("cards-msg"), e.message, false);
+      }
+    }
+
+    async function disableCard(code) {
+      if (!confirm("确定禁用激活码 " + code + " ？禁用后将无法兑换。")) return;
+      try {
+        await api("/api/admin/cards/" + encodeURIComponent(code) + "/disable", { method: "POST" });
         loadCards(); loadOverview();
       } catch (e) {
         setMsg($("cards-msg"), e.message, false);

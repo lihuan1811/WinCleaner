@@ -182,8 +182,15 @@ def init_database(database: Database) -> None:
                 plan_name TEXT NOT NULL,
                 days INTEGER NOT NULL CHECK (days > 0),
                 redeemed_by TEXT REFERENCES users(email) ON DELETE SET NULL,
-                redeemed_at TIMESTAMPTZ
+                redeemed_at TIMESTAMPTZ,
+                disabled BOOLEAN NOT NULL DEFAULT FALSE
             )
+            """
+        )
+        connection.execute(
+            """
+            ALTER TABLE card_codes
+            ADD COLUMN IF NOT EXISTS disabled BOOLEAN NOT NULL DEFAULT FALSE
             """
         )
         connection.execute(
@@ -384,7 +391,7 @@ def create_app(database_url: str | None = None) -> FastAPI:
 
             card = connection.execute(
                 """
-                SELECT code, plan_name, days, redeemed_by
+                SELECT code, plan_name, days, redeemed_by, disabled
                 FROM card_codes
                 WHERE code = %s
                 FOR UPDATE
@@ -393,6 +400,8 @@ def create_app(database_url: str | None = None) -> FastAPI:
             ).fetchone()
             if card is None:
                 raise HTTPException(status_code=404, detail="卡密不存在或格式不正确。")
+            if card["disabled"]:
+                raise HTTPException(status_code=403, detail="此激活码已被禁用。")
             if card["redeemed_by"]:
                 raise HTTPException(status_code=409, detail="这张会员卡已经兑换过。")
 
@@ -461,13 +470,17 @@ def create_app(database_url: str | None = None) -> FastAPI:
             used_cards = connection.execute(
                 "SELECT count(*) AS c FROM card_codes WHERE redeemed_by IS NOT NULL"
             ).fetchone()["c"]
+            disabled_cards = connection.execute(
+                "SELECT count(*) AS c FROM card_codes WHERE disabled = TRUE AND redeemed_by IS NULL"
+            ).fetchone()["c"]
         return {
             "users": users,
             "activeMembers": active,
             "freeUsers": max(0, users - active),
             "totalCards": total_cards,
             "usedCards": used_cards,
-            "availableCards": max(0, total_cards - used_cards),
+            "availableCards": max(0, total_cards - used_cards - disabled_cards),
+            "disabledCards": disabled_cards,
         }
 
     @app.get("/api/admin/users")
@@ -515,14 +528,16 @@ def create_app(database_url: str | None = None) -> FastAPI:
         if status == "used":
             clause = "WHERE redeemed_by IS NOT NULL"
         elif status == "available":
-            clause = "WHERE redeemed_by IS NULL"
+            clause = "WHERE redeemed_by IS NULL AND disabled = FALSE"
+        elif status == "disabled":
+            clause = "WHERE disabled = TRUE AND redeemed_by IS NULL"
         with active_database().connect() as connection:
             rows = connection.execute(
                 f"""
-                SELECT code, plan_name, days, redeemed_by, redeemed_at
+                SELECT code, plan_name, days, redeemed_by, redeemed_at, disabled
                 FROM card_codes
                 {clause}
-                ORDER BY (redeemed_by IS NOT NULL), redeemed_at DESC NULLS LAST, code
+                ORDER BY disabled ASC, (redeemed_by IS NOT NULL), redeemed_at DESC NULLS LAST, code
                 """
             ).fetchall()
         cards = [
@@ -530,11 +545,14 @@ def create_app(database_url: str | None = None) -> FastAPI:
                 "code": row["code"],
                 "planName": row["plan_name"],
                 "days": row["days"],
-                "status": "used" if row["redeemed_by"] else "available",
+                "status": "used"
+                if row["redeemed_by"]
+                else ("disabled" if row["disabled"] else "available"),
                 "redeemedBy": row["redeemed_by"],
                 "redeemedAt": iso(row_datetime(row["redeemed_at"]))
                 if row["redeemed_at"]
                 else None,
+                "disabled": bool(row["disabled"]),
             }
             for row in rows
         ]
@@ -587,6 +605,29 @@ def create_app(database_url: str | None = None) -> FastAPI:
                 raise HTTPException(status_code=409, detail="已兑换的卡密不能删除。")
             connection.execute("DELETE FROM card_codes WHERE code = %s", (code,))
         return {"deleted": code}
+
+    @app.post("/api/admin/cards/{code}/disable")
+    def admin_disable_card(
+        code: str,
+        x_admin_token: str | None = Header(default=None),
+    ):
+        require_admin(x_admin_token)
+        with active_database().connect() as connection:
+            row = connection.execute(
+                "SELECT redeemed_by, disabled FROM card_codes WHERE code = %s",
+                (code,),
+            ).fetchone()
+            if row is None:
+                raise HTTPException(status_code=404, detail="卡密不存在。")
+            if row["redeemed_by"]:
+                raise HTTPException(status_code=409, detail="已兑换的卡密不能禁用。")
+            if row["disabled"]:
+                return {"code": code, "disabled": True}
+            connection.execute(
+                "UPDATE card_codes SET disabled = TRUE WHERE code = %s",
+                (code,),
+            )
+        return {"code": code, "disabled": True}
 
     return app
 

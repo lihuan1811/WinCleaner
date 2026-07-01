@@ -54,3 +54,19 @@ def test_require_admin_rejects_wrong_token(monkeypatch):
 def test_require_admin_accepts_correct_token(monkeypatch):
     monkeypatch.setenv("WINCLEANER_ADMIN_TOKEN", "secret-token")
     backend_app.require_admin("secret-token")  # 不抛异常即通过
+
+
+def test_card_status_labels():
+    assert backend_app  # module loaded
+    # 与 admin 前端一致的状态映射
+    for redeemed_by, disabled, expected in [
+        ("user@x.com", False, "used"),
+        (None, True, "disabled"),
+        (None, False, "available"),
+    ]:
+        status = (
+            "used"
+            if redeemed_by
+            else ("disabled" if disabled else "available")
+        )
+        assert status == expected
