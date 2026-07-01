@@ -22,11 +22,12 @@ from category_display import (
     strip_category_badge,
 )
 
-# 配置日志
+# 配置日志（复用核心逻辑里解析好的隐藏日志路径，避免在程序目录生成 cleaner.log）
+from cleaner_logic import LOG_PATH as _LOG_PATH
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    filename='cleaner.log'
+    filename=_LOG_PATH
 )
 logger = logging.getLogger('CCleaner')
 

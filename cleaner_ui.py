@@ -461,6 +461,37 @@ QWidget#bxTabContainer {
     border-bottom-right-radius: 8px;
 }
 
+QScrollArea#bxCategoryScroll,
+QWidget#bxCategoryInner {
+    background: transparent;
+    border: none;
+}
+
+QPushButton#bxCategory,
+QPushButton#bxCategoryActive {
+    border: none;
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: 600;
+    padding: 0 12px;
+    text-align: left;
+}
+
+QPushButton#bxCategory {
+    background: transparent;
+    color: #2C4A43;
+}
+
+QPushButton#bxCategory:hover {
+    background: #E7F7F4;
+    color: #0D7E72;
+}
+
+QPushButton#bxCategoryActive {
+    background: #14B8A6;
+    color: #FFFFFF;
+}
+
 QScrollArea#bxScrollArea {
     background: transparent;
     border: none;
@@ -1624,37 +1655,45 @@ class CleanerMainWindow(QMainWindow):
         category_title.setObjectName("featureCardTitle")
         category_layout.addWidget(category_title)
 
+        category_scroll = QScrollArea()
+        category_scroll.setObjectName("bxCategoryScroll")
+        category_scroll.setWidgetResizable(True)
+        category_scroll.setFrameShape(QFrame.NoFrame)
+        category_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        category_inner = QWidget()
+        category_inner.setObjectName("bxCategoryInner")
+        category_inner_layout = QVBoxLayout(category_inner)
+        category_inner_layout.setContentsMargins(0, 0, 0, 0)
+        category_inner_layout.setSpacing(4)
+
         self.bx_category_buttons = {}
-        for category in self.bx_category_order():
+        for category in self.bx_visible_categories():
             button = QPushButton(category)
-            button.setObjectName("featureButton" if category == self.bx_active_category else "cleanSecondaryButton")
+            button.setObjectName("bxCategoryActive" if category == self.bx_active_category else "bxCategory")
             button.setCursor(Qt.PointingHandCursor)
-            button.setMinimumHeight(34)
+            button.setFixedHeight(36)
             button.clicked.connect(lambda _checked=False, target=category: self.select_bx_category(target))
-            category_layout.addWidget(button)
+            category_inner_layout.addWidget(button)
             self.bx_category_buttons[category] = button
+        category_inner_layout.addStretch(1)
+        category_scroll.setWidget(category_inner)
+        category_layout.addWidget(category_scroll, 1)
 
         category_layout.addSpacing(12)
         quick_title = QLabel("快速方法")
         quick_title.setObjectName("featureCardTitle")
         category_layout.addWidget(quick_title)
 
-        self.bx_basic_button = QPushButton("基本")
+        self.bx_basic_button = QPushButton("基本优化")
         self.bx_basic_button.setObjectName("scanPrimaryButton")
         self.bx_basic_button.setMinimumHeight(34)
         self.bx_basic_button.clicked.connect(lambda: self.select_bx_mode("basic"))
-        self.bx_best_button = QPushButton("最佳")
+        self.bx_best_button = QPushButton("最佳优化")
         self.bx_best_button.setObjectName("cleanSecondaryButton")
         self.bx_best_button.setMinimumHeight(34)
         self.bx_best_button.clicked.connect(lambda: self.select_bx_mode("best"))
-        bx_advanced_button = QPushButton("高级  PRO")
-        bx_advanced_button.setObjectName("cleanSecondaryButton")
-        bx_advanced_button.setMinimumHeight(34)
-        bx_advanced_button.clicked.connect(lambda: self.apply_bx_preset("max"))
         category_layout.addWidget(self.bx_basic_button)
         category_layout.addWidget(self.bx_best_button)
-        category_layout.addWidget(bx_advanced_button)
-        category_layout.addStretch(1)
 
         self.bx_apply_button = QPushButton("✓ 应用")
         self.bx_apply_button.setObjectName("scanPrimaryButton")
@@ -1673,18 +1712,6 @@ class CleanerMainWindow(QMainWindow):
 
         toolbar_title = QLabel("基础设置")
         toolbar_title.setObjectName("featureCardTitle")
-        bx_default_button = QPushButton("默认")
-        bx_default_button.setObjectName("cleanSecondaryButton")
-        bx_default_button.setMinimumWidth(88)
-        bx_default_button.clicked.connect(lambda: self.apply_bx_preset("default"))
-        bx_best_tab_button = QPushButton("最佳")
-        bx_best_tab_button.setObjectName("cleanSecondaryButton")
-        bx_best_tab_button.setMinimumWidth(88)
-        bx_best_tab_button.clicked.connect(lambda: self.select_bx_mode("best"))
-        bx_max_button = QPushButton("最大")
-        bx_max_button.setObjectName("scanPrimaryButton")
-        bx_max_button.setMinimumWidth(88)
-        bx_max_button.clicked.connect(lambda: self.apply_bx_preset("max"))
         bx_refresh_button = QPushButton("更新")
         bx_refresh_button.setObjectName("cleanSecondaryButton")
         bx_refresh_button.setMinimumWidth(88)
@@ -1692,9 +1719,6 @@ class CleanerMainWindow(QMainWindow):
 
         toolbar_layout.addWidget(toolbar_title)
         toolbar_layout.addStretch(1)
-        toolbar_layout.addWidget(bx_default_button)
-        toolbar_layout.addWidget(bx_best_tab_button)
-        toolbar_layout.addWidget(bx_max_button)
         toolbar_layout.addWidget(bx_refresh_button)
         main_panel.addWidget(toolbar)
 
@@ -2024,6 +2048,17 @@ class CleanerMainWindow(QMainWindow):
     def bx_item_id(self, item):
         return f"{item.get('category', '')}::{item.get('title', '')}"
 
+    def bx_visible_categories(self):
+        """只显示真正含有优化项的分类，避免左侧出现一堆空分类把面板挤爆。"""
+        present = {item.get("category") for item in self.bx_catalog()}
+        categories = ["我的调整"]
+        for category in self.bx_category_order():
+            if category == "我的调整":
+                continue
+            if category in present:
+                categories.append(category)
+        return categories
+
     def bx_category_items(self, category=None):
         category = category or self.bx_active_category
         if category == "我的调整":
@@ -2066,7 +2101,7 @@ class CleanerMainWindow(QMainWindow):
             items = self.bx_category_items(category)
             count = sum(1 for item in items if self.bx_item_states.get(self.bx_item_id(item)))
             button.setText(f"{category}    {count}" if count else category)
-            button.setObjectName("featureButton" if category == self.bx_active_category else "cleanSecondaryButton")
+            button.setObjectName("bxCategoryActive" if category == self.bx_active_category else "bxCategory")
             button.style().unpolish(button)
             button.style().polish(button)
 
@@ -2078,17 +2113,21 @@ class CleanerMainWindow(QMainWindow):
     def update_bx_mode_buttons(self):
         if not hasattr(self, "bx_basic_button"):
             return
-        self.bx_basic_button.setObjectName("scanPrimaryButton" if self.bx_mode == "basic" else "cleanSecondaryButton")
-        self.bx_best_button.setObjectName("scanPrimaryButton" if self.bx_mode == "best" else "cleanSecondaryButton")
-        for button in (self.bx_basic_button, self.bx_best_button):
+        mode_buttons = {
+            "basic": self.bx_basic_button,
+            "best": self.bx_best_button,
+        }
+        for mode, button in mode_buttons.items():
+            if button is None:
+                continue
+            button.setObjectName("scanPrimaryButton" if self.bx_mode == mode else "cleanSecondaryButton")
             button.style().unpolish(button)
             button.style().polish(button)
 
     def select_bx_mode(self, mode):
-        if mode == "best":
-            self.bx_mode = "best"
-        else:
-            self.bx_mode = "basic"
+        if mode not in ("basic", "best", "max"):
+            mode = "basic"
+        self.bx_mode = mode
         self.apply_bx_preset(self.bx_mode)
 
     def refresh_bx_page(self):

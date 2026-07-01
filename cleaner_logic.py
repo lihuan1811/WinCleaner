@@ -17,12 +17,46 @@ import datetime
 import concurrent.futures
 from dismpp_rules import DismRuleScanner
 
-# 配置日志
+
+def _hide_windows_file(path):
+    """在 Windows 上给文件加隐藏属性，避免日志文件暴露在目录里。"""
+    if os.name != 'nt' or not path:
+        return
+    try:
+        import ctypes
+        FILE_ATTRIBUTE_HIDDEN = 0x02
+        ctypes.windll.kernel32.SetFileAttributesW(str(path), FILE_ATTRIBUTE_HIDDEN)
+    except Exception:
+        pass
+
+
+def _resolve_hidden_log_path():
+    """把日志写入用户 AppData 隐藏目录，不再生成在程序所在目录里。"""
+    base = (
+        os.environ.get('LOCALAPPDATA')
+        or os.environ.get('APPDATA')
+        or tempfile.gettempdir()
+    )
+    log_dir = os.path.join(base, 'CDriveCleanerSpirit')
+    try:
+        os.makedirs(log_dir, exist_ok=True)
+    except OSError:
+        log_dir = tempfile.gettempdir()
+    # 顺手隐藏历史上遗留在当前目录的 cleaner.log
+    legacy = os.path.join(os.getcwd(), 'cleaner.log')
+    if os.path.exists(legacy):
+        _hide_windows_file(legacy)
+    return os.path.join(log_dir, 'cleaner.log')
+
+
+# 配置日志（写入隐藏的 AppData 目录，并对日志文件设置隐藏属性）
+LOG_PATH = _resolve_hidden_log_path()
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    filename='cleaner.log'
+    filename=LOG_PATH
 )
+_hide_windows_file(LOG_PATH)
 logger = logging.getLogger('CCleaner')
 
 
@@ -2303,6 +2337,20 @@ class CleanerLogic:
                     })
                     continue
 
+                # 跳过被其它进程占用的文件（例如正在使用中的 temp 文件），避免误删影响运行中的程序
+                if (
+                    item_type != 'recycle'
+                    and not self.options.get('simulate')
+                    and os.path.isfile(path)
+                    and self._is_file_in_use(path)
+                ):
+                    logger.info(f"跳过被占用的文件: {path}")
+                    results['skipped'].append({
+                        'path': path,
+                        'reason': '文件正在被占用'
+                    })
+                    continue
+
                 # 处理不同类型的项目
                 if item_type == 'recycle':
                     # 清空回收站
@@ -2364,6 +2412,49 @@ class CleanerLogic:
         if err in (errno.EACCES, errno.EBUSY, errno.EPERM):
             return True
         return False
+
+    @staticmethod
+    def _is_file_in_use(path):
+        """检测文件是否正被其它进程占用（Windows 共享冲突），占用中则应跳过不删。
+
+        以“独占（不允许共享）”方式尝试打开文件：
+        - 打开成功说明没有别的进程占用它 -> 可清理；
+        - 失败且错误为共享冲突(32)/锁定冲突(33)说明文件正在使用 -> 跳过。
+        其它错误（如访问被拒）交给后续删除流程按需处理。
+        """
+        if os.name != 'nt' or not path:
+            return False
+        try:
+            if not os.path.isfile(path):
+                return False
+            import ctypes
+            from ctypes import wintypes
+
+            GENERIC_READ = 0x80000000
+            OPEN_EXISTING = 3
+            FILE_ATTRIBUTE_NORMAL = 0x80
+            INVALID_HANDLE_VALUE = ctypes.c_void_p(-1).value
+            ERROR_SHARING_VIOLATION = 32
+            ERROR_LOCK_VIOLATION = 33
+
+            kernel32 = ctypes.WinDLL('kernel32', use_last_error=True)
+            CreateFileW = kernel32.CreateFileW
+            CreateFileW.restype = ctypes.c_void_p
+            CreateFileW.argtypes = [
+                wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD,
+                ctypes.c_void_p, wintypes.DWORD, wintypes.DWORD, ctypes.c_void_p,
+            ]
+            # dwShareMode=0 表示独占打开，别的进程占用时会失败
+            handle = CreateFileW(
+                path, GENERIC_READ, 0, None, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, None
+            )
+            if handle == INVALID_HANDLE_VALUE or not handle:
+                err = ctypes.get_last_error()
+                return err in (ERROR_SHARING_VIOLATION, ERROR_LOCK_VIOLATION)
+            kernel32.CloseHandle(ctypes.c_void_p(handle))
+            return False
+        except Exception:
+            return False
 
     def _clean_file(self, file_path, backup_dir=None):
         """清理单个文件"""
@@ -2471,6 +2562,11 @@ class CleanerLogic:
                 for file in files:
                     try:
                         file_path = os.path.join(root, file)
+
+                        # 跳过被占用的文件，不做备份也不删除
+                        if self._is_file_in_use(file_path):
+                            logger.info(f"跳过被占用的文件: {file_path}")
+                            continue
 
                         # 备份文件
                         if backup_dir:

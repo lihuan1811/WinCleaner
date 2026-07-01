@@ -250,11 +250,12 @@ def test_qt_bx_module_has_basic_and_best_modes():
 
     assert "BX(优化)" in source
     assert "基础设置" in source
-    assert "self.bx_basic_button = QPushButton(\"基本\")" in source
-    assert "self.bx_best_button = QPushButton(\"最佳\")" in source
+    assert "self.bx_basic_button = QPushButton(\"基本优化\")" in source
+    assert "self.bx_best_button = QPushButton(\"最佳优化\")" in source
     assert "def select_bx_mode" in source
     assert 'self.bx_mode = "basic"' in source
-    assert 'self.bx_mode = "best"' in source
+    assert 'self.select_bx_mode("basic")' in source
+    assert 'self.select_bx_mode("best")' in source
     assert "应用" in source
 
 
