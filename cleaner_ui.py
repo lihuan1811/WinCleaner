@@ -455,6 +455,12 @@ QWidget#pageScrollInner {
     background: transparent;
 }
 
+QWidget#bxTabContainer {
+    background: #F4FAF9;
+    border-bottom-left-radius: 8px;
+    border-bottom-right-radius: 8px;
+}
+
 QScrollArea#bxScrollArea {
     background: transparent;
     border: none;
@@ -1604,7 +1610,7 @@ class CleanerMainWindow(QMainWindow):
         container = QWidget()
         container.setObjectName("bxTabContainer")
         body = QHBoxLayout(container)
-        body.setContentsMargins(0, 0, 0, 0)
+        body.setContentsMargins(14, 14, 14, 14)
         body.setSpacing(14)
 
         category_panel = QFrame()
@@ -4937,7 +4943,7 @@ class CleanerMainWindow(QMainWindow):
         if not sys.platform.startswith("win"):
             return True
         try:
-            subprocess.Popen(command, shell=True)
+            subprocess.Popen(command, shell=True, **hidden_windows_subprocess_kwargs())
             return True
         except Exception:  # pragma: no cover - Windows shell dependent
             return False
@@ -4963,7 +4969,7 @@ class CleanerMainWindow(QMainWindow):
             return
 
         try:
-            subprocess.Popen(command, shell=True)
+            subprocess.Popen(command, shell=True, **hidden_windows_subprocess_kwargs())
             self.uninstall_status_label.setText(f"已启动卸载程序: {app.get('name', '')}，完成后将自动刷新列表。")
             QTimer.singleShot(3000, lambda: self.load_installed_apps(show_message=False))
             QTimer.singleShot(10000, lambda: self.load_installed_apps(show_message=False))
