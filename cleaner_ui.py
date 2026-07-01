@@ -23,7 +23,8 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QH
                             QFileDialog, QTabWidget, QTableWidget,
                             QTableWidgetItem, QHeaderView, QAbstractItemView,
                             QFileIconProvider, QGraphicsOpacityEffect, QLineEdit,
-                            QTextEdit, QAbstractButton, QStyledItemDelegate, QStyle)
+                            QTextEdit, QAbstractButton, QStyledItemDelegate, QStyle,
+                            QMenu)
 from PyQt5.QtCore import (
     Qt, QThread, pyqtSignal, QSize, QFileInfo, QPropertyAnimation, QEasingCurve,
     QTimer, QRect
@@ -710,12 +711,29 @@ class FileScanThread(QThread):
             return None
 
 
-class FolderUsageBarDelegate(QStyledItemDelegate):
-    """在“占比”列绘制一条青色占用条 + 百分比文字（WinDirStat 风格）。"""
+# 占用条委托读取的“比例”自定义角色（0~1），与用于排序的 Qt.UserRole 区分开。
+BAR_FRAC_ROLE = int(Qt.UserRole) + 1
+
+
+class UsageBarDelegate(QStyledItemDelegate):
+    """在单元格内绘制一条青色占用条 + 原始文字（WinDirStat 风格）。
+
+    - 比例从 ``BAR_FRAC_ROLE``（0~1）读取；无该数据时退回默认绘制。
+    - 叠加的文字取单元格的 DisplayRole（如 “35.2%” 或 “1.2 GB”）。
+    """
+
+    def __init__(self, parent=None, align=Qt.AlignCenter):
+        super().__init__(parent)
+        self._align = align
 
     def paint(self, painter, option, index):
-        pct = index.data(Qt.UserRole)
-        if pct is None:
+        frac = index.data(BAR_FRAC_ROLE)
+        if frac is None:
+            super().paint(painter, option, index)
+            return
+        try:
+            frac = float(frac)
+        except (TypeError, ValueError):
             super().paint(painter, option, index)
             return
 
@@ -730,7 +748,7 @@ class FolderUsageBarDelegate(QStyledItemDelegate):
         painter.setBrush(QColor("#E3EFEC"))
         painter.drawRoundedRect(bar_rect, 4, 4)
 
-        frac = max(0.0, min(1.0, float(pct) / 100.0))
+        frac = max(0.0, min(1.0, frac))
         fill_width = int(bar_rect.width() * frac)
         if fill_width > 0:
             fill_rect = QRect(bar_rect)
@@ -744,8 +762,11 @@ class FolderUsageBarDelegate(QStyledItemDelegate):
                 painter.setBrush(QColor("#5EEAD4"))
             painter.drawRoundedRect(fill_rect, 4, 4)
 
-        painter.setPen(QColor("#15241C"))
-        painter.drawText(option.rect, Qt.AlignCenter, f"{float(pct):.1f}%")
+        text = index.data(Qt.DisplayRole)
+        if text:
+            painter.setPen(QColor("#15241C"))
+            painter.drawText(option.rect.adjusted(9, 0, -9, 0),
+                             int(self._align | Qt.AlignVCenter), str(text))
         painter.restore()
 
 
@@ -3906,6 +3927,8 @@ class CleanerMainWindow(QMainWindow):
 
         self.folder_tree = self._make_folder_tree()
         self.file_large_table = self._make_file_manage_table(["文件名", "大小", "路径", "操作"])
+        # 大文件“大小”列绘制占用条（相对最大文件）。
+        self.file_large_table.setItemDelegateForColumn(1, UsageBarDelegate(self.file_large_table))
         self.file_duplicate_table = self._make_file_manage_table(["文件名", "大小", "重复组", "路径", "操作"])
         self.fragment_page = self._build_fragment_page()
         self.file_tabs.addTab(self.folder_tree, "文件夹占用")
@@ -3934,7 +3957,9 @@ class CleanerMainWindow(QMainWindow):
         tree.setIconSize(QSize(18, 18))
         tree.setSortingEnabled(False)
         tree.itemExpanded.connect(self.on_folder_item_expanded)
-        tree.setItemDelegateForColumn(3, FolderUsageBarDelegate(tree))
+        tree.setItemDelegateForColumn(3, UsageBarDelegate(tree))
+        tree.setContextMenuPolicy(Qt.CustomContextMenu)
+        tree.customContextMenuRequested.connect(self.on_folder_context_menu)
 
         header_view = tree.header()
         header_view.setStretchLastSection(False)
@@ -3954,10 +3979,11 @@ class CleanerMainWindow(QMainWindow):
         item.setText(1, self.format_size(size))
         item.setText(2, f"{file_count:,}")
         pct = (size / root_total * 100) if root_total else 0
+        item.setText(3, f"{pct:.1f}%")
         item.setTextAlignment(1, Qt.AlignRight | Qt.AlignVCenter)
         item.setTextAlignment(2, Qt.AlignRight | Qt.AlignVCenter)
         item.setData(0, Qt.UserRole, dir_path)
-        item.setData(3, Qt.UserRole, pct)  # 供占用条委托绘制
+        item.setData(3, BAR_FRAC_ROLE, pct / 100.0)  # 供占用条委托绘制
         item.setToolTip(0, dir_path)
         try:
             item.setIcon(0, self.icon_provider.icon(QFileInfo(dir_path)))
@@ -4005,6 +4031,148 @@ class CleanerMainWindow(QMainWindow):
                     child, data["total"].get(child, 0), counts.get(child, 0), root_total
                 )
             )
+
+    def on_folder_context_menu(self, pos):
+        item = self.folder_tree.itemAt(pos)
+        if item is None:
+            return
+        path = item.data(0, Qt.UserRole)
+        if not path or path == self.FOLDER_PLACEHOLDER:
+            return
+
+        menu = QMenu(self.folder_tree)
+        act_open = menu.addAction("在资源管理器中打开")
+        act_copy = menu.addAction("复制路径")
+        menu.addSeparator()
+        act_delete = menu.addAction("删除该文件夹…")
+
+        chosen = menu.exec_(self.folder_tree.viewport().mapToGlobal(pos))
+        if chosen is None:
+            return
+        if chosen == act_open:
+            self.open_file_location(path)
+        elif chosen == act_copy:
+            QApplication.clipboard().setText(path)
+            self.file_status_label.setText(f"已复制路径: {path}")
+            self.animate_status_pulse(self.file_status_label)
+        elif chosen == act_delete:
+            self.delete_folder_from_tree(path)
+
+    def is_protected_directory(self, path):
+        """判断文件夹是否属于禁止删除的系统关键位置或程序自身目录。"""
+        if not path:
+            return True
+        try:
+            normalized = os.path.abspath(path).replace("/", "\\").rstrip("\\").lower()
+        except Exception:
+            return True
+        # 盘符根目录，如 c: / c:\
+        if len(normalized) <= 2 or normalized.endswith(":"):
+            return True
+        critical = {
+            "c:\\windows", "c:\\program files", "c:\\program files (x86)",
+            "c:\\users", "c:\\programdata",
+            "c:\\windows\\system32", "c:\\windows\\syswow64", "c:\\windows\\winsxs",
+        }
+        if normalized in critical:
+            return True
+        for root in ("c:\\windows\\system32\\", "c:\\windows\\syswow64\\", "c:\\windows\\winsxs\\"):
+            if (normalized + "\\").startswith(root):
+                return True
+        try:
+            app_dir = os.path.dirname(os.path.abspath(sys.argv[0])).replace("/", "\\").rstrip("\\").lower()
+        except Exception:
+            app_dir = ""
+        # 程序自身所在目录及其任一祖先目录都不允许删除。
+        if app_dir and (app_dir == normalized or app_dir.startswith(normalized + "\\")):
+            return True
+        return False
+
+    def delete_folder_from_tree(self, path):
+        """右键“删除该文件夹”：强保护 + 确认后删除到回收站（可恢复）。"""
+        if not path or not os.path.isdir(path):
+            QMessageBox.information(self, "删除文件夹", "该文件夹不存在或已被删除。")
+            return
+        if self.is_protected_directory(path):
+            QMessageBox.warning(
+                self,
+                "删除文件夹",
+                "该文件夹属于系统关键位置或程序自身，禁止删除以保证系统稳定。",
+            )
+            return
+
+        size = 0
+        count = 0
+        if self.folder_scan_data:
+            size = self.folder_scan_data.get("total", {}).get(path, 0)
+            count = self.folder_scan_data.get("count", {}).get(path, 0)
+
+        soft_warn = ""
+        if self.is_soft_protected_file(path + "\\"):
+            soft_warn = "\n注意：该文件夹位于系统或程序目录，删除可能影响已安装程序！"
+
+        prompt = (
+            f"确定删除整个文件夹吗？\n{path}\n\n"
+            f"占用约 {self.format_size(size)}，包含 {count:,} 个文件，将连同其中所有内容一并删除。\n"
+            "删除到回收站（可从回收站恢复）。"
+            f"{soft_warn}"
+        )
+        if QMessageBox.question(
+            self, "删除文件夹", prompt,
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+        ) != QMessageBox.Yes:
+            return
+
+        ok, err = self.move_path_to_recycle_bin(path)
+        if ok:
+            self.file_status_label.setText(
+                f"已删除文件夹到回收站: {path}（释放约 {self.format_size(size)}）"
+            )
+            self.animate_status_pulse(self.file_status_label)
+            self.update_disk_info()
+            # 重新统计占用，刷新树。
+            self.folder_scan_done_root = None
+            self.scan_folder_usage()
+        else:
+            QMessageBox.warning(self, "删除文件夹", f"删除失败: {err}")
+
+    def move_path_to_recycle_bin(self, path):
+        """将文件或文件夹移动到回收站。返回 (成功, 错误信息)。"""
+        if not sys.platform.startswith("win"):
+            return False, "仅支持 Windows 回收站删除。"
+        try:
+            import ctypes
+            from ctypes import windll
+            from ctypes.wintypes import HWND, UINT, LPCWSTR, BOOL
+
+            class SHFILEOPSTRUCTW(ctypes.Structure):
+                _fields_ = [
+                    ("hwnd", HWND),
+                    ("wFunc", UINT),
+                    ("pFrom", LPCWSTR),
+                    ("pTo", LPCWSTR),
+                    ("fFlags", UINT),
+                    ("fAnyOperationsAborted", BOOL),
+                    ("hNameMappings", ctypes.c_void_p),
+                    ("lpszProgressTitle", LPCWSTR),
+                ]
+
+            FO_DELETE = 3
+            FOF_ALLOWUNDO = 0x40
+            FOF_NOCONFIRMATION = 0x10
+            FOF_SILENT = 0x04
+
+            fileop = SHFILEOPSTRUCTW(
+                None, FO_DELETE, path + "\0\0", None,
+                FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_SILENT,
+                None, None, None,
+            )
+            result = windll.shell32.SHFileOperationW(ctypes.byref(fileop))
+            if result == 0 and not fileop.fAnyOperationsAborted:
+                return True, ""
+            return False, f"Shell 操作返回代码 {result}"
+        except Exception as exc:  # pragma: no cover - Windows shell dependent
+            return False, str(exc)
 
     def _make_file_manage_table(self, headers):
         table = QTableWidget()
@@ -4612,6 +4780,7 @@ class CleanerMainWindow(QMainWindow):
             return
         self.file_large_table.setSortingEnabled(False)
         self.file_large_table.setRowCount(0)
+        max_size = max((item["size"] for item in items), default=0) or 1
         for row_index, item in enumerate(items):
             self.file_large_table.insertRow(row_index)
             path = item["path"]
@@ -4623,6 +4792,7 @@ class CleanerMainWindow(QMainWindow):
 
             size_item = QTableWidgetItem(self.format_size(item["size"]))
             size_item.setData(Qt.UserRole, item["size"])
+            size_item.setData(BAR_FRAC_ROLE, item["size"] / max_size)
             self.file_large_table.setItem(row_index, 1, size_item)
 
             path_item = QTableWidgetItem(path)
