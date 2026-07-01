@@ -103,9 +103,13 @@ def normalize_email(email: str) -> str:
     return email.strip().lower()
 
 
-def validate_email(email: str) -> None:
-    if "@" not in email or "." not in email:
-        raise HTTPException(status_code=400, detail="请输入有效邮箱。")
+def validate_account_name(name: str) -> None:
+    """账号名称规则：长度不少于 6 位，且不能包含中文（限 ASCII 字符）。"""
+    value = (name or "").strip()
+    if len(value) < 6:
+        raise HTTPException(status_code=400, detail="名称至少需要 6 位。")
+    if not value.isascii():
+        raise HTTPException(status_code=400, detail="名称不能包含中文字符，请使用字母或数字。")
 
 
 def validate_password(password: str) -> None:
@@ -315,10 +319,11 @@ def create_app(database_url: str | None = None) -> FastAPI:
 
     @app.post("/api/auth/register")
     def register(request: RegisterRequest) -> dict[str, object | None]:
+        raw_name = (request.email or "").strip()
         email = normalize_email(request.email)
-        validate_email(email)
+        validate_account_name(raw_name)
         validate_password(request.password)
-        display_name = request.display_name.strip() or email.split("@")[0]
+        display_name = request.display_name.strip() or raw_name
         now = utc_now()
         password_hash = hash_password(email, request.password)
 
@@ -333,7 +338,7 @@ def create_app(database_url: str | None = None) -> FastAPI:
                 (email, display_name, password_hash, now),
             ).fetchone()
             if inserted is None:
-                raise HTTPException(status_code=409, detail="这个邮箱已经注册，请直接登录。")
+                raise HTTPException(status_code=409, detail="该名称已被注册，请更换或直接登录。")
             # 新账号赠送一次体验卡；后续到期需用激活码续期
             trial_expires = now + timedelta(days=trial_days())
             connection.execute(
@@ -352,7 +357,7 @@ def create_app(database_url: str | None = None) -> FastAPI:
     @app.post("/api/auth/login")
     def login(request: LoginRequest) -> dict[str, object | None]:
         email = normalize_email(request.email)
-        validate_email(email)
+        validate_account_name(request.email)
         validate_password(request.password)
 
         with active_database().connect() as connection:
@@ -364,7 +369,7 @@ def create_app(database_url: str | None = None) -> FastAPI:
                 email,
                 request.password,
             ):
-                raise HTTPException(status_code=401, detail="邮箱或密码不正确。")
+                raise HTTPException(status_code=401, detail="名称或密码不正确。")
             save_session(connection, request.device_id, email)
             return load_state(connection, request.device_id)
 

@@ -1397,7 +1397,7 @@ class AccountAuthDialog(QDialog):
         login_layout.setContentsMargins(12, 16, 12, 12)
         login_layout.setSpacing(10)
         self.account_email_input = QLineEdit()
-        self.account_email_input.setPlaceholderText("邮箱")
+        self.account_email_input.setPlaceholderText("名称")
         self.account_password_input = QLineEdit()
         self.account_password_input.setPlaceholderText("密码，至少 6 位")
         self.account_password_input.setEchoMode(QLineEdit.Password)
@@ -1414,20 +1414,21 @@ class AccountAuthDialog(QDialog):
         register_layout = QVBoxLayout(register_tab)
         register_layout.setContentsMargins(12, 16, 12, 12)
         register_layout.setSpacing(10)
-        self.register_email_input = QLineEdit()
-        self.register_email_input.setPlaceholderText("邮箱")
         self.register_name_input = QLineEdit()
-        self.register_name_input.setPlaceholderText("昵称")
+        self.register_name_input.setPlaceholderText("名称（至少 6 位，不能含中文）")
         self.register_password_input = QLineEdit()
         self.register_password_input.setPlaceholderText("密码，至少 6 位")
         self.register_password_input.setEchoMode(QLineEdit.Password)
+        register_hint = QLabel("名称需 6 位及以上、不能包含中文，且不能与已注册名称重复。")
+        register_hint.setObjectName("statusLabel")
+        register_hint.setWordWrap(True)
         register_button = QPushButton("注册并登录")
         register_button.setObjectName("scanPrimaryButton")
         register_button.setMinimumHeight(36)
         register_button.clicked.connect(parent.register_account_from_dialog)
-        register_layout.addWidget(self.register_email_input)
         register_layout.addWidget(self.register_name_input)
         register_layout.addWidget(self.register_password_input)
+        register_layout.addWidget(register_hint)
         register_layout.addWidget(register_button)
         register_layout.addStretch(1)
 
@@ -1462,10 +1463,11 @@ class AccountAuthDialog(QDialog):
         )
 
     def register_credentials(self):
+        name = self.register_name_input.text().strip()
         return (
-            self.register_email_input.text().strip(),
+            name,
             self.register_password_input.text(),
-            self.register_name_input.text().strip(),
+            name,
         )
 
 
@@ -4716,7 +4718,7 @@ class CleanerMainWindow(QMainWindow):
         self.file_tabs.addTab(self.folder_tree, "文件夹占用")
         self.file_tabs.addTab(self.file_large_table, "大文件")
         self.file_tabs.addTab(self.file_duplicate_table, "重复文件")
-        self.file_tabs.addTab(self.fragment_page, "碎片整理")
+        # 碎片整理标签已隐藏（页面仍构建以保留相关引用），不再作为标签展示。
         self.file_tabs.addTab(self.migration_page, "文件迁移")
         self.file_tabs.currentChanged.connect(self.on_file_tab_changed)
         outer.addWidget(self.file_tabs, 1)
@@ -6324,13 +6326,30 @@ class CleanerMainWindow(QMainWindow):
             return dialog.login_credentials()
         return ("", "", "")
 
+    @staticmethod
+    def validate_account_name_input(name):
+        """客户端即时校验账号名称：≥6 位、不含中文（限 ASCII）。返回错误信息或空串。"""
+        value = (name or "").strip()
+        if len(value) < 6:
+            return "名称至少需要 6 位。"
+        if not value.isascii():
+            return "名称不能包含中文字符，请使用字母或数字。"
+        return ""
+
     def register_account_from_dialog(self):
         dialog = getattr(self, "account_auth_dialog", None)
         if dialog is None:
             return
-        email, password, display_name = dialog.register_credentials()
+        name, password, display_name = dialog.register_credentials()
+        name_error = self.validate_account_name_input(name)
+        if name_error:
+            dialog.set_message(name_error)
+            return
+        if len(password or "") < 6:
+            dialog.set_message("密码至少需要 6 位。")
+            return
         try:
-            self.account_service.register(email, password, display_name)
+            self.account_service.register(name, password, display_name)
             dialog.register_password_input.clear()
             self.refresh_account_state("注册并登录成功。")
             dialog.set_message("注册并登录成功。")
@@ -6342,10 +6361,17 @@ class CleanerMainWindow(QMainWindow):
         self.register_account_from_dialog()
 
     def login_account(self):
-        email, password, _display_name = self.account_credentials()
+        name, password, _display_name = self.account_credentials()
         dialog = getattr(self, "account_auth_dialog", None)
+        name_error = self.validate_account_name_input(name)
+        if name_error:
+            if dialog is not None:
+                dialog.set_message(name_error)
+            else:
+                self.refresh_account_state(name_error)
+            return
         try:
-            self.account_service.login(email, password)
+            self.account_service.login(name, password)
             if dialog is not None:
                 dialog.account_password_input.clear()
                 dialog.set_message("登录成功。")
@@ -6378,8 +6404,15 @@ class CleanerMainWindow(QMainWindow):
         self.start_file_scan_thread("folders", root_dir)
 
     def on_file_tab_changed(self, _index):
-        """切换标签时不再自动扫描，改由用户点击对应扫描按钮触发，避免卡顿。"""
+        """切换标签时不自动扫描文件；但首次进入“文件迁移”会自动列出个人文件夹。"""
         self.sync_file_select_all()
+        if (
+            hasattr(self, "migration_page")
+            and self.file_tabs.currentWidget() is self.migration_page
+            and not self.migration_loaded
+            and not (self.migration_scan_thread and self.migration_scan_thread.isRunning())
+        ):
+            self.refresh_migration_folders()
         return
 
     def scan_large_files(self):
@@ -6483,7 +6516,8 @@ class CleanerMainWindow(QMainWindow):
             selected = dialog.selected_path
             self.file_scan_root = selected
             self.file_root_label.setText(f"扫描目录: {selected}")
-            self.file_status_label.setText("已更新扫描目录，点击“扫描文件夹”开始统计。")
+            # 选择目录后自动开始扫描（文件夹占用统计）。
+            self.scan_folder_usage()
 
     def find_large_files(self, root_dir, min_size=100 * 1024 * 1024, max_files=5000):
         large_files = []

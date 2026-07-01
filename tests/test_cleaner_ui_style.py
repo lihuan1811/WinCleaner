@@ -195,7 +195,9 @@ def test_qt_file_manager_uses_in_app_tables():
     assert "self.file_large_table" in file_page
     assert "self.file_duplicate_table" in file_page
     assert "self.fragment_page" in file_page
-    assert "碎片整理" in file_page
+    # 碎片整理标签已隐藏：不再以标签形式加入文件管理
+    assert 'addTab(self.fragment_page, "碎片整理")' not in file_page
+    assert 'addTab(self.migration_page, "文件迁移")' in file_page
     assert "populate_large_files_table" in source
     assert "populate_duplicate_files_table" in source
     assert "删除选中文件" in file_page
@@ -396,6 +398,10 @@ def test_qt_has_in_app_account_login_register_and_card_redeem():
     assert "登录" in source
     assert "注册" in source
     assert "兑换卡密" in source
+    # 注册改为“名称+密码”，名称需 6 位以上、不能含中文
+    assert "validate_account_name_input" in source
+    assert "名称至少需要 6 位。" in source
+    assert "名称不能包含中文字符" in source
 
 
 def test_qt_core_actions_require_membership():

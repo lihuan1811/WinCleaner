@@ -54,5 +54,26 @@ def test_reject_duplicate_card_wrong_password_and_guest_redeem(tmp_path):
         service.redeem_card("WINCLEANER-MONTH-DEMO")
 
     service.logout()
-    with pytest.raises(AccountError, match="邮箱或密码不正确"):
+    with pytest.raises(AccountError, match="名称或密码不正确"):
         service.login("team@example.com", "wrong-password")
+
+
+def test_register_name_rules(tmp_path):
+    service = LocalAccountService(
+        store_path=tmp_path / "account.json",
+        now=lambda: datetime(2026, 6, 30, tzinfo=timezone.utc),
+    )
+
+    # 少于 6 位
+    with pytest.raises(AccountError, match="至少需要 6 位"):
+        service.register("abc", "123456")
+
+    # 含中文
+    with pytest.raises(AccountError, match="不能包含中文"):
+        service.register("张三abcdef", "123456")
+
+    # 正常注册
+    service.register("username1", "123456")
+    # 名称不能重复（大小写不敏感）
+    with pytest.raises(AccountError, match="已被注册"):
+        service.register("UserName1", "123456")

@@ -74,9 +74,13 @@ class LocalAccountService:
             parsed = parsed.replace(tzinfo=timezone.utc)
         return parsed
 
-    def validate_email(self, email):
-        if "@" not in email or "." not in email:
-            raise AccountError("请输入有效邮箱。")
+    def validate_name(self, name):
+        """账号名称规则：长度不少于 6 位，且不能包含中文（限 ASCII 字符）。"""
+        value = (name or "").strip()
+        if len(value) < 6:
+            raise AccountError("名称至少需要 6 位。")
+        if not value.isascii():
+            raise AccountError("名称不能包含中文字符，请使用字母或数字。")
 
     def validate_password(self, password):
         if len(password or "") < 6:
@@ -169,14 +173,15 @@ class LocalAccountService:
         return self.state_from_store(self.load_store())
 
     def register(self, email, password, display_name=""):
-        email = self.normalize_email(email)
-        display_name = (display_name or "").strip() or email.split("@")[0]
-        self.validate_email(email)
+        raw_name = (email or "").strip()
+        self.validate_name(raw_name)
         self.validate_password(password)
+        email = self.normalize_email(email)
+        display_name = (display_name or "").strip() or raw_name
 
         store = self.load_store()
         if self.user_by_email(store, email):
-            raise AccountError("这个邮箱已经注册，请直接登录。")
+            raise AccountError("该名称已被注册，请更换或直接登录。")
 
         now = self.now()
         user = {
@@ -198,14 +203,14 @@ class LocalAccountService:
         return self.state_from_store(store)
 
     def login(self, email, password):
-        email = self.normalize_email(email)
-        self.validate_email(email)
+        self.validate_name(email)
         self.validate_password(password)
+        email = self.normalize_email(email)
 
         store = self.load_store()
         user = self.user_by_email(store, email)
         if not user or user.get("passwordHash") != self.hash_password(email, password):
-            raise AccountError("邮箱或密码不正确。")
+            raise AccountError("名称或密码不正确。")
         store["currentEmail"] = email
         self.save_store(store)
         return self.state_from_store(store)
