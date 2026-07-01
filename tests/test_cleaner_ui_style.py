@@ -245,7 +245,9 @@ def test_qt_labels_have_room_for_chinese_actions():
     assert "sidebar.setFixedWidth(196)" in source
     assert "button.setMinimumWidth(148)" in source
     assert "uninstall_button.setMinimumWidth(96)" in source
-    assert "header_view.setMinimumSectionSize(86)" in source
+    # 文件管理表格加入了多选框列，最小列宽调整为 46 以容纳窄的复选框列；
+    # 文件名/路径列仍为拉伸、操作列固定 150，中文显示空间充足。
+    assert "header_view.setMinimumSectionSize(46)" in source
 
 
 def test_qt_uses_lightweight_opacity_animations():
