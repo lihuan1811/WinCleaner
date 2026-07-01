@@ -23,10 +23,10 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QH
                             QFileDialog, QTabWidget, QTableWidget,
                             QTableWidgetItem, QHeaderView, QAbstractItemView,
                             QFileIconProvider, QGraphicsOpacityEffect, QLineEdit,
-                            QTextEdit, QAbstractButton)
+                            QTextEdit, QAbstractButton, QStyledItemDelegate, QStyle)
 from PyQt5.QtCore import (
     Qt, QThread, pyqtSignal, QSize, QFileInfo, QPropertyAnimation, QEasingCurve,
-    QTimer
+    QTimer, QRect
 )
 from PyQt5.QtGui import QIcon, QFont, QPixmap, QColor, QPainter
 
@@ -570,10 +570,12 @@ class FileScanThread(QThread):
                 "root": 根目录,
                 "total": {目录: 递归总大小},
                 "own": {目录: 该目录内文件的大小（不含子目录）},
+                "count": {目录: 递归文件总数},
                 "children": {目录: [按大小降序排列的直接子目录, ...]},
             }
         """
         dir_own = {}
+        dir_own_count = {}
         children = {}
         order = []
         count = 0
@@ -585,15 +587,18 @@ class FileScanThread(QThread):
                 progress(f"正在统计文件夹占用: 已扫描 {count} 个目录 ...")
 
             own = 0
+            own_count = 0
             for file_name in filenames:
                 file_path = os.path.join(dirpath, file_name)
                 try:
                     if os.path.islink(file_path):
                         continue
                     own += os.path.getsize(file_path)
+                    own_count += 1
                 except OSError:
                     continue
             dir_own[dirpath] = own
+            dir_own_count[dirpath] = own_count
 
             kids = []
             for dir_name in dirnames:
@@ -609,11 +614,15 @@ class FileScanThread(QThread):
 
         # os.walk 自上而下，反向遍历即可保证子目录先于父目录累加。
         total = {}
+        total_count = {}
         for dirpath in reversed(order):
             acc = dir_own.get(dirpath, 0)
+            acc_count = dir_own_count.get(dirpath, 0)
             for child in children.get(dirpath, []):
                 acc += total.get(child, 0)
+                acc_count += total_count.get(child, 0)
             total[dirpath] = acc
+            total_count[dirpath] = acc_count
 
         for dirpath, kids in children.items():
             kids.sort(key=lambda c: total.get(c, 0), reverse=True)
@@ -622,6 +631,7 @@ class FileScanThread(QThread):
             "root": root_dir,
             "total": total,
             "own": dir_own,
+            "count": total_count,
             "children": children,
         }
 
@@ -698,6 +708,45 @@ class FileScanThread(QThread):
             return digest.hexdigest()
         except (OSError, PermissionError):
             return None
+
+
+class FolderUsageBarDelegate(QStyledItemDelegate):
+    """在“占比”列绘制一条青色占用条 + 百分比文字（WinDirStat 风格）。"""
+
+    def paint(self, painter, option, index):
+        pct = index.data(Qt.UserRole)
+        if pct is None:
+            super().paint(painter, option, index)
+            return
+
+        if option.state & QStyle.State_Selected:
+            painter.fillRect(option.rect, option.palette.highlight())
+
+        bar_rect = option.rect.adjusted(6, 5, -6, -5)
+        painter.save()
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        painter.setPen(Qt.NoPen)
+
+        painter.setBrush(QColor("#E3EFEC"))
+        painter.drawRoundedRect(bar_rect, 4, 4)
+
+        frac = max(0.0, min(1.0, float(pct) / 100.0))
+        fill_width = int(bar_rect.width() * frac)
+        if fill_width > 0:
+            fill_rect = QRect(bar_rect)
+            fill_rect.setWidth(fill_width)
+            # 占用越大颜色越深，给出直观的冷暖提示。
+            if frac >= 0.5:
+                painter.setBrush(QColor("#0D9488"))
+            elif frac >= 0.15:
+                painter.setBrush(QColor("#14B8A6"))
+            else:
+                painter.setBrush(QColor("#5EEAD4"))
+            painter.drawRoundedRect(fill_rect, 4, 4)
+
+        painter.setPen(QColor("#15241C"))
+        painter.drawText(option.rect, Qt.AlignCenter, f"{float(pct):.1f}%")
+        painter.restore()
 
 
 class DefragThread(QThread):
@@ -3877,34 +3926,38 @@ class CleanerMainWindow(QMainWindow):
     def _make_folder_tree(self):
         tree = QTreeWidget()
         tree.setObjectName("folderUsageTree")
-        tree.setColumnCount(3)
-        tree.setHeaderLabels(["文件夹", "占用大小", "占比"])
+        tree.setColumnCount(4)
+        tree.setHeaderLabels(["文件夹", "占用大小", "文件数", "占比"])
         tree.setAlternatingRowColors(True)
         tree.setUniformRowHeights(True)
         tree.setSelectionMode(QAbstractItemView.ExtendedSelection)
         tree.setIconSize(QSize(18, 18))
         tree.setSortingEnabled(False)
         tree.itemExpanded.connect(self.on_folder_item_expanded)
+        tree.setItemDelegateForColumn(3, FolderUsageBarDelegate(tree))
 
         header_view = tree.header()
         header_view.setStretchLastSection(False)
         header_view.setSectionResizeMode(0, QHeaderView.Stretch)
         header_view.setSectionResizeMode(1, QHeaderView.ResizeToContents)
         header_view.setSectionResizeMode(2, QHeaderView.ResizeToContents)
-        tree.setColumnWidth(1, 120)
+        header_view.setSectionResizeMode(3, QHeaderView.Fixed)
+        tree.setColumnWidth(1, 110)
         tree.setColumnWidth(2, 80)
+        tree.setColumnWidth(3, 160)
         return tree
 
-    def _make_folder_item(self, dir_path, size, root_total):
+    def _make_folder_item(self, dir_path, size, file_count, root_total):
         name = os.path.basename(dir_path.rstrip("\\/")) or dir_path
         item = QTreeWidgetItem()
         item.setText(0, name)
         item.setText(1, self.format_size(size))
+        item.setText(2, f"{file_count:,}")
         pct = (size / root_total * 100) if root_total else 0
-        item.setText(2, f"{pct:.1f}%")
         item.setTextAlignment(1, Qt.AlignRight | Qt.AlignVCenter)
         item.setTextAlignment(2, Qt.AlignRight | Qt.AlignVCenter)
         item.setData(0, Qt.UserRole, dir_path)
+        item.setData(3, Qt.UserRole, pct)  # 供占用条委托绘制
         item.setToolTip(0, dir_path)
         try:
             item.setIcon(0, self.icon_provider.icon(QFileInfo(dir_path)))
@@ -3923,10 +3976,17 @@ class CleanerMainWindow(QMainWindow):
         tree.clear()
         root = payload["root"]
         root_total = payload["total"].get(root, 0) or 1
+        counts = payload.get("count", {})
+        top_items = []
         for child in payload["children"].get(root, []):
-            tree.addTopLevelItem(
-                self._make_folder_item(child, payload["total"].get(child, 0), root_total)
+            item = self._make_folder_item(
+                child, payload["total"].get(child, 0), counts.get(child, 0), root_total
             )
+            tree.addTopLevelItem(item)
+            top_items.append(item)
+        # 默认展开两层：展开顶层项会触发懒加载填充其直接子目录。
+        for item in top_items:
+            tree.expandItem(item)
 
     def on_folder_item_expanded(self, item):
         if item.childCount() != 1:
@@ -3938,9 +3998,12 @@ class CleanerMainWindow(QMainWindow):
         dir_path = item.data(0, Qt.UserRole)
         data = self.folder_scan_data or {}
         root_total = data.get("total", {}).get(data.get("root"), 0) or 1
+        counts = data.get("count", {})
         for child in data.get("children", {}).get(dir_path, []):
             item.addChild(
-                self._make_folder_item(child, data["total"].get(child, 0), root_total)
+                self._make_folder_item(
+                    child, data["total"].get(child, 0), counts.get(child, 0), root_total
+                )
             )
 
     def _make_file_manage_table(self, headers):
