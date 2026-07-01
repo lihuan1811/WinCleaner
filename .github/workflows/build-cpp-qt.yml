@@ -1,0 +1,62 @@
+name: Build C++ Qt EXE
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "cpp_qt/**"
+      - ".github/workflows/build-cpp-qt.yml"
+
+jobs:
+  build:
+    runs-on: windows-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: "6.7.3"
+          host: "windows"
+          target: "desktop"
+          arch: "win64_msvc2019_64"
+
+      - name: Configure
+        shell: pwsh
+        run: cmake -S cpp_qt -B build/cpp_qt -G "Visual Studio 17 2022" -A x64 -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        shell: pwsh
+        run: cmake --build build/cpp_qt --config Release --parallel
+
+      - name: Deploy Qt runtime
+        shell: pwsh
+        run: |
+          $deploy = "dist/ClearC-Qt"
+          New-Item -ItemType Directory -Force -Path $deploy | Out-Null
+          Copy-Item "build/cpp_qt/bin/Release/ClearC.exe" "$deploy/ClearC.exe"
+          windeployqt "$deploy/ClearC.exe" --release --no-translations
+
+      - name: Package
+        shell: pwsh
+        run: |
+          Compress-Archive -Path "dist/ClearC-Qt/*" -DestinationPath "dist/ClearC-Qt.zip" -Force
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ClearC-Qt
+          path: dist/ClearC-Qt.zip
+
+      - name: Publish release
+        if: github.event_name == 'workflow_dispatch'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "cpp-build-${{ github.run_number }}"
+          gh release create $tag "dist/ClearC-Qt.zip" --title "ClearC C++ Qt build ${{ github.run_number }}" --notes "Native C++/Qt EXE package with windeployqt runtime."

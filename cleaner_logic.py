@@ -5,6 +5,7 @@
 C盘清理工具 - 核心清理逻辑
 """
 
+import errno
 import os
 import shutil
 import tempfile
@@ -2171,6 +2172,7 @@ class CleanerLogic:
         results = {
             'cleaned_items': [],
             'errors': [],
+            'skipped': [],
             'freed_space': 0
         }
 
@@ -2237,14 +2239,44 @@ class CleanerLogic:
                     results['freed_space'] += item['size']
 
             except Exception as e:
-                logger.error(f"清理项目 {item['path']} 时出错: {e}")
-                results['errors'].append({
-                    'path': item['path'],
-                    'error': str(e)
-                })
+                if self._is_lock_or_permission_error(e):
+                    logger.info(f"跳过被占用/受保护的项目: {item['path']} ({e})")
+                    results['skipped'].append({
+                        'path': item['path'],
+                        'reason': '文件被占用或受保护'
+                    })
+                else:
+                    logger.error(f"清理项目 {item['path']} 时出错: {e}")
+                    results['errors'].append({
+                        'path': item['path'],
+                        'error': str(e)
+                    })
 
-        logger.info(f"清理完成，释放空间: {results['freed_space']} 字节，错误: {len(results['errors'])}")
+        logger.info(
+            f"清理完成，释放空间: {results['freed_space']} 字节，"
+            f"跳过: {len(results['skipped'])}，错误: {len(results['errors'])}"
+        )
         return results
+
+    @staticmethod
+    def _is_lock_or_permission_error(exc):
+        """判断异常是否为“文件被占用/权限不足”这类可安全跳过的错误。
+
+        Windows 上被其它进程占用的文件在删除时会抛出：
+        - WinError 32（另一个程序正在使用此文件，共享冲突）
+        - WinError 33（锁定冲突）
+        - WinError 5（拒绝访问）
+        这些应被跳过而不是当作真正的清理失败。
+        """
+        if isinstance(exc, (PermissionError,)):
+            return True
+        winerror = getattr(exc, 'winerror', None)
+        if winerror in (5, 32, 33):
+            return True
+        err = getattr(exc, 'errno', None)
+        if err in (errno.EACCES, errno.EBUSY, errno.EPERM):
+            return True
+        return False
 
     def _clean_file(self, file_path, backup_dir=None):
         """清理单个文件"""

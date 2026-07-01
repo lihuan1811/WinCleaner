@@ -273,6 +273,22 @@ QTreeWidget#resultTree::item {
     padding: 4px 2px;
 }
 
+QTreeWidget#folderUsageTree {
+    background: #FFFFFF;
+    border: 1px solid #D6E8E4;
+    border-radius: 8px;
+    color: #1C2C26;
+    alternate-background-color: #F5FBF9;
+    outline: 0;
+    selection-background-color: #CCEFE8;
+    selection-color: #15241C;
+}
+
+QTreeWidget#folderUsageTree::item {
+    min-height: 28px;
+    padding: 3px 4px;
+}
+
 QTreeWidget#optimizerTable,
 QTableWidget#optimizerTable,
 QTableWidget#uninstallTable,
@@ -480,11 +496,11 @@ class ScanThread(QThread):
     update_signal = pyqtSignal(str, int)
     finished_signal = pyqtSignal(dict)
     error_signal = pyqtSignal(str)
-
+    
     def __init__(self, cleaner):
         super().__init__()
         self.cleaner = cleaner
-
+        
     def run(self):
         """运行扫描过程"""
         try:
@@ -499,12 +515,12 @@ class CleanThread(QThread):
     update_signal = pyqtSignal(str, int)
     finished_signal = pyqtSignal(dict)
     error_signal = pyqtSignal(str)
-
+    
     def __init__(self, cleaner, selected_items):
         super().__init__()
         self.cleaner = cleaner
         self.selected_items = selected_items
-
+        
     def run(self):
         """运行清理过程"""
         try:
@@ -515,9 +531,10 @@ class CleanThread(QThread):
 
 
 class FileScanThread(QThread):
-    """文件管理扫描线程，避免大文件/重复文件扫描阻塞 UI。"""
+    """文件管理扫描线程，避免大文件/重复文件/文件夹统计扫描阻塞 UI。"""
     file_scan_finished_signal = pyqtSignal(str, object)
     file_scan_error_signal = pyqtSignal(str, str)
+    file_scan_progress_signal = pyqtSignal(str, str)
 
     def __init__(self, mode, root_dir, min_size=100 * 1024 * 1024, max_files=5000):
         super().__init__()
@@ -532,11 +549,81 @@ class FileScanThread(QThread):
                 payload = self.find_large_files(self.root_dir, self.min_size, self.max_files)
             elif self.mode == "duplicates":
                 payload = self.find_duplicate_files(self.root_dir, self.max_files)
+            elif self.mode == "folders":
+                payload = self.scan_folder_sizes(self.root_dir, self._emit_progress)
             else:
                 raise ValueError(f"未知文件扫描类型: {self.mode}")
             self.file_scan_finished_signal.emit(self.mode, payload)
         except Exception as exc:  # pragma: no cover - depends on host filesystem
             self.file_scan_error_signal.emit(self.mode, str(exc))
+
+    def _emit_progress(self, text):
+        self.file_scan_progress_signal.emit(self.mode, text)
+
+    @staticmethod
+    def scan_folder_sizes(root_dir, progress=None):
+        """统计目录树中每个文件夹的实际占用大小（递归汇总，类似 WinDirStat）。
+
+        返回结构::
+
+            {
+                "root": 根目录,
+                "total": {目录: 递归总大小},
+                "own": {目录: 该目录内文件的大小（不含子目录）},
+                "children": {目录: [按大小降序排列的直接子目录, ...]},
+            }
+        """
+        dir_own = {}
+        children = {}
+        order = []
+        count = 0
+        for dirpath, dirnames, filenames in os.walk(root_dir, topdown=True,
+                                                     onerror=lambda _e: None):
+            order.append(dirpath)
+            count += 1
+            if progress is not None and count % 300 == 0:
+                progress(f"正在统计文件夹占用: 已扫描 {count} 个目录 ...")
+
+            own = 0
+            for file_name in filenames:
+                file_path = os.path.join(dirpath, file_name)
+                try:
+                    if os.path.islink(file_path):
+                        continue
+                    own += os.path.getsize(file_path)
+                except OSError:
+                    continue
+            dir_own[dirpath] = own
+
+            kids = []
+            for dir_name in dirnames:
+                child_path = os.path.join(dirpath, dir_name)
+                # 跳过符号链接/重解析点，避免重复计算与死循环。
+                try:
+                    if os.path.islink(child_path):
+                        continue
+                except OSError:
+                    continue
+                kids.append(child_path)
+            children[dirpath] = kids
+
+        # os.walk 自上而下，反向遍历即可保证子目录先于父目录累加。
+        total = {}
+        for dirpath in reversed(order):
+            acc = dir_own.get(dirpath, 0)
+            for child in children.get(dirpath, []):
+                acc += total.get(child, 0)
+            total[dirpath] = acc
+
+        for dirpath, kids in children.items():
+            kids.sort(key=lambda c: total.get(c, 0), reverse=True)
+
+        return {
+            "root": root_dir,
+            "total": total,
+            "own": dir_own,
+            "children": children,
+        }
 
     @staticmethod
     def find_large_files(root_dir, min_size=100 * 1024 * 1024, max_files=5000):
@@ -812,7 +899,7 @@ NAV_ITEMS = [
 
 class CleanerMainWindow(QMainWindow):
     """主窗口类"""
-
+    
     def __init__(self):
         super().__init__()
         self.cleaner = CleanerLogic()
@@ -829,6 +916,8 @@ class CleanerMainWindow(QMainWindow):
         self.file_scan_root = ""
         self.file_large_items = []
         self.file_duplicate_groups = []
+        self.folder_scan_data = None
+        self.folder_scan_done_root = None
         self.file_scan_thread = None
         self.defrag_thread = None
         self.fragment_grid_cells = []
@@ -842,7 +931,7 @@ class CleanerMainWindow(QMainWindow):
         self.active_animations = []
         self.account_service = LocalAccountService()
         self.account_state = self.account_service.current_state()
-
+        
         self.init_ui()
 
     def _load_app_icon(self):
@@ -961,6 +1050,9 @@ class CleanerMainWindow(QMainWindow):
             self.animate_page_transition(self.stack.currentWidget())
             if 0 <= index < len(self.nav_buttons):
                 self.animate_status_pulse(self.nav_buttons[index])
+            # 首次进入“文件管理”时自动统计文件夹占用（默认标签页不会触发 currentChanged）。
+            if index == self.page_index_for_label("文件管理") and hasattr(self, "file_tabs"):
+                self.on_file_tab_changed(self.file_tabs.currentIndex())
 
     def page_index_for_label(self, label):
         for index, (text, _builder) in enumerate(NAV_ITEMS):
@@ -1114,7 +1206,7 @@ class CleanerMainWindow(QMainWindow):
             self.scan_button.setIcon(self.app_icon)
             self.scan_button.setIconSize(QSize(18, 18))
         self.scan_button.clicked.connect(self.start_scan)
-
+        
         self.clean_all_button = QPushButton("一键清理")
         self.clean_all_button.setObjectName("cleanSecondaryButton")
         self.clean_all_button.setCursor(Qt.PointingHandCursor)
@@ -1134,7 +1226,7 @@ class CleanerMainWindow(QMainWindow):
         action_layout.addWidget(self.clean_button)
         action_layout.addStretch(1)
         hero_layout.addLayout(action_layout)
-
+        
         self.progress_bar = QProgressBar()
         self.progress_bar.setObjectName("scanProgress")
         self.progress_bar.setVisible(False)
@@ -1229,7 +1321,7 @@ class CleanerMainWindow(QMainWindow):
         content_layout.addWidget(self.current_scan_path_label)
         content_layout.addWidget(result_card, 1)
         content_layout.addWidget(status_strip)
-
+        
         return content_area
 
     # ------------------------------------------------------------------
@@ -3707,7 +3799,7 @@ class CleanerMainWindow(QMainWindow):
         header.setSpacing(5)
         page_title = QLabel("文件管理")
         page_title.setObjectName("pageTitle")
-        page_subtitle = QLabel("在软件内扫描大文件和重复文件，直接查看目标路径、大小和所在目录。")
+        page_subtitle = QLabel("直接列出所有文件夹并按实际占用大小排名，也可扫描大文件、重复文件。")
         page_subtitle.setObjectName("pageSubtitle")
         page_subtitle.setWordWrap(True)
         header.addWidget(page_title)
@@ -3721,8 +3813,13 @@ class CleanerMainWindow(QMainWindow):
         choose_dir_button.setMinimumWidth(96)
         choose_dir_button.clicked.connect(self.select_file_scan_root)
 
+        self.scan_folders_button = QPushButton("扫描文件夹")
+        self.scan_folders_button.setObjectName("scanPrimaryButton")
+        self.scan_folders_button.setMinimumWidth(112)
+        self.scan_folders_button.clicked.connect(self.scan_folder_usage)
+
         self.scan_large_button = QPushButton("扫描大文件")
-        self.scan_large_button.setObjectName("scanPrimaryButton")
+        self.scan_large_button.setObjectName("cleanSecondaryButton")
         self.scan_large_button.setMinimumWidth(112)
         self.scan_large_button.clicked.connect(self.scan_large_files)
 
@@ -3742,6 +3839,7 @@ class CleanerMainWindow(QMainWindow):
         self.delete_duplicate_copies_button.clicked.connect(self.delete_duplicate_copies)
 
         toolbar.addWidget(choose_dir_button)
+        toolbar.addWidget(self.scan_folders_button)
         toolbar.addWidget(self.scan_large_button)
         toolbar.addWidget(self.scan_duplicate_button)
         toolbar.addWidget(self.delete_selected_file_button)
@@ -3757,12 +3855,15 @@ class CleanerMainWindow(QMainWindow):
         self.file_tabs = QTabWidget()
         self.file_tabs.setObjectName("optimizerTabs")
 
+        self.folder_tree = self._make_folder_tree()
         self.file_large_table = self._make_file_manage_table(["文件名", "大小", "路径", "操作"])
         self.file_duplicate_table = self._make_file_manage_table(["文件名", "大小", "重复组", "路径", "操作"])
         self.fragment_page = self._build_fragment_page()
+        self.file_tabs.addTab(self.folder_tree, "文件夹占用")
         self.file_tabs.addTab(self.file_large_table, "大文件")
         self.file_tabs.addTab(self.file_duplicate_table, "重复文件")
         self.file_tabs.addTab(self.fragment_page, "碎片整理")
+        self.file_tabs.currentChanged.connect(self.on_file_tab_changed)
         outer.addWidget(self.file_tabs, 1)
 
         self.file_status_label = QLabel("准备扫描文件。")
@@ -3770,6 +3871,77 @@ class CleanerMainWindow(QMainWindow):
         outer.addWidget(self.file_status_label)
 
         return page
+
+    FOLDER_PLACEHOLDER = "__folder_placeholder__"
+
+    def _make_folder_tree(self):
+        tree = QTreeWidget()
+        tree.setObjectName("folderUsageTree")
+        tree.setColumnCount(3)
+        tree.setHeaderLabels(["文件夹", "占用大小", "占比"])
+        tree.setAlternatingRowColors(True)
+        tree.setUniformRowHeights(True)
+        tree.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        tree.setIconSize(QSize(18, 18))
+        tree.setSortingEnabled(False)
+        tree.itemExpanded.connect(self.on_folder_item_expanded)
+
+        header_view = tree.header()
+        header_view.setStretchLastSection(False)
+        header_view.setSectionResizeMode(0, QHeaderView.Stretch)
+        header_view.setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        header_view.setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        tree.setColumnWidth(1, 120)
+        tree.setColumnWidth(2, 80)
+        return tree
+
+    def _make_folder_item(self, dir_path, size, root_total):
+        name = os.path.basename(dir_path.rstrip("\\/")) or dir_path
+        item = QTreeWidgetItem()
+        item.setText(0, name)
+        item.setText(1, self.format_size(size))
+        pct = (size / root_total * 100) if root_total else 0
+        item.setText(2, f"{pct:.1f}%")
+        item.setTextAlignment(1, Qt.AlignRight | Qt.AlignVCenter)
+        item.setTextAlignment(2, Qt.AlignRight | Qt.AlignVCenter)
+        item.setData(0, Qt.UserRole, dir_path)
+        item.setToolTip(0, dir_path)
+        try:
+            item.setIcon(0, self.icon_provider.icon(QFileInfo(dir_path)))
+        except Exception:
+            pass
+        # 有子目录时挂一个占位子节点，展开时再懒加载，避免一次性构建整棵树。
+        if self.folder_scan_data and self.folder_scan_data["children"].get(dir_path):
+            placeholder = QTreeWidgetItem()
+            placeholder.setData(0, Qt.UserRole, self.FOLDER_PLACEHOLDER)
+            item.addChild(placeholder)
+        return item
+
+    def populate_folder_tree(self, payload):
+        self.folder_scan_data = payload
+        tree = self.folder_tree
+        tree.clear()
+        root = payload["root"]
+        root_total = payload["total"].get(root, 0) or 1
+        for child in payload["children"].get(root, []):
+            tree.addTopLevelItem(
+                self._make_folder_item(child, payload["total"].get(child, 0), root_total)
+            )
+
+    def on_folder_item_expanded(self, item):
+        if item.childCount() != 1:
+            return
+        only_child = item.child(0)
+        if only_child.data(0, Qt.UserRole) != self.FOLDER_PLACEHOLDER:
+            return
+        item.removeChild(only_child)
+        dir_path = item.data(0, Qt.UserRole)
+        data = self.folder_scan_data or {}
+        root_total = data.get("total", {}).get(data.get("root"), 0) or 1
+        for child in data.get("children", {}).get(dir_path, []):
+            item.addChild(
+                self._make_folder_item(child, data["total"].get(child, 0), root_total)
+            )
 
     def _make_file_manage_table(self, headers):
         table = QTableWidget()
@@ -4219,6 +4391,27 @@ class CleanerMainWindow(QMainWindow):
         except AccountError as exc:
             self.refresh_account_state(str(exc))
 
+    def scan_folder_usage(self):
+        """扫描当前目录下所有文件夹并按实际占用大小排名（类似 WinDirStat）。"""
+        root_dir = self.current_file_scan_root()
+        if hasattr(self, "file_tabs"):
+            self.file_tabs.setCurrentWidget(self.folder_tree)
+        self.file_status_label.setText(f"正在统计文件夹占用: {root_dir}（大目录可能需要较久）...")
+        self.start_file_scan_thread("folders", root_dir)
+
+    def on_file_tab_changed(self, _index):
+        """切换到“文件夹占用”标签且尚未统计时自动扫描一次。"""
+        if not hasattr(self, "file_tabs") or not hasattr(self, "folder_tree"):
+            return
+        if self.file_tabs.currentWidget() is not self.folder_tree:
+            return
+        root_dir = self.current_file_scan_root()
+        if self.folder_scan_done_root == root_dir:
+            return
+        if self.file_scan_thread and self.file_scan_thread.isRunning():
+            return
+        self.scan_folder_usage()
+
     def scan_large_files(self):
         """在文件管理页内扫描大文件并填充表格。"""
         root_dir = self.current_file_scan_root()
@@ -4236,7 +4429,7 @@ class CleanerMainWindow(QMainWindow):
         self.start_file_scan_thread("duplicates", root_dir)
 
     def set_file_scan_controls_enabled(self, enabled):
-        for button_name in ("scan_large_button", "scan_duplicate_button"):
+        for button_name in ("scan_folders_button", "scan_large_button", "scan_duplicate_button"):
             if hasattr(self, button_name):
                 getattr(self, button_name).setEnabled(enabled)
 
@@ -4251,13 +4444,30 @@ class CleanerMainWindow(QMainWindow):
         self.file_scan_thread = thread
         thread.file_scan_finished_signal.connect(self.on_file_scan_finished)
         thread.file_scan_error_signal.connect(self.on_file_scan_error)
+        thread.file_scan_progress_signal.connect(self.on_file_scan_progress)
         thread.finished.connect(lambda: self.set_file_scan_controls_enabled(True))
         thread.finished.connect(lambda: setattr(self, "file_scan_thread", None))
         thread.finished.connect(thread.deleteLater)
         thread.finished.connect(lambda: QApplication.restoreOverrideCursor())
         thread.start()
 
+    def on_file_scan_progress(self, _mode, text):
+        if hasattr(self, "file_status_label"):
+            self.file_status_label.setText(text)
+
     def on_file_scan_finished(self, mode, payload):
+        if mode == "folders":
+            self.populate_folder_tree(payload)
+            self.folder_scan_done_root = payload.get("root")
+            root = payload.get("root")
+            root_total = payload.get("total", {}).get(root, 0)
+            folder_count = max(len(payload.get("total", {})) - 1, 0)
+            self.file_status_label.setText(
+                f"文件夹统计完成: 共 {folder_count} 个文件夹，合计 {self.format_size(root_total)}"
+            )
+            self.animate_status_pulse(self.file_status_label)
+            return
+
         if mode == "large":
             self.file_large_items = payload
             self.populate_large_files_table(self.file_large_items)
@@ -4283,6 +4493,7 @@ class CleanerMainWindow(QMainWindow):
         labels = {
             "large": "大文件扫描",
             "duplicates": "重复文件扫描",
+            "folders": "文件夹统计",
         }
         label = labels.get(mode, "文件扫描")
         self.file_status_label.setText(f"{label}失败: {message}")
@@ -4716,7 +4927,7 @@ class CleanerMainWindow(QMainWindow):
             return digest.hexdigest()
         except (OSError, PermissionError):
             return None
-
+    
     def update_disk_info(self):
         """更新磁盘信息"""
         disk_info = self.cleaner.get_disk_info()
@@ -4728,7 +4939,7 @@ class CleanerMainWindow(QMainWindow):
         self.total_value_label.setText(f"{disk_info['total']:.2f} GB")
         self.used_value_label.setText(f"{disk_info['used']:.2f} GB")
         self.free_value_label.setText(f"{disk_info['free']:.2f} GB")
-
+    
     def start_scan(self):
         """开始扫描系统"""
         self.scan_button.setEnabled(False)
@@ -4753,14 +4964,14 @@ class CleanerMainWindow(QMainWindow):
         self.selected_summary_label.setText("已选 0 项 / 0 B")
         self.status_label.setText("正在扫描系统，请稍候...")
         self.animate_status_pulse(self.current_scan_path_label)
-
+        
         # 启动扫描线程
         self.scan_thread = ScanThread(self.cleaner)
         self.scan_thread.update_signal.connect(self.on_scan_progress)
         self.scan_thread.finished_signal.connect(self.on_scan_finished)
         self.scan_thread.error_signal.connect(self.on_scan_error)
         self.scan_thread.start()
-
+    
     def on_scan_progress(self, path, count):
         """实时展示扫描线程正在处理或刚发现的路径。"""
         compact = self.compact_path(path)
@@ -4789,13 +5000,13 @@ class CleanerMainWindow(QMainWindow):
             self.status_label.setText("扫描完成，未发现可清理项目")
             self.update_selected_items()
             return
-
+        
         # 填充结果树
         self.populate_results_tree(results)
         self.select_all_checkbox.setEnabled(total_items > 0)
         self.clean_all_button.setEnabled(bool(self.cleanable_items))
         self.update_selected_items()
-
+        
         # 更新磁盘信息
         self.update_disk_info()
 
@@ -4819,7 +5030,7 @@ class CleanerMainWindow(QMainWindow):
         if not normalized:
             return path
         return normalized.replace("\\", "/").rsplit("/", 1)[-1] or normalized
-
+    
     @staticmethod
     def compact_path(path, max_length=128):
         if len(path) <= max_length:
@@ -5053,16 +5264,16 @@ class CleanerMainWindow(QMainWindow):
         self.results_tree.clear()
         category_font = QFont()
         category_font.setBold(True)
-
+        
         for category, items in results.items():
             if not items:
                 continue
-
+                
             category_size = sum(item['size'] for item in items)
             category_cleanable = [item for item in items if self.is_cleanable_item(item)]
             category_cleanable_size = sum(item['size'] for item in category_cleanable)
             category_name = category_tree_label(category)
-
+            
             category_item = QTreeWidgetItem(self.results_tree)
             category_item.setText(0, category_name)
             category_item.setText(1, self.format_size(category_size))
@@ -5086,7 +5297,7 @@ class CleanerMainWindow(QMainWindow):
                 1,
                 f"统计 {self.format_size(category_size)}，可清理 {self.format_size(category_cleanable_size)}",
             )
-
+            
             for item in items:
                 item_path = item['path']
                 cleanable = self.is_cleanable_item(item)
@@ -5100,7 +5311,7 @@ class CleanerMainWindow(QMainWindow):
                 file_item.setCheckState(0, Qt.Unchecked)
                 file_item.setData(0, Qt.UserRole, item)
                 self.update_result_child_cleanability(file_item)
-
+        
         self.results_tree.expandAll()
         self.results_tree.blockSignals(False)
         self.results_tree.setUpdatesEnabled(True)
@@ -5167,12 +5378,12 @@ class CleanerMainWindow(QMainWindow):
             self.results_tree.blockSignals(False)
             self.results_tree.setUpdatesEnabled(True)
         self.update_selected_items()
-
+    
     def on_item_changed(self, item, column):
         """处理项目选择状态变化"""
         if column != 0:
             return
-
+            
         # 如果是类别项，同步所有子项
         if item.parent() is None:
             check_state = item.checkState(0)
@@ -5189,31 +5400,31 @@ class CleanerMainWindow(QMainWindow):
             finally:
                 self.results_tree.blockSignals(False)
                 self.results_tree.setUpdatesEnabled(True)
-
+        
         # 更新选中项列表
         self.update_selected_items()
-
+    
     def update_selected_items(self):
         """更新选中的项目列表"""
         self.selected_items = []
-
+        
         for i in range(self.results_tree.topLevelItemCount()):
             category_item = self.results_tree.topLevelItem(i)
-
+            
             for j in range(category_item.childCount()):
                 child_item = category_item.child(j)
                 if child_item.checkState(0) == Qt.Checked:
                     item_data = child_item.data(0, Qt.UserRole)
                     if item_data and self.is_cleanable_item(item_data):
                         self.selected_items.append(item_data)
-
+        
         selected_size = sum(item['size'] for item in self.selected_items)
         self.selected_summary_label.setText(
             f"已选 {len(self.selected_items)} 项 / {self.format_size(selected_size)}"
         )
         self.clean_button.setEnabled(len(self.selected_items) > 0)
         self.clean_all_button.setEnabled(len(self.cleanable_items) > 0)
-
+    
     def start_clean(self):
         """开始清理选中的项目"""
         if not self.selected_items:
@@ -5252,12 +5463,12 @@ class CleanerMainWindow(QMainWindow):
             )
         else:
             msg.setInformativeText("文件将被真实删除，此操作无法撤销！")
-
+        
         msg.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
         msg.setDefaultButton(QMessageBox.No)
         if msg.exec_() != QMessageBox.Yes:
             return
-
+        
         # 设置清理选项：始终真实删除，备份开启时可在“备份管理”中恢复
         self.cleaner.set_options({
             'simulate': False,
@@ -5265,7 +5476,7 @@ class CleanerMainWindow(QMainWindow):
             'backup_dir': self.cleaner.backup_dir,
             'allow_scan_only_clean': self.current_clean_mode() in {"professional", "all"},
         })
-
+        
         # 开始清理
         self.scan_button.setEnabled(False)
         self.clean_all_button.setEnabled(False)
@@ -5277,19 +5488,19 @@ class CleanerMainWindow(QMainWindow):
         self.progress_bar.setRange(0, len(clean_items))
         self.status_label.setText("正在清理文件，请稍候...")
         self.animate_status_pulse(self.status_label)
-
+        
         # 启动清理线程
         self.clean_thread = CleanThread(self.cleaner, list(clean_items))
         self.clean_thread.update_signal.connect(self.on_clean_progress)
         self.clean_thread.finished_signal.connect(self.on_clean_finished)
         self.clean_thread.error_signal.connect(self.on_clean_error)
         self.clean_thread.start()
-
+    
     def on_clean_progress(self, file_path, progress):
         """清理进度更新"""
         self.progress_bar.setValue(progress)
         self.status_label.setText(f"正在清理: {self.display_name_from_path(file_path)}")
-
+    
     def on_clean_finished(self, results):
         """清理完成后的处理"""
         self.progress_bar.setVisible(False)
@@ -5297,12 +5508,15 @@ class CleanerMainWindow(QMainWindow):
         self.scan_button.setText("重新扫描")
         self.clean_all_button.setText("一键清理")
         self.clean_button.setText("清理选中")
-
+        
         freed_space = results.get('freed_space', 0)
         errors = results.get('errors', [])
+        skipped = results.get('skipped', [])
 
         message = f"清理完成，已释放空间: {self.format_size(freed_space)}"
 
+        if skipped:
+            message += f"，跳过 {len(skipped)} 个被占用文件"
         if errors:
             message += f"，{len(errors)} 个错误"
 
@@ -5310,7 +5524,7 @@ class CleanerMainWindow(QMainWindow):
         self.animate_status_pulse(self.status_label)
         self.update_selected_items()
 
-        # 如果有错误，显示错误日志
+        # 只有真正的清理失败才弹窗提醒；被占用/受保护的文件属于正常跳过，不算错误。
         if errors:
             error_msg = QMessageBox()
             error_msg.setIcon(QMessageBox.Warning)
@@ -5319,9 +5533,13 @@ class CleanerMainWindow(QMainWindow):
             error_details = "\n".join([f"{err['path']}: {err['error']}" for err in errors[:10]])
             if len(errors) > 10:
                 error_details += f"\n... 以及 {len(errors) - 10} 个其他错误"
+            if skipped:
+                error_details += (
+                    f"\n\n另有 {len(skipped)} 个文件正被其它程序占用，已自动跳过（属正常情况）。"
+                )
             error_msg.setDetailedText(error_details)
             error_msg.exec_()
-
+        
         # 更新磁盘信息；真实清理后重新扫描，避免树里残留已删除路径。
         self.update_disk_info()
         self.status_label.setText(f"{message}，正在重新扫描...")
@@ -5337,7 +5555,7 @@ class CleanerMainWindow(QMainWindow):
         self.update_selected_items()
         self.status_label.setText(f"清理失败: {message}")
         QMessageBox.warning(self, "清理错误", f"清理过程中出错:\n{message}")
-
+    
     @staticmethod
     def format_size(size_bytes):
         """格式化文件大小显示"""
