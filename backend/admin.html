@@ -122,9 +122,9 @@
         </div>
         <table>
           <thead>
-            <tr><th>账号/名称</th><th>昵称</th><th>级别</th><th>剩余天数</th><th>到期时间</th><th>注册时间</th></tr>
+            <tr><th>账号/名称</th><th>昵称</th><th>级别</th><th>剩余天数</th><th>到期时间</th><th>注册时间</th><th></th></tr>
           </thead>
-          <tbody id="users-body"><tr><td colspan="6" class="empty">请输入管理口令后点击“连接”。</td></tr></tbody>
+          <tbody id="users-body"><tr><td colspan="7" class="empty">请输入管理口令后点击“连接”。</td></tr></tbody>
         </table>
       </div>
     </section>
@@ -217,8 +217,9 @@
         const d = await api("/api/admin/overview");
         $("stats").innerHTML = [
           ["注册用户", d.users], ["有效会员", d.activeMembers], ["免费用户", d.freeUsers],
+          ["禁用用户", d.disabledUsers || 0],
           ["激活码总数", d.totalCards], ["已使用", d.usedCards], ["未使用", d.availableCards],
-          ["已禁用", d.disabledCards || 0],
+          ["禁用卡密", d.disabledCards || 0],
         ].map(([l, n]) => `<div class="stat"><div class="n">${n}</div><div class="l">${l}</div></div>`).join("");
       } catch (e) {
         $("stats").innerHTML = `<div class="stat"><div class="l" style="color:var(--danger)">${e.message}</div></div>`;
@@ -229,11 +230,16 @@
       try {
         const d = await api("/api/admin/users");
         const body = $("users-body");
-        if (!d.users.length) { body.innerHTML = `<tr><td colspan="6" class="empty">暂无注册用户。</td></tr>`; return; }
+        if (!d.users.length) { body.innerHTML = `<tr><td colspan="7" class="empty">暂无注册用户。</td></tr>`; return; }
         body.innerHTML = d.users.map(u => {
-          const lvl = u.isActive
-            ? `<span class="badge pro">${u.level}</span>`
-            : `<span class="badge free">Free</span>`;
+          const lvl = u.disabled
+            ? `<span class="badge" style="background:#4a5568;color:#fff;">已禁用</span>`
+            : (u.isActive
+              ? `<span class="badge pro">${u.level}</span>`
+              : `<span class="badge free">Free</span>`);
+          const act = u.disabled
+            ? `<button class="primary mini" onclick="enableUser('${u.email}')">启用</button>`
+            : `<button class="danger mini" onclick="disableUser('${u.email}')">禁用</button>`;
           return `<tr>
             <td class="code">${u.email}</td>
             <td>${u.displayName || "-"}</td>
@@ -241,6 +247,7 @@
             <td>${u.isActive ? u.remainingDays + " 天" : "-"}</td>
             <td>${u.expiresAt ? u.expiresAt.replace("T", " ").slice(0, 16) : "-"}</td>
             <td>${(u.createdAt || "").replace("T", " ").slice(0, 16)}</td>
+            <td class="row-actions">${act}</td>
           </tr>`;
         }).join("");
         setMsg($("users-msg"), `共 ${d.count} 位用户`, true);
@@ -256,17 +263,21 @@
         const body = $("cards-body");
         if (!d.cards.length) { body.innerHTML = `<tr><td colspan="7" class="empty">暂无激活码。</td></tr>`; return; }
         body.innerHTML = d.cards.map(c => {
-          const st = c.status === "used"
+          const used = !!c.redeemedBy;
+          const base = used
             ? `<span class="badge used">已使用</span>`
-            : c.status === "disabled"
-            ? `<span class="badge" style="background:#4a5568;color:#fff;">已禁用</span>`
             : `<span class="badge avail">未使用</span>`;
+          const st = c.disabled
+            ? base + ` <span class="badge" style="background:#4a5568;color:#fff;">已禁用</span>`
+            : base;
           let actions = "";
-          if (c.status === "available") {
-            actions = `<button class="danger mini" onclick="disableCard('${c.code}')">禁用</button>`
-              + `<button class="danger mini" onclick="deleteCard('${c.code}')">删除</button>`;
-          } else if (c.status === "disabled") {
-            actions = `<button class="danger mini" onclick="deleteCard('${c.code}')">删除</button>`;
+          if (c.disabled) {
+            actions = `<button class="primary mini" onclick="enableCard('${c.code}')">启用</button>`;
+          } else {
+            actions = `<button class="danger mini" onclick="disableCard('${c.code}', ${used})">禁用</button>`;
+          }
+          if (!used) {
+            actions += `<button class="danger mini" onclick="deleteCard('${c.code}')">删除</button>`;
           }
           return `<tr>
             <td class="code">${c.code}</td>
@@ -318,13 +329,46 @@
       }
     }
 
-    async function disableCard(code) {
-      if (!confirm("确定禁用激活码 " + code + " ？禁用后将无法兑换。")) return;
+    async function disableCard(code, used) {
+      const tip = used
+        ? "确定禁用已使用的激活码 " + code + " ？\n将同时收回它带来的会员时长（防盗刷）。"
+        : "确定禁用激活码 " + code + " ？禁用后将无法兑换。";
+      if (!confirm(tip)) return;
       try {
         await api("/api/admin/cards/" + encodeURIComponent(code) + "/disable", { method: "POST" });
         loadCards(); loadOverview();
       } catch (e) {
         setMsg($("cards-msg"), e.message, false);
+      }
+    }
+
+    async function enableCard(code) {
+      if (!confirm("确定启用激活码 " + code + " ？")) return;
+      try {
+        await api("/api/admin/cards/" + encodeURIComponent(code) + "/enable", { method: "POST" });
+        loadCards(); loadOverview();
+      } catch (e) {
+        setMsg($("cards-msg"), e.message, false);
+      }
+    }
+
+    async function disableUser(email) {
+      if (!confirm("确定禁用用户 " + email + " ？\n将立即收回其会员并强制退出登录。")) return;
+      try {
+        await api("/api/admin/users/" + encodeURIComponent(email) + "/disable", { method: "POST" });
+        loadUsers(); loadOverview();
+      } catch (e) {
+        setMsg($("users-msg"), e.message, false);
+      }
+    }
+
+    async function enableUser(email) {
+      if (!confirm("确定启用用户 " + email + " ？")) return;
+      try {
+        await api("/api/admin/users/" + encodeURIComponent(email) + "/enable", { method: "POST" });
+        loadUsers(); loadOverview();
+      } catch (e) {
+        setMsg($("users-msg"), e.message, false);
       }
     }
 

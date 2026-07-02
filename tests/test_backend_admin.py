@@ -56,6 +56,16 @@ def test_require_admin_accepts_correct_token(monkeypatch):
     backend_app.require_admin("secret-token")  # 不抛异常即通过
 
 
+def test_admin_disable_routes_registered():
+    """用户与激活码的禁用/启用接口均已注册。"""
+    app = backend_app.create_app("postgresql://x:x@127.0.0.1:5432/x")
+    paths = {route.path for route in app.routes}
+    assert "/api/admin/cards/{code}/disable" in paths
+    assert "/api/admin/cards/{code}/enable" in paths
+    assert "/api/admin/users/{email}/disable" in paths
+    assert "/api/admin/users/{email}/enable" in paths
+
+
 def test_card_status_labels():
     assert backend_app  # module loaded
     # 与 admin 前端一致的状态映射

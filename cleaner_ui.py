@@ -1583,17 +1583,13 @@ class CleanerMainWindow(QMainWindow):
         self.nav_buttons = []
         for index, (text, _builder) in enumerate(NAV_ITEMS):
             button = self._make_sidebar_button(text, active=(index == 0))
-            button.clicked.connect(lambda _checked, i=index: self._select_page(i))
+            if text == "账号会员":
+                # 账号入口统一走此按钮：未登录时先弹登录/注册窗口，再进入会员中心
+                button.clicked.connect(lambda _checked: self.navigate_to_account_page())
+            else:
+                button.clicked.connect(lambda _checked, i=index: self._select_page(i))
             layout.addWidget(button)
             self.nav_buttons.append(button)
-
-        layout.addSpacing(6)
-        self.account_sidebar_button = QPushButton("登录 / 注册")
-        self.account_sidebar_button.setObjectName("sidebarButton")
-        self.account_sidebar_button.setCursor(Qt.PointingHandCursor)
-        self.account_sidebar_button.setMinimumWidth(148)
-        self.account_sidebar_button.clicked.connect(self.on_account_sidebar_clicked)
-        layout.addWidget(self.account_sidebar_button)
 
         layout.addStretch(1)
 
@@ -5090,7 +5086,7 @@ class CleanerMainWindow(QMainWindow):
         target_label.setObjectName("statusLabel")
         self.migration_target_input = QLineEdit()
         self.migration_target_input.setPlaceholderText("例如 D:\\Personal")
-        self.migration_target_input.setText("D:\\Personal")
+        self.migration_target_input.setText(self._default_migration_target())
         browse_button = QPushButton("浏览")
         browse_button.setObjectName("cleanSecondaryButton")
         browse_button.clicked.connect(self.select_migration_target)
@@ -5158,6 +5154,28 @@ class CleanerMainWindow(QMainWindow):
         outer.addWidget(self.migration_status_label)
 
         return page
+
+    def _default_migration_target(self):
+        """选择一个真实存在的非系统盘作为默认目标；没有则留空提示用户选择。"""
+        try:
+            system_drive = os.path.splitdrive(os.environ.get("SystemDrive", "C:"))[0].upper() or "C:"
+        except Exception:
+            system_drive = "C:"
+        best = None
+        try:
+            for drive in list_system_drives():
+                mount = drive.get("mountpoint") or drive.get("device") or ""
+                letter = os.path.splitdrive(mount)[0].upper()
+                if not letter or letter == system_drive:
+                    continue
+                if best is None or drive.get("free", 0) > best.get("free", 0):
+                    best = drive
+        except Exception:
+            best = None
+        if best:
+            root = best.get("mountpoint") or best.get("device")
+            return os.path.join(root, "Personal")
+        return ""
 
     def select_migration_target(self):
         directory = QFileDialog.getExistingDirectory(self, "选择目标文件夹", "")
@@ -5268,7 +5286,19 @@ class CleanerMainWindow(QMainWindow):
             return
         target_root = self.migration_target_input.text().strip()
         if not target_root:
-            QMessageBox.information(self, "文件迁移", "请先填写目标文件夹。")
+            QMessageBox.information(
+                self, "文件迁移",
+                "请先填写目标文件夹（点击“浏览”选择一个非系统盘，如 D:、E:）。",
+            )
+            return
+
+        target_drive = os.path.splitdrive(os.path.abspath(target_root))[0]
+        if target_drive and not os.path.exists(target_drive + os.sep):
+            QMessageBox.warning(
+                self, "文件迁移",
+                f"目标磁盘 {target_drive} 不存在。\n\n"
+                "请点击“浏览”选择一个实际存在的磁盘（如 D:、E:）作为迁移目标。",
+            )
             return
 
         pending = [k for k in keys if not (self.migration_rows.get(k, {}).get("migrated"))]
@@ -6311,8 +6341,11 @@ class CleanerMainWindow(QMainWindow):
             self.account_open_auth_button.setVisible(not bool(user))
         if hasattr(self, "account_logout_button"):
             self.account_logout_button.setVisible(bool(user))
-        if hasattr(self, "account_sidebar_button"):
-            self.account_sidebar_button.setText("账号中心" if user else "登录 / 注册")
+        # 账号入口合并到导航项：登录后显示“账号中心”，未登录显示“账号会员”
+        if getattr(self, "nav_buttons", None):
+            account_index = self.page_index_for_label("账号会员")
+            if 0 <= account_index < len(self.nav_buttons):
+                self.nav_buttons[account_index].setText("账号中心" if user else "账号会员")
 
         if message:
             self.account_message_label.setText(message)

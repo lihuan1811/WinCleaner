@@ -147,24 +147,60 @@ class FileMigrationService:
         dst = os.path.join(target_root, entry["subname"])
 
         self._validate_target(src, dst)
-        os.makedirs(target_root, exist_ok=True)
+        try:
+            os.makedirs(target_root, exist_ok=True)
+        except OSError as exc:
+            raise MigrationError(
+                f"无法创建目标目录 {target_root}：{self._explain(exc)}"
+            )
+        # 迁移依赖连接点(junction)，目标磁盘必须为 NTFS 格式
+        self._ensure_supports_junction(target_root, entry["name"])
 
-        if os.path.exists(src):
+        src_existed = os.path.exists(src)
+        moved = False
+        if src_existed:
             if move_files:
                 os.makedirs(dst, exist_ok=True)
-                self._merge_move(src, dst)
+                self._merge_move(src, dst, entry["name"])
+                moved = True
             else:
                 if os.path.isdir(src) and os.listdir(src):
                     raise MigrationError(
                         f"“{entry['name']}”内还有文件，请勾选“转移文件”后再迁移。"
                     )
                 os.makedirs(dst, exist_ok=True)
-            self._remove_dir(src)
+            try:
+                self._remove_dir(src)
+            except MigrationError:
+                # src 非空通常意味着仍有文件被占用；数据已在目标目录，回滚以避免半迁移状态
+                if moved:
+                    self._rollback(dst, src)
+                raise MigrationError(
+                    f"“{entry['name']}”中有文件正被占用，无法完成迁移，"
+                    "请关闭相关程序（如资源管理器、微信/QQ 等）后重试。"
+                )
         else:
             os.makedirs(dst, exist_ok=True)
 
-        self._create_link(src, dst)
+        try:
+            self._create_link(src, dst)
+        except MigrationError:
+            # 连接点创建失败时，把数据移回原位置，避免原路径丢失
+            if src_existed:
+                self._rollback(dst, src)
+            raise
         return {"key": key, "name": entry["name"], "src": src, "dst": dst}
+
+    @classmethod
+    def _rollback(cls, dst, src):
+        """迁移失败时把已移动到 dst 的数据移回 src，尽量恢复原状。"""
+        try:
+            os.makedirs(src, exist_ok=True)
+            if os.path.exists(dst):
+                cls._merge_move(dst, src)
+        except Exception:
+            # 回滚为尽力而为，失败也不再抛出（原始错误更重要）
+            pass
 
     def restore_folder(self, key):
         entry = self._entry(key)
@@ -183,6 +219,53 @@ class FileMigrationService:
 
     # ----- 底层操作 -----------------------------------------------------
     @staticmethod
+    def _explain(exc):
+        """把系统异常翻译成用户能看懂的中文提示。"""
+        winerr = getattr(exc, "winerror", None)
+        mapping = {
+            5: "拒绝访问，请尝试以管理员身份运行本程序。",
+            32: "文件正被其它程序占用，请关闭相关程序后重试。",
+            33: "文件正被其它程序占用，请关闭相关程序后重试。",
+            145: "目标目录非空。",
+            183: "目标位置已存在同名项。",
+        }
+        if winerr in mapping:
+            return mapping[winerr]
+        message = getattr(exc, "strerror", None) or str(exc)
+        return message
+
+    @staticmethod
+    def _ensure_supports_junction(target_root, folder_name):
+        """确认目标磁盘支持连接点(NTFS)；U 盘/移动硬盘常为 exFAT/FAT，不支持。"""
+        if not IS_WINDOWS:
+            return
+        try:
+            import ctypes
+
+            drive = os.path.splitdrive(os.path.abspath(target_root))[0]
+            if not drive:
+                return
+            root = drive + "\\"
+            fs_buf = ctypes.create_unicode_buffer(64)
+            ok = ctypes.windll.kernel32.GetVolumeInformationW(
+                ctypes.c_wchar_p(root),
+                None, 0, None, None, None,
+                fs_buf, ctypes.sizeof(fs_buf),
+            )
+            if ok:
+                fs = (fs_buf.value or "").upper()
+                if fs and fs != "NTFS":
+                    raise MigrationError(
+                        f"目标磁盘为 {fs} 格式，不支持连接点，无法迁移“{folder_name}”。"
+                        "请选择 NTFS 格式的磁盘作为目标。"
+                    )
+        except MigrationError:
+            raise
+        except Exception:
+            # 检测失败不阻断迁移，交由 mklink 报错
+            return
+
+    @staticmethod
     def _validate_target(src, dst):
         src_abs = os.path.abspath(src)
         dst_abs = os.path.abspath(dst)
@@ -194,14 +277,14 @@ class FileMigrationService:
             raise MigrationError("目标位置不能在原文件夹内部。")
 
     @staticmethod
-    def _merge_move(src, dst):
+    def _merge_move(src, dst, folder_name=""):
         """把 src 下的所有条目移动到 dst（已存在的同名项做合并/覆盖）。"""
         for name in os.listdir(src):
             s = os.path.join(src, name)
             d = os.path.join(dst, name)
             if os.path.exists(d):
                 if os.path.isdir(s) and os.path.isdir(d):
-                    FileMigrationService._merge_move(s, d)
+                    FileMigrationService._merge_move(s, d, folder_name)
                     FileMigrationService._remove_dir(s)
                     continue
                 # 目标已存在同名文件：加后缀避免覆盖用户数据
@@ -210,7 +293,13 @@ class FileMigrationService:
                 while os.path.exists(d):
                     d = os.path.join(dst, f"{base}_{index}{ext}")
                     index += 1
-            shutil.move(s, d)
+            try:
+                shutil.move(s, d)
+            except OSError as exc:
+                label = f"“{folder_name}”中的文件 " if folder_name else "文件 "
+                raise MigrationError(
+                    f"移动{label}{name} 失败：{FileMigrationService._explain(exc)}"
+                )
 
     @staticmethod
     def _remove_dir(path):
@@ -249,7 +338,15 @@ class FileMigrationService:
                     detail = (result.stderr or result.stdout or b"").decode(
                         "gbk", errors="ignore"
                     ).strip()
-                    raise MigrationError(f"创建连接点失败：{detail or '未知错误'}")
+                    hint = ""
+                    low = detail.lower()
+                    if "拒绝访问" in detail or "denied" in low:
+                        hint = "（请尝试以管理员身份运行本程序）"
+                    elif "已存在" in detail or "exist" in low:
+                        hint = "（原位置仍存在同名文件夹，请手动清理后重试）"
+                    raise MigrationError(
+                        f"创建连接点失败：{detail or '未知错误'}{hint}"
+                    )
             except FileNotFoundError as exc:
                 raise MigrationError(f"创建连接点失败：{exc}")
         else:

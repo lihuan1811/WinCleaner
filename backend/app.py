@@ -164,8 +164,15 @@ def init_database(database: Database) -> None:
                 email TEXT PRIMARY KEY,
                 display_name TEXT NOT NULL,
                 password_hash TEXT NOT NULL,
-                created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+                created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                disabled BOOLEAN NOT NULL DEFAULT FALSE
             )
+            """
+        )
+        connection.execute(
+            """
+            ALTER TABLE users
+            ADD COLUMN IF NOT EXISTS disabled BOOLEAN NOT NULL DEFAULT FALSE
             """
         )
         connection.execute(
@@ -362,7 +369,7 @@ def create_app(database_url: str | None = None) -> FastAPI:
 
         with active_database().connect() as connection:
             user = connection.execute(
-                "SELECT password_hash FROM users WHERE email = %s",
+                "SELECT password_hash, disabled FROM users WHERE email = %s",
                 (email,),
             ).fetchone()
             if user is None or user["password_hash"] != hash_password(
@@ -370,6 +377,8 @@ def create_app(database_url: str | None = None) -> FastAPI:
                 request.password,
             ):
                 raise HTTPException(status_code=401, detail="名称或密码不正确。")
+            if user["disabled"]:
+                raise HTTPException(status_code=403, detail="此账号已被禁用，请联系管理员。")
             save_session(connection, request.device_id, email)
             return load_state(connection, request.device_id)
 
@@ -476,15 +485,23 @@ def create_app(database_url: str | None = None) -> FastAPI:
                 "SELECT count(*) AS c FROM card_codes WHERE redeemed_by IS NOT NULL"
             ).fetchone()["c"]
             disabled_cards = connection.execute(
-                "SELECT count(*) AS c FROM card_codes WHERE disabled = TRUE AND redeemed_by IS NULL"
+                "SELECT count(*) AS c FROM card_codes WHERE disabled = TRUE"
+            ).fetchone()["c"]
+            available_cards = connection.execute(
+                "SELECT count(*) AS c FROM card_codes "
+                "WHERE redeemed_by IS NULL AND disabled = FALSE"
+            ).fetchone()["c"]
+            disabled_users = connection.execute(
+                "SELECT count(*) AS c FROM users WHERE disabled = TRUE"
             ).fetchone()["c"]
         return {
             "users": users,
             "activeMembers": active,
             "freeUsers": max(0, users - active),
+            "disabledUsers": disabled_users,
             "totalCards": total_cards,
             "usedCards": used_cards,
-            "availableCards": max(0, total_cards - used_cards - disabled_cards),
+            "availableCards": available_cards,
             "disabledCards": disabled_cards,
         }
 
@@ -495,7 +512,7 @@ def create_app(database_url: str | None = None) -> FastAPI:
         with active_database().connect() as connection:
             rows = connection.execute(
                 """
-                SELECT u.email, u.display_name, u.created_at,
+                SELECT u.email, u.display_name, u.created_at, u.disabled,
                        s.plan_name, s.activated_at, s.expires_at
                 FROM users u
                 LEFT JOIN subscriptions s ON s.user_email = u.email
@@ -505,7 +522,8 @@ def create_app(database_url: str | None = None) -> FastAPI:
         users = []
         for row in rows:
             expires_at = row_datetime(row["expires_at"]) if row["expires_at"] else None
-            is_active = bool(expires_at and expires_at > now)
+            disabled = bool(row["disabled"])
+            is_active = bool(expires_at and expires_at > now) and not disabled
             users.append(
                 {
                     "email": row["email"],
@@ -519,6 +537,7 @@ def create_app(database_url: str | None = None) -> FastAPI:
                     "expiresAt": iso(expires_at) if expires_at else None,
                     "remainingDays": max(0, (expires_at - now).days) if is_active else 0,
                     "isActive": is_active,
+                    "disabled": disabled,
                 }
             )
         return {"users": users, "count": len(users)}
@@ -535,7 +554,7 @@ def create_app(database_url: str | None = None) -> FastAPI:
         elif status == "available":
             clause = "WHERE redeemed_by IS NULL AND disabled = FALSE"
         elif status == "disabled":
-            clause = "WHERE disabled = TRUE AND redeemed_by IS NULL"
+            clause = "WHERE disabled = TRUE"
         with active_database().connect() as connection:
             rows = connection.execute(
                 f"""
@@ -617,22 +636,97 @@ def create_app(database_url: str | None = None) -> FastAPI:
         x_admin_token: str | None = Header(default=None),
     ):
         require_admin(x_admin_token)
+        now = utc_now()
         with active_database().connect() as connection:
             row = connection.execute(
-                "SELECT redeemed_by, disabled FROM card_codes WHERE code = %s",
+                "SELECT redeemed_by, disabled FROM card_codes WHERE code = %s FOR UPDATE",
                 (code,),
             ).fetchone()
             if row is None:
                 raise HTTPException(status_code=404, detail="卡密不存在。")
-            if row["redeemed_by"]:
-                raise HTTPException(status_code=409, detail="已兑换的卡密不能禁用。")
-            if row["disabled"]:
-                return {"code": code, "disabled": True}
             connection.execute(
                 "UPDATE card_codes SET disabled = TRUE WHERE code = %s",
                 (code,),
             )
-        return {"code": code, "disabled": True}
+            # 防盗刷：禁用已兑换的卡密时，同时收回它带来的会员时长
+            if row["redeemed_by"]:
+                connection.execute(
+                    "UPDATE subscriptions SET expires_at = %s "
+                    "WHERE user_email = %s AND expires_at > %s",
+                    (now, row["redeemed_by"], now),
+                )
+        return {"code": code, "disabled": True, "revoked": bool(row["redeemed_by"])}
+
+    @app.post("/api/admin/cards/{code}/enable")
+    def admin_enable_card(
+        code: str,
+        x_admin_token: str | None = Header(default=None),
+    ):
+        require_admin(x_admin_token)
+        with active_database().connect() as connection:
+            row = connection.execute(
+                "SELECT disabled FROM card_codes WHERE code = %s",
+                (code,),
+            ).fetchone()
+            if row is None:
+                raise HTTPException(status_code=404, detail="卡密不存在。")
+            connection.execute(
+                "UPDATE card_codes SET disabled = FALSE WHERE code = %s",
+                (code,),
+            )
+        return {"code": code, "disabled": False}
+
+    @app.post("/api/admin/users/{email}/disable")
+    def admin_disable_user(
+        email: str,
+        x_admin_token: str | None = Header(default=None),
+    ):
+        require_admin(x_admin_token)
+        target = normalize_email(email)
+        now = utc_now()
+        with active_database().connect() as connection:
+            row = connection.execute(
+                "SELECT email FROM users WHERE email = %s FOR UPDATE",
+                (target,),
+            ).fetchone()
+            if row is None:
+                raise HTTPException(status_code=404, detail="用户不存在。")
+            connection.execute(
+                "UPDATE users SET disabled = TRUE WHERE email = %s",
+                (target,),
+            )
+            # 立即收回会员并强制该账号退出所有设备
+            connection.execute(
+                "UPDATE subscriptions SET expires_at = %s "
+                "WHERE user_email = %s AND expires_at > %s",
+                (now, target, now),
+            )
+            connection.execute(
+                "UPDATE sessions SET current_email = NULL, updated_at = %s "
+                "WHERE current_email = %s",
+                (now, target),
+            )
+        return {"email": target, "disabled": True}
+
+    @app.post("/api/admin/users/{email}/enable")
+    def admin_enable_user(
+        email: str,
+        x_admin_token: str | None = Header(default=None),
+    ):
+        require_admin(x_admin_token)
+        target = normalize_email(email)
+        with active_database().connect() as connection:
+            row = connection.execute(
+                "SELECT email FROM users WHERE email = %s",
+                (target,),
+            ).fetchone()
+            if row is None:
+                raise HTTPException(status_code=404, detail="用户不存在。")
+            connection.execute(
+                "UPDATE users SET disabled = FALSE WHERE email = %s",
+                (target,),
+            )
+        return {"email": target, "disabled": False}
 
     return app
 
@@ -667,10 +761,11 @@ def load_state(
         return {"deviceId": device_id, "user": None}
 
     user = connection.execute(
-        "SELECT email, display_name, created_at FROM users WHERE email = %s",
+        "SELECT email, display_name, created_at, disabled FROM users WHERE email = %s",
         (email,),
     ).fetchone()
-    if user is None:
+    if user is None or user["disabled"]:
+        # 用户不存在或已被禁用：强制退出该设备会话
         save_session(connection, device_id, None)
         return {"deviceId": device_id, "user": None}
 
