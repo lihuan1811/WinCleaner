@@ -90,6 +90,41 @@ def hidden_windows_subprocess_kwargs():
     }
 
 
+def is_admin():
+    """当前进程是否拥有管理员权限（非 Windows 恒为 True）。"""
+    if not sys.platform.startswith("win"):
+        return True
+    try:
+        import ctypes
+
+        return bool(ctypes.windll.shell32.IsUserAnAdmin())
+    except Exception:
+        return False
+
+
+def relaunch_as_admin():
+    """以管理员身份重新启动本程序；成功发起返回 True。"""
+    if not sys.platform.startswith("win"):
+        return False
+    try:
+        import ctypes
+
+        if getattr(sys, "frozen", False):
+            # 打包后的 EXE：直接重启自身
+            program = sys.executable
+            params = subprocess.list2cmdline(sys.argv[1:])
+        else:
+            # 源码运行：用 python 重新执行脚本
+            program = sys.executable
+            params = subprocess.list2cmdline(sys.argv)
+        rc = ctypes.windll.shell32.ShellExecuteW(
+            None, "runas", program, params, None, 1
+        )
+        return int(rc) > 32
+    except Exception:
+        return False
+
+
 def _windows_volume_label(root):
     """获取 Windows 卷标（如“软件”“文档”），失败返回空串。"""
     if not sys.platform.startswith("win"):
@@ -5292,6 +5327,27 @@ class CleanerMainWindow(QMainWindow):
         if not keys:
             QMessageBox.information(self, "文件迁移", "请先勾选需要迁移的文件夹。")
             return
+
+        # 迁移个人文件夹需要管理员权限，否则会大量“拒绝访问”
+        if sys.platform.startswith("win") and not is_admin():
+            answer = QMessageBox.question(
+                self,
+                "需要管理员权限",
+                "文件迁移需要管理员权限，否则会出现大量“拒绝访问”导致迁移失败。\n\n"
+                "是否现在以管理员身份重新启动本程序？",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.Yes,
+            )
+            if answer == QMessageBox.Yes:
+                if relaunch_as_admin():
+                    QApplication.quit()
+                else:
+                    QMessageBox.warning(
+                        self, "文件迁移",
+                        "无法自动提权，请手动右键程序图标 →“以管理员身份运行”。",
+                    )
+            return
+
         target_root = self.migration_target_input.text().strip()
         if not target_root:
             QMessageBox.information(

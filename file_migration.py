@@ -143,6 +143,22 @@ class FileMigrationService:
         if self.is_reparse_point(src):
             raise MigrationError(f"“{entry['name']}”已经迁移过了。")
 
+        # 本程序自身若位于该文件夹内，运行中的 EXE 无法移动，需先移出
+        try:
+            running = os.path.abspath(sys.executable)
+            src_abs = os.path.abspath(src)
+            if getattr(sys, "frozen", False) and os.path.commonpath(
+                [running, src_abs]
+            ) == src_abs:
+                raise MigrationError(
+                    f"本程序正位于“{entry['name']}”内，运行中无法移动。"
+                    "请先把本程序（.exe）移动到其它磁盘后再迁移该文件夹。"
+                )
+        except MigrationError:
+            raise
+        except Exception:
+            pass
+
         target_root = os.path.abspath(target_root)
         dst = os.path.join(target_root, entry["subname"])
 
