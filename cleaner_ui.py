@@ -5155,6 +5155,14 @@ class CleanerMainWindow(QMainWindow):
 
         return page
 
+    def _drive_free_bytes(self, drive):
+        """返回某磁盘可用字节数；失败返回 None。"""
+        try:
+            root = (drive or "C:").rstrip("\\/") + os.sep
+            return shutil.disk_usage(root).free
+        except Exception:
+            return None
+
     def _default_migration_target(self):
         """选择一个真实存在的非系统盘作为默认目标；没有则留空提示用户选择。"""
         try:
@@ -5301,20 +5309,29 @@ class CleanerMainWindow(QMainWindow):
             )
             return
 
+        # 硬性拦截：目标必须与源（系统盘）不同，否则数据仍在同一磁盘、不会释放空间
+        source_drive = os.path.splitdrive(os.path.abspath(self.migration_service.home))[0]
+        if target_drive.upper() == source_drive.upper() or target_drive == "":
+            QMessageBox.warning(
+                self, "文件迁移",
+                f"目标不能和源在同一个磁盘（{source_drive or 'C:'}）。\n\n"
+                "个人文件夹本来就在 C 盘，只有迁移到“另一个磁盘”（如 D:、E:）才能真正"
+                "释放 C 盘空间。请点击“浏览”选择一个不同的磁盘。",
+            )
+            return
+
         pending = [k for k in keys if not (self.migration_rows.get(k, {}).get("migrated"))]
         if not pending:
             QMessageBox.information(self, "文件迁移", "所选文件夹均已迁移。")
             return
 
-        drive = os.path.splitdrive(os.path.abspath(target_root))[0].upper()
-        warn = ""
-        if drive in ("", "C:"):
-            warn = "\n\n注意：目标位于系统盘（C:），迁移后并不会释放 C 盘空间。"
+        # 记录迁移前系统盘可用空间，用于迁移后展示实际释放量
+        self._pre_migration_free = self._drive_free_bytes(source_drive)
         answer = QMessageBox.question(
             self,
             "确认迁移",
             f"将把选中的 {len(pending)} 个文件夹迁移到:\n{target_root}\n\n"
-            "原位置会保留连接点，程序仍可正常访问。此操作会移动真实文件。" + warn,
+            "原位置会保留连接点，程序仍可正常访问。此操作会移动真实文件。",
             QMessageBox.Yes | QMessageBox.No,
             QMessageBox.No,
         )
@@ -5375,7 +5392,8 @@ class CleanerMainWindow(QMainWindow):
     def on_migration_finished(self, mode, summary):
         self.set_migration_busy(False)
         action = "迁移" if mode == "migrate" else "还原"
-        text = f"{action}完成：成功 {summary.get('done', 0)} 个"
+        done = summary.get("done", 0)
+        text = f"{action}完成：成功 {done} 个"
         if summary.get("failed"):
             text += f"，失败 {summary['failed']} 个"
         self.migration_status_label.setText(text)
@@ -5383,6 +5401,30 @@ class CleanerMainWindow(QMainWindow):
             QMessageBox.warning(
                 self, f"文件{action}", "部分项目未完成：\n\n" + "\n".join(summary["errors"][:10])
             )
+        elif mode == "migrate" and done:
+            freed_text = ""
+            pre = getattr(self, "_pre_migration_free", None)
+            if pre is not None:
+                source_drive = os.path.splitdrive(
+                    os.path.abspath(self.migration_service.home)
+                )[0] or "C:"
+                post = self._drive_free_bytes(source_drive)
+                if post is not None and post > pre:
+                    freed_text = (
+                        f"\n\n本次 {source_drive} 盘已释放约 "
+                        f"{self.format_size(post - pre)} 空间。"
+                    )
+            QMessageBox.information(
+                self,
+                "迁移完成",
+                f"已成功迁移 {done} 个文件夹。\n\n"
+                "说明：为保证程序和系统仍能正常访问，原文件夹路径会保留为一个"
+                "「链接」（连接点），在资源管理器里看起来位置没变，但数据其实已经"
+                "转移到目标磁盘，C 盘空间已经释放。"
+                + freed_text
+                + "\n\n如需把数据搬回 C 盘，可勾选后点「还原选中」。",
+            )
+            self._pre_migration_free = None
         self.refresh_migration_folders()
 
     def on_migration_error(self, message):

@@ -8,6 +8,8 @@ C盘清理工具 - 核心清理逻辑
 import errno
 import os
 import shutil
+import subprocess
+import sys
 import tempfile
 import time
 import glob
@@ -16,6 +18,19 @@ import logging
 import datetime
 import concurrent.futures
 from dismpp_rules import DismRuleScanner
+
+
+def hidden_windows_subprocess_kwargs():
+    """在 Windows 上隐藏子进程控制台窗口（避免弹出 PowerShell/CMD 黑框）。"""
+    if not sys.platform.startswith("win"):
+        return {}
+    startupinfo = subprocess.STARTUPINFO()
+    startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+    startupinfo.wShowWindow = 0
+    return {
+        "creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        "startupinfo": startupinfo,
+    }
 
 
 def _hide_windows_file(path):
@@ -2605,12 +2620,13 @@ class CleanerLogic:
     def _empty_recycle_bin(self):
         """清空回收站"""
         try:
-            # 使用PowerShell清空回收站
-            import subprocess
-            subprocess.run(['powershell.exe', '-Command', 'Clear-RecycleBin', '-Force', '-ErrorAction', 'SilentlyContinue'],
+            # 使用PowerShell清空回收站（隐藏窗口，避免弹出黑框）
+            subprocess.run(['powershell.exe', '-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden',
+                            '-Command', 'Clear-RecycleBin', '-Force', '-ErrorAction', 'SilentlyContinue'],
                           check=False,
                           stdout=subprocess.PIPE,
-                          stderr=subprocess.PIPE)
+                          stderr=subprocess.PIPE,
+                          **hidden_windows_subprocess_kwargs())
             logger.info("已清空回收站")
             return True
         except Exception as e:
